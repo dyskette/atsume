@@ -20,9 +20,9 @@ TXQuery/XPath translation layer, JavaScript execution for protected pages, the
 job queue, image downloads, CBZ output, and a web UI with live progress over
 SSE.
 
-Not implemented yet: `fmd.imagepuzzle` (image descrambling), Puppeteer-backed
-modules, and anti-bot solving. Modules needing those fail loudly and name the
-missing capability rather than returning blank fields.
+Not implemented yet: Puppeteer-backed modules, the MangaFox watermark remover,
+and anti-bot solving. Modules needing those fail loudly and name the missing
+capability rather than returning blank fields.
 
 The 15 modules that do not load break down as 14 written against Lua 5.3 syntax
 (bitwise operators, floor division) that gopher-lua's 5.1 parser rejects, plus

@@ -106,13 +106,54 @@ One deliberate divergence: upstream catches a JavaScript error, logs it, and
 returns `nil` to Lua. atsume raises instead, so a broken script surfaces as a
 failed job rather than a chapter that silently yields zero pages.
 
+## Image descrambling
+
+Some sites serve a page cut into a grid with the tiles permuted, shipping the
+permutation alongside it. `fmd.imagepuzzle` reassembles them.
+
+`Create(hor, ver)` returns a puzzle over a grid; `Matrix[i]` gives the
+destination index of source tile `i`; `DeScramble(input, output)` rewrites the
+image. Modules call it as `DeScramble(HTTP.Document, HTTP.Document)`, so
+`HTTP.Document` is a mutable stream rather than a string.
+
+Output format follows upstream: PNG in or WebP in yields PNG out, anything else
+yields JPEG. WebP is decode-only in Go, so converting it is a necessity rather
+than a choice. Descrambling a JPEG costs one generation of re-encoding loss
+because the tiles have to move in pixel space; atsume encodes at quality 95,
+where upstream leaves it at the toolkit default.
+
+Tile copies are clipped at the image edge, and any area no tile covers is left
+opaque white, matching upstream. An image whose dimensions are not a multiple of
+the grid leaves such a margin.
+
+### The image hooks
+
+Descrambling happens inside `OnDownloadImage`, so it only works if the download
+pipeline runs the module's image hooks rather than fetching pages itself:
+
+| Hook | Modules | What it does |
+|---|---|---|
+| `OnBeforeDownloadImage` | 113 | sets request headers, almost always a Referer the image host demands |
+| `OnDownloadImage` | 12 | the module fetches and transforms the image itself |
+
+Because a module may re-encode an image, the file extension inside the CBZ is
+taken from the returned bytes rather than the URL — descrambling a WebP
+produces a PNG, and trusting the URL there would misname it.
+
+### Reach
+
+Seven modules use `fmd.imagepuzzle`, but four of them (Comix, NexusScanlation,
+PhiliaScans, TonarinoYoungJump) do not load at all because they use Lua 5.3
+operators. The descrambler therefore reaches **three** modules today — MangaGo,
+PlusComico and WolfManga — and the other four are gated on the Lua runtime
+decision rather than on anything here.
+
 ## Unimplemented capabilities
 
 These raise a named error rather than failing quietly:
 
 | Library | Modules affected | Needs |
 |---|---|---|
-| `fmd.imagepuzzle` | 6 | the image descrambler |
 | `utils.nodejs` | 4 | Puppeteer |
 | `fmd.mangafoxwatermark` | 1 | watermark removal |
 
