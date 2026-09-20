@@ -116,3 +116,64 @@ func TestJSONFallback(t *testing.T) {
 		t.Errorf("got %q, want empty", got)
 	}
 }
+
+// TestAttributeNodes covers iterating an attribute set, as in `img/@uid`.
+//
+// antchfx reports an attribute match as its owning element, so without special
+// handling a module reading the node's text gets the element's inner text —
+// empty for a void element like <img> — instead of the attribute value.
+func TestAttributeNodes(t *testing.T) {
+	q, err := ParseString(`<div id="p"><img uid="a/001.webp"><img uid="a/002.webp"></div>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := q.XPath(`//div[@id="p"]/img/@uid`)
+	if len(nodes) != 2 {
+		t.Fatalf("got %d nodes, want 2", len(nodes))
+	}
+	for i, want := range []string{"a/001.webp", "a/002.webp"} {
+		if got := nodes[i].Text(); got != want {
+			t.Errorf("[%d] Text() = %q, want %q", i, got, want)
+		}
+	}
+}
+
+// TestMixedSequence covers a sequence constructor whose members are not all
+// node-sets.
+//
+// XPath 1.0 unions take node-sets only, so folding `(//a, concat(…))` into a
+// union silently drops the string member — a genre list quietly missing its
+// last entry, with no error.
+func TestMixedSequence(t *testing.T) {
+	const html = `<body>
+		<a href="/genre/action"><span>Action</span></a>
+		<a href="/genre/fantasy"><span>Fantasy</span></a>
+		<div class="g"><div><span>Type</span></div><div>MANHWA</div></div>
+	</body>`
+	q, err := ParseString(html)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Taken from templates/KeyoApp.lua.
+	const expr = `(//a[contains(@href, "genre")]/span, ` +
+		`concat(upper-case(substring(//div[./div/span="Type"]/div[2], 1, 1)), ` +
+		`lower-case(substring(//div[./div/span="Type"]/div[2], 2))))`
+
+	if got, want := q.XPathStringAll(expr), "Action, Fantasy, Manhwa"; got != want {
+		out, _ := Rewrite(expr)
+		t.Errorf("got %q, want %q\n  rewritten: %s", got, want, out)
+	}
+}
+
+// TestAllNodeSetSequenceStaysAUnion checks the common case is not disturbed:
+// when every member is a node-set the union is still used, preserving document
+// order.
+func TestAllNodeSetSequenceStaysAUnion(t *testing.T) {
+	q, err := ParseString(`<body><h1>First</h1><h2>Second</h2></body>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := q.XPathStringAll(`(//h1, //h2)`, "|"), "First|Second"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

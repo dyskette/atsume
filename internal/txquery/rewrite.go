@@ -25,7 +25,10 @@ type Caps struct {
 	FuncStep   bool   // a function call in step position, e.g. //p/substring-after(.,":")
 	Lookup     bool   // the XQuery 3.1 "?" lookup operator over JSON
 	Sequence   bool   // (a, b, c) sequence constructor — folded to a union
-	JSONFns    bool   // jn:members() / jn:keys()
+	// Parts holds the members when the whole expression is a sequence whose
+	// members are not all node-sets, so the host evaluates them separately.
+	Parts   []string
+	JSONFns bool // jn:members() / jn:keys()
 }
 
 func (c Caps) names() []string {
@@ -474,6 +477,12 @@ func rewriteSequence(e string, c *Caps) string {
 			continue
 		}
 		c.Sequence = true
+		// A union only works when every member is a node-set. When one is not —
+		// a concat() or a literal — record the members so the host can evaluate
+		// them one by one; the union stays as a fallback.
+		if i == 0 && close == len(e)-1 && anyNonNodeSet(parts) {
+			c.Parts = parts
+		}
 		repl := "(" + strings.Join(parts, " | ") + ")"
 		e = e[:i] + repl + e[close+1:]
 		i += len(repl) - 1
@@ -683,6 +692,29 @@ func normalizeQuotes(e string) string {
 		i = end - 1
 	}
 	return b.String()
+}
+
+// anyNonNodeSet reports whether a sequence member cannot appear in a union.
+// A member starting with a function name or a quote yields a string, not nodes.
+func anyNonNodeSet(parts []string) bool {
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if p[0] == '\'' || p[0] == '"' {
+			return true
+		}
+		if isNameChar(p[0]) {
+			if open := strings.IndexByte(p, '('); open > 0 {
+				name := strings.TrimSpace(p[:open])
+				if !strings.ContainsAny(name, "/[]@") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Rewrite applies every pass, returning an XPath 1.0 expression plus the host

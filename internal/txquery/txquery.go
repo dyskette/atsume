@@ -40,6 +40,12 @@ type Query struct {
 type Node struct {
 	n *html.Node
 	q *Query
+	// attr holds the value when this result is an attribute rather than an
+	// element. antchfx reports an attribute match as its owning element, so
+	// without this a module iterating `img/@uid` would read the element's inner
+	// text — empty — instead of the attribute.
+	attr   string
+	isAttr bool
 }
 
 // Parse reads a document. It never fails on malformed markup: html.Parse
@@ -95,6 +101,38 @@ func (q *Query) eval(expr string, ctx *html.Node) (any, Caps, error) {
 	return e.Evaluate(htmlquery.CreateXPathNavigator(root)), caps, nil
 }
 
+// evalValues returns the string sequence an expression produces.
+//
+// A sequence constructor whose members are not all node-sets — `(//a, concat(…))`
+// is the common shape — cannot be folded into a union, because XPath 1.0 unions
+// take node-sets only and the string member is silently dropped. Those are
+// evaluated member by member and concatenated instead.
+func (q *Query) evalValues(expr string, ctx *html.Node) ([]string, Caps) {
+	out, caps := Rewrite(expr)
+	if len(caps.Parts) == 0 {
+		v, _, err := q.eval(expr, ctx)
+		if err != nil {
+			return nil, caps
+		}
+		return postProcess(values(v), caps), caps
+	}
+
+	var all []string
+	for _, part := range caps.Parts {
+		e, err := xpath.Compile(part)
+		if err != nil {
+			continue
+		}
+		root := ctx
+		if root == nil {
+			root = q.tree(caps.JSON)
+		}
+		all = append(all, values(e.Evaluate(htmlquery.CreateXPathNavigator(root)))...)
+	}
+	_ = out
+	return postProcess(all, caps), caps
+}
+
 // values flattens a result into the string sequence FMD2 would iterate.
 func values(v any) []string {
 	switch t := v.(type) {
@@ -135,11 +173,7 @@ func (q *Query) XPathString(expr string) string {
 }
 
 func (q *Query) xpathString(expr string, ctx *html.Node) string {
-	v, caps, err := q.eval(expr, ctx)
-	if err != nil {
-		return ""
-	}
-	vals := postProcess(values(v), caps)
+	vals, caps := q.evalValues(expr, ctx)
 	// string-join collapses the whole sequence even in the single-value form,
 	// which is how Madara builds MANGAINFO.Summary.
 	if caps.StringJoin {
@@ -158,17 +192,14 @@ func (q *Query) XPathStringAll(expr string, sep ...string) string {
 }
 
 func (q *Query) xpathStringAll(expr string, ctx *html.Node, sep ...string) string {
-	v, caps, err := q.eval(expr, ctx)
-	if err != nil {
-		return ""
-	}
+	vals, caps := q.evalValues(expr, ctx)
 	s := DefaultSeparator
 	if len(sep) > 0 {
 		s = sep[0]
 	} else if caps.StringJoin {
 		s = sepOr(caps.JoinSep, DefaultSeparator)
 	}
-	return joinAll(postProcess(values(v), caps), s)
+	return joinAll(vals, s)
 }
 
 func sepOr(s, fallback string) string {
@@ -191,12 +222,9 @@ func joinAll(vals []string, sep string) string {
 // XPathValues returns each result as a trimmed string, dropping empty ones.
 // It backs the XPathStringAll(expr, list) overload that fills a TStringList.
 func (q *Query) XPathValues(expr string, ctx *html.Node) []string {
-	v, caps, err := q.eval(expr, ctx)
-	if err != nil {
-		return nil
-	}
+	vals, _ := q.evalValues(expr, ctx)
 	var out []string
-	for _, s := range postProcess(values(v), caps) {
+	for _, s := range vals {
 		if t := strings.TrimSpace(s); t != "" {
 			out = append(out, t)
 		}
@@ -232,12 +260,23 @@ func (q *Query) XPath(expr string) []*Node {
 	if !ok {
 		return nil
 	}
+	return collectNodes(v, q)
+}
+
+// collectNodes materialises an iterator, preserving attribute values.
+func collectNodes(it *xpath.NodeIterator, q *Query) []*Node {
 	var nodes []*Node
-	for v.MoveNext() {
-		// NodeNavigator is reused across MoveNext, so resolve to the real node.
-		if nav, ok := v.Current().(*htmlquery.NodeNavigator); ok {
-			nodes = append(nodes, &Node{n: nav.Current(), q: q})
+	for it.MoveNext() {
+		// The navigator is reused across MoveNext, so resolve to a real node.
+		nav, ok := it.Current().(*htmlquery.NodeNavigator)
+		if !ok {
+			continue
 		}
+		node := &Node{n: nav.Current(), q: q}
+		if nav.NodeType() == xpath.AttributeNode {
+			node.isAttr, node.attr = true, nav.Value()
+		}
+		nodes = append(nodes, node)
 	}
 	return nodes
 }
@@ -245,28 +284,48 @@ func (q *Query) XPath(expr string) []*Node {
 // XPathHREFAll extracts the href and text of every match, the pairing FMD2 uses
 // to fill the LINKS and NAMES lists.
 func (q *Query) XPathHREFAll(expr string) (links, names []string) {
-	for _, n := range q.XPath(expr) {
-		links = append(links, n.Attribute("href"))
-		names = append(names, strings.TrimSpace(n.Text()))
-	}
-	return
+	return hrefAll(q.XPath(expr), false)
 }
 
 // XPathHREFTitleAll is XPathHREFAll but reads the title attribute for names.
 func (q *Query) XPathHREFTitleAll(expr string) (links, names []string) {
-	for _, n := range q.XPath(expr) {
+	return hrefAll(q.XPath(expr), true)
+}
+
+// XPathHREFAll extracts hrefs relative to this node.
+func (n *Node) XPathHREFAll(expr string) (links, names []string) {
+	return hrefAll(n.XPath(expr), false)
+}
+
+// XPathHREFTitleAll extracts hrefs and titles relative to this node.
+func (n *Node) XPathHREFTitleAll(expr string) (links, names []string) {
+	return hrefAll(n.XPath(expr), true)
+}
+
+// XPathCount counts matches relative to this node.
+func (n *Node) XPathCount(expr string) int { return len(n.XPath(expr)) }
+
+func hrefAll(nodes []*Node, useTitle bool) (links, names []string) {
+	for _, n := range nodes {
 		links = append(links, n.Attribute("href"))
-		title := n.Attribute("title")
-		if title == "" {
-			title = strings.TrimSpace(n.Text())
+		name := strings.TrimSpace(n.Text())
+		if useTitle {
+			if title := n.Attribute("title"); title != "" {
+				name = title
+			}
 		}
-		names = append(names, title)
+		names = append(names, name)
 	}
 	return
 }
 
 // Text returns the node's string value.
-func (n *Node) Text() string { return htmlquery.InnerText(n.n) }
+func (n *Node) Text() string {
+	if n.isAttr {
+		return n.attr
+	}
+	return htmlquery.InnerText(n.n)
+}
 
 // Attribute returns an attribute value, or "" when absent.
 func (n *Node) Attribute(name string) string { return htmlquery.SelectAttr(n.n, name) }
@@ -292,11 +351,5 @@ func (n *Node) XPath(expr string) []*Node {
 	if !ok {
 		return nil
 	}
-	var nodes []*Node
-	for v.MoveNext() {
-		if nav, ok := v.Current().(*htmlquery.NodeNavigator); ok {
-			nodes = append(nodes, &Node{n: nav.Current(), q: n.q})
-		}
-	}
-	return nodes
+	return collectNodes(v, n.q)
 }

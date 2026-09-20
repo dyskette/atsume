@@ -163,6 +163,10 @@ func queryIndex(L *lua.LState) int {
 		}))
 	case "XPathCount":
 		L.Push(L.NewFunction(func(L *lua.LState) int {
+			if ctx := contextNode(L, 2); ctx != nil {
+				L.Push(lua.LNumber(ctx.XPathCount(L.CheckString(1))))
+				return 1
+			}
 			L.Push(lua.LNumber(q.XPathCount(L.CheckString(1))))
 			return 1
 		}))
@@ -177,14 +181,25 @@ func queryIndex(L *lua.LState) int {
 		}))
 	case "XPathHREFAll":
 		L.Push(L.NewFunction(func(L *lua.LState) int {
-			links, names := q.XPathHREFAll(L.CheckString(1))
+			// The fourth argument, when present, scopes the search to a node.
+			var links, names []string
+			if ctx := contextNode(L, 4); ctx != nil {
+				links, names = ctx.XPathHREFAll(L.CheckString(1))
+			} else {
+				links, names = q.XPathHREFAll(L.CheckString(1))
+			}
 			appendAll(L, 2, links)
 			appendAll(L, 3, names)
 			return 0
 		}))
 	case "XPathHREFTitleAll":
 		L.Push(L.NewFunction(func(L *lua.LState) int {
-			links, names := q.XPathHREFTitleAll(L.CheckString(1))
+			var links, names []string
+			if ctx := contextNode(L, 4); ctx != nil {
+				links, names = ctx.XPathHREFTitleAll(L.CheckString(1))
+			} else {
+				links, names = q.XPathHREFTitleAll(L.CheckString(1))
+			}
 			appendAll(L, 2, links)
 			appendAll(L, 3, names)
 			return 0
