@@ -129,7 +129,7 @@ func queryIndex(L *lua.LState) int {
 	case "XPathString":
 		L.Push(L.NewFunction(func(L *lua.LState) int {
 			// x.XPathString(expr) or x.XPathString(expr, contextNode)
-			if ctx := contextNode(L, 3); ctx != nil {
+			if ctx := contextNode(L, 2); ctx != nil {
 				L.Push(lua.LString(ctx.XPathString(L.CheckString(1))))
 				return 1
 			}

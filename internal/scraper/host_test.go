@@ -336,3 +336,61 @@ func TestCommaText(t *testing.T) {
 		t.Errorf("round trip = %q", got)
 	}
 }
+
+// TestContextNodeArgument covers x.XPathString(expr, node), the two-argument
+// form templates use while iterating a node set.
+//
+// It is pinned because the context argument is easy to drop silently: when it
+// is ignored the expression evaluates against the document root, matches
+// nothing, and every chapter name comes back empty with no error anywhere.
+func TestContextNodeArgument(t *testing.T) {
+	dir := luaDir(t)
+	path := filepath.Join(t.TempDir(), "ctx.lua")
+	src := `
+function Init()
+	local m = NewWebsiteModule()
+	m.ID              = 'ccccccccccccccccccccccccccccc111'
+	m.Name            = 'CtxTest'
+	m.RootURL         = 'https://example.invalid'
+	m.OnGetPageNumber = 'GetPageNumber'
+end
+
+function GetPageNumber()
+	local x = CreateTXQuery('<ul><li><a href="/c1"><span class="n">  One  </span></a></li>' ..
+		'<li><a href="/c2"><span class="n">Two</span></a></li></ul>')
+	for v in x.XPath('//li/a').Get() do
+		TASK.PageLinks.Add(v.GetAttribute('href'))
+		TASK.PageLinks.Add(x.XPathString('span[@class="n"]/normalize-space(.)', v))
+		TASK.PageLinks.Add(v.XPathString('span[@class="n"]/normalize-space(.)'))
+	end
+	return true
+end
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &Host{LuaDir: dir}
+	r, err := h.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	if runtimeForInBug() {
+		t.Skip("blocked by the gopher-lua generic-for bug; see TestRuntimeSupportsChainedForIn")
+	}
+	got, err := r.GetPageNumber("https://example.invalid/c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/c1", "One", "One", "/c2", "Two", "Two"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
