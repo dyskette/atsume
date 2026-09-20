@@ -1,0 +1,101 @@
+package ui
+
+import (
+	"fmt"
+
+	"github.com/dyskette/atsume/internal/store"
+)
+
+// Library is the home page: everything being tracked.
+templ Library(series []store.Series) {
+	@Layout("Library") {
+		<h1>Library</h1>
+		if len(series) == 0 {
+			<p class="empty">
+				Nothing tracked yet. Pick a <a href="/modules">site</a> and track a title.
+			</p>
+		}
+		<ul class="rows">
+			for _, s := range series {
+				<li>
+					<a class="title" href={ templ.SafeURL(fmt.Sprintf("/series/%d", s.ID)) }>{ s.Title }</a>
+					<span class="muted">{ s.ModuleName }</span>
+					if s.Status != "" {
+						<span class="badge">{ s.Status }</span>
+					}
+				</li>
+			}
+		</ul>
+	}
+}
+
+// SeriesPage lists a series' chapters and their download state.
+templ SeriesPage(s store.Series, chapters []store.Chapter) {
+	@Layout(s.Title) {
+		<h1>{ s.Title }</h1>
+		<p class="muted">
+			{ s.ModuleName }
+			if s.Authors != "" {
+				{ " · " }{ s.Authors }
+			}
+			if s.Status != "" {
+				{ " · " }{ s.Status }
+			}
+		</p>
+		if s.Genres != "" {
+			<p class="muted">{ s.Genres }</p>
+		}
+		if s.Summary != "" {
+			<p class="summary">{ s.Summary }</p>
+		}
+		<div class="actions">
+			<form hx-post={ fmt.Sprintf("/series/%d/refresh", s.ID) } hx-swap="none">
+				<button type="submit">Refresh chapters</button>
+			</form>
+			<form hx-post={ fmt.Sprintf("/series/%d/download", s.ID) } hx-swap="none">
+				<button type="submit" class="primary">Download all pending</button>
+			</form>
+		</div>
+		<ul class="rows chapters">
+			for _, c := range chapters {
+				@ChapterRow(c)
+			}
+		</ul>
+	}
+}
+
+// ChapterRow is swapped in place over SSE as a download progresses. The id is
+// what the stream targets, so it must stay stable across swaps.
+templ ChapterRow(c store.Chapter) {
+	<li
+		id={ fmt.Sprintf("chapter-%d", c.ID) }
+		class={ "chapter", c.State }
+		sse-swap={ fmt.Sprintf("chapter-%d", c.ID) }
+		hx-swap="outerHTML"
+	>
+		<span class="title">{ c.Name }</span>
+		<span class={ "badge", c.State }>{ stateLabel(c) }</span>
+		if c.Error != "" {
+			<span class="error" title={ c.Error }>{ truncate(c.Error, 80) }</span>
+		}
+		if c.State == store.ChapterPending || c.State == store.ChapterFailed {
+			<form hx-post={ fmt.Sprintf("/chapters/%d/download", c.ID) } hx-swap="outerHTML" hx-target="closest li">
+				<button type="submit">Download</button>
+			</form>
+		}
+	</li>
+}
+
+// ChapterProgressRow is the same row rendered mid-download, showing page
+// progress. It keeps the id and sse-swap target so later events land on it.
+templ ChapterProgressRow(c store.Chapter, done int, total int) {
+	<li
+		id={ fmt.Sprintf("chapter-%d", c.ID) }
+		class="chapter downloading"
+		sse-swap={ fmt.Sprintf("chapter-%d", c.ID) }
+		hx-swap="outerHTML"
+	>
+		<span class="title">{ c.Name }</span>
+		<span class="badge downloading">{ Progress(done, total) }</span>
+	</li>
+}

@@ -1,0 +1,44 @@
+package ui
+
+import "github.com/dyskette/atsume/internal/scraper"
+
+// Browse lists one page of a site's directory, with a button per title to start
+// tracking it.
+templ Browse(module string, page int, entries []scraper.Entry) {
+	@Layout(module) {
+		<h1>{ module }</h1>
+		<p class="muted">Directory page { page + 1 }</p>
+		if len(entries) == 0 {
+			<p class="empty">
+				This module returned nothing for page { page + 1 }. It may paginate
+				differently, or the site may be unreachable.
+			</p>
+		}
+		<ul class="rows">
+			for _, e := range entries {
+				<li>
+					<span class="title">{ e.Name }</span>
+					<form hx-post="/series" hx-swap="outerHTML" hx-target="closest li">
+						<input type="hidden" name="module" value={ module }/>
+						<input type="hidden" name="url" value={ e.Link }/>
+						<button type="submit">Track</button>
+					</form>
+				</li>
+			}
+		</ul>
+		<nav class="pager">
+			if page > 0 {
+				<a href={ templ.SafeURL(pageURL(module, page-1)) }>Previous</a>
+			}
+			<a href={ templ.SafeURL(pageURL(module, page+1)) }>Next</a>
+		</nav>
+	}
+}
+
+// Tracked replaces a directory row once the series has been queued.
+templ Tracked(name string) {
+	<li class="tracked">
+		<span class="title">{ name }</span>
+		<span class="badge">queued</span>
+	</li>
+}

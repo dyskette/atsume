@@ -1,0 +1,105 @@
+:root {
+	--bg: #14161a;
+	--panel: #1c1f26;
+	--line: #2a2f39;
+	--text: #e6e8ec;
+	--muted: #949cab;
+	--accent: #7aa2f7;
+	--ok: #79c66c;
+	--warn: #e0af68;
+	--err: #f07178;
+}
+
+* { box-sizing: border-box; }
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header {
+	display: flex;
+	align-items: center;
+	gap: 2rem;
+	padding: 0.9rem 1.5rem;
+	border-bottom: 1px solid var(--line);
+	background: var(--panel);
+}
+
+.brand { font-size: 1.15rem; font-weight: 600; text-decoration: none; color: var(--text); }
+.brand span { margin-left: 0.5rem; font-size: 0.85rem; color: var(--muted); font-weight: 400; }
+
+nav { display: flex; gap: 1.1rem; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a:hover { color: var(--text); }
+
+main { max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
+h1 { font-size: 1.4rem; margin: 0 0 0.3rem; }
+.muted { color: var(--muted); font-size: 0.9rem; margin: 0.2rem 0; }
+.summary { color: var(--muted); max-width: 46rem; }
+.empty { color: var(--muted); padding: 1.5rem 0; }
+
+.search input {
+	width: 100%;
+	margin: 1rem 0;
+	padding: 0.55rem 0.75rem;
+	border-radius: 6px;
+	border: 1px solid var(--line);
+	background: var(--panel);
+	color: var(--text);
+}
+
+.grid { list-style: none; padding: 0; display: grid; gap: 0.4rem; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); }
+.grid a { color: var(--accent); text-decoration: none; }
+
+.rows { list-style: none; padding: 0; margin: 1rem 0; }
+.rows li {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.6rem 0.75rem;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	margin-bottom: 0.35rem;
+	background: var(--panel);
+}
+.rows .title { flex: 1; color: var(--text); text-decoration: none; }
+a.title:hover { color: var(--accent); }
+
+.badge {
+	font-size: 0.78rem;
+	color: var(--muted);
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	padding: 0.1rem 0.6rem;
+	white-space: nowrap;
+}
+.badge.done { color: var(--ok); border-color: var(--ok); }
+.badge.downloading, .badge.queued { color: var(--warn); border-color: var(--warn); }
+.badge.failed { color: var(--err); border-color: var(--err); }
+.error { color: var(--err); font-size: 0.8rem; }
+
+button {
+	font: inherit;
+	padding: 0.35rem 0.8rem;
+	border-radius: 6px;
+	border: 1px solid var(--line);
+	background: transparent;
+	color: var(--text);
+	cursor: pointer;
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+button.primary { border-color: var(--accent); color: var(--accent); }
+
+.actions { display: flex; gap: 0.6rem; margin: 1rem 0; }
+.pager { display: flex; gap: 1rem; margin-top: 1rem; }
+.pager a { color: var(--accent); text-decoration: none; }
+
+footer {
+	border-top: 1px solid var(--line);
+	padding: 0.6rem 1.5rem;
+	color: var(--muted);
+	font-size: 0.85rem;
+}
