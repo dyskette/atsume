@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,9 @@ type Host struct {
 	LuaDir string
 	// Limiter gates outbound requests across all runners.
 	Limiter Limiter
+	// Transport, when set, replaces the default HTTP transport. Tests supply a
+	// Cassette here to replay recorded pages.
+	Transport http.RoundTripper
 }
 
 // Runner is one module bound to one Lua state.
@@ -77,7 +81,7 @@ func (h *Host) Open(ctx context.Context, moduleFile string) (*Runner, error) {
 
 	r := &Runner{
 		L:         L,
-		http:      NewHTTP(ctx, h.Limiter),
+		http:      NewHTTP(ctx, h.Limiter, h.Transport),
 		mangaInfo: NewMangaInfo(),
 		task:      NewTask(),
 		links:     NewStrings(),

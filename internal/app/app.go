@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"github.com/dyskette/atsume/internal/config"
 	"github.com/dyskette/atsume/internal/download"
@@ -24,6 +25,8 @@ type App struct {
 	Registry *scraper.Registry
 	Limiter  *scraper.HostLimiter
 	Pool     *jobs.Pool
+	// Transport, when set, replaces the default HTTP transport everywhere.
+	Transport http.RoundTripper
 }
 
 // New builds an App from its dependencies.
@@ -56,7 +59,7 @@ func (a *App) openModule(ctx context.Context, name string) (*scraper.Runner, err
 	if !ok {
 		return nil, fmt.Errorf("no module named %q in revision %s", name, a.Registry.Ref())
 	}
-	return a.Registry.Host(a.Limiter).Open(ctx, info.File)
+	return a.Registry.HostWith(a.Limiter, a.Transport).Open(ctx, info.File)
 }
 
 // Browse lists one page of a site's directory.
@@ -150,7 +153,7 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 // and transforms the image itself. Descrambling a tiled image happens there, so
 // bypassing these hooks yields 403s or scrambled pages rather than an error.
 func (a *App) fetchPages(ctx context.Context, r *scraper.Runner, ch store.Chapter, urls []string) ([]download.Page, error) {
-	fetcher := download.NewFetcher(a.Limiter)
+	fetcher := download.NewFetcher(a.Limiter, a.Transport)
 	fetcher.Referer = r.Module().RootURL
 	moduleDownloads := r.HasHandler("OnDownloadImage")
 

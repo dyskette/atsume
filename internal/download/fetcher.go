@@ -29,10 +29,10 @@ type Fetcher struct {
 	MaxBytes int64
 }
 
-// NewFetcher returns a fetcher with sensible defaults.
-func NewFetcher(limiter Limiter) *Fetcher {
+// NewFetcher returns a fetcher with sensible defaults. transport may be nil.
+func NewFetcher(limiter Limiter, transport http.RoundTripper) *Fetcher {
 	return &Fetcher{
-		Client:    &http.Client{Timeout: 120 * time.Second},
+		Client:    &http.Client{Timeout: 120 * time.Second, Transport: transport},
 		Limiter:   limiter,
 		UserAgent: defaultUserAgent,
 		MaxBytes:  64 << 20,

@@ -52,20 +52,23 @@ type HTTP struct {
 }
 
 // NewHTTP builds a client with its own cookie jar.
-func NewHTTP(ctx context.Context, limiter Limiter) *HTTP {
+//
+// transport may be nil for the default. Tests supply a Cassette so a scrape
+// replays recorded pages instead of reaching the network.
+func NewHTTP(ctx context.Context, limiter Limiter, transport http.RoundTripper) *HTTP {
 	if limiter == nil {
 		limiter = nopLimiter{}
 	}
 	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	return &HTTP{
-		ctx:      ctx,
-		client:   &http.Client{Jar: jar, Timeout: 60 * time.Second},
-		limiter:  limiter,
-		Headers:  NewStrings(),
-		Cookies:  NewStrings(),
-		Document: &Document{},
+		ctx:       ctx,
+		client:    &http.Client{Jar: jar, Timeout: 60 * time.Second, Transport: transport},
+		limiter:   limiter,
+		Headers:   NewStrings(),
+		Cookies:   NewStrings(),
+		Document:  &Document{},
+		UserAgent: DefaultUserAgent,
 
-		UserAgent:  DefaultUserAgent,
 		RetryCount: 2,
 	}
 }

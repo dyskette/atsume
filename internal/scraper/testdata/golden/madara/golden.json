@@ -1,0 +1,42 @@
+{
+  "template": "Madara",
+  "directory": [
+    {
+      "Link": "{{BASE}}/manga/solo-leveling/",
+      "Name": "Solo Leveling"
+    },
+    {
+      "Link": "{{BASE}}/manga/omniscient-reader/",
+      "Name": "Omniscient Reader’s Viewpoint"
+    },
+    {
+      "Link": "{{BASE}}/manga/tower-of-god/",
+      "Name": "Tower of God"
+    }
+  ],
+  "info": {
+    "title": "\tSolo Leveling   ",
+    "alt_titles": "Na Honjaman Level Up / 나 혼자만 레벨업",
+    "cover_link": "{{BASE}}/wp-content/uploads/cover.jpg",
+    "authors": "Chugong",
+    "artists": "Jang Sung-Rak, Hyeon-Gun",
+    "genres": "Action, Fantasy, Shōnen",
+    "status": "completed",
+    "summary": "Ten years ago, “the Gate” appeared.\n  Hunters awakened \u0026 the world changed \u003cforever\u003e.",
+    "chapter_links": [
+      "{{BASE}}/manga/solo-leveling/chapter-1/",
+      "{{BASE}}/manga/solo-leveling/chapter-2/",
+      "{{BASE}}/manga/solo-leveling/chapter-3/"
+    ],
+    "chapter_names": [
+      "Chapter 1",
+      "Chapter 2",
+      "Chapter 3"
+    ]
+  },
+  "pages": [
+    "{{BASE}}/uploads/001.jpg",
+    "https://{{HOST}}/uploads/002.jpg",
+    "{{BASE}}/uploads/003.png"
+  ]
+}

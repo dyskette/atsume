@@ -1,0 +1,28 @@
+{
+  "template": "MangaThemesia",
+  "info": {
+    "title": "Kanojo, Okarishimasu",
+    "alt_titles": "Rent-a-Girlfriend / カノジョ、お借りします",
+    "cover_link": "{{BASE}}/wp-content/uploads/kanojo-cover.jpg",
+    "authors": "Miyajima Reiji",
+    "artists": "Miyajima Reiji",
+    "genres": "Comedy, Romance, School Life, Manga",
+    "status": "ongoing",
+    "summary": "Kazuya rents a girlfriend.\r\nIt goes about as well as expected \u0026 then worse.\r\nvar ads = 1;",
+    "chapter_links": [
+      "{{BASE}}/kanojo-chapter-1/",
+      "{{BASE}}/kanojo-chapter-2/",
+      "{{BASE}}/kanojo-chapter-3/"
+    ],
+    "chapter_names": [
+      "Chapter 1",
+      "Chapter 2",
+      "Chapter 3"
+    ]
+  },
+  "pages": [
+    "{{BASE}}/uploads/01.jpg",
+    "https://{{HOST}}/uploads/02.jpg",
+    "{{BASE}}/uploads/03.jpg"
+  ]
+}
