@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dyskette/atsume/internal/app"
+	"github.com/dyskette/atsume/internal/scraper"
 	"github.com/dyskette/atsume/internal/store"
 )
 
@@ -53,6 +55,23 @@ func lastChecked(s store.Series) string {
 	default:
 		return fmt.Sprintf("checked %dd ago", int(d.Hours()/24))
 	}
+}
+
+// optionLabel prefers the caption a module supplied, falling back to its key.
+func optionLabel(o scraper.Option) string {
+	if o.Caption != "" {
+		return o.Caption
+	}
+	return o.Name
+}
+
+// passwordPlaceholder hints whether a password is already stored, without
+// revealing anything about it.
+func passwordPlaceholder(s *app.ModuleSettings) string {
+	if s.HasCredentials {
+		return "unchanged"
+	}
+	return ""
 }
 
 // truncate shortens a message for inline display, keeping the full text in the

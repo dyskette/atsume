@@ -6,7 +6,10 @@ import "github.com/dyskette/atsume/internal/scraper"
 // tracking it.
 templ Browse(module string, page int, entries []scraper.Entry) {
 	@Layout(module) {
-		<h1>{ module }</h1>
+		<div class="head">
+			<h1>{ module }</h1>
+			<a href={ templ.SafeURL("/modules/" + module + "/settings") }>Settings</a>
+		</div>
 		<p class="muted">Directory page { page + 1 }</p>
 		if len(entries) == 0 {
 			<p class="empty">

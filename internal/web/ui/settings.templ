@@ -1,0 +1,89 @@
+package ui
+
+import (
+	"fmt"
+
+	"github.com/dyskette/atsume/internal/app"
+	"github.com/dyskette/atsume/internal/scraper"
+)
+
+// ModuleSettings renders a module's declared options and its login form.
+templ ModuleSettings(s *app.ModuleSettings, saved bool) {
+	@Layout(s.Module) {
+		<div class="head">
+			<h1>{ s.Module }</h1>
+			<a href={ templ.SafeURL("/modules/" + s.Module) }>Browse</a>
+		</div>
+		if saved {
+			<p class="saved">Saved.</p>
+		}
+		<form
+			hx-post={ fmt.Sprintf("/modules/%s/settings", s.Module) }
+			hx-swap="outerHTML"
+			hx-target="closest main"
+		>
+			<h2>Options</h2>
+			if len(s.Options) == 0 {
+				<p class="muted">This module declares no options.</p>
+			}
+			<ul class="rows">
+				for _, o := range s.Options {
+					<li>
+						<span class="title">{ optionLabel(o) }</span>
+						@optionField(o, s.Values[o.Name])
+					</li>
+				}
+			</ul>
+
+			<h2>Account</h2>
+			if !s.SupportsLogin {
+				<p class="muted">This module does not take a login.</p>
+			} else if !s.SecretsEnabled {
+				<p class="muted">
+					Set <code>ATSUME_SECRET_KEY</code> to store a login. Without it a
+					password would be kept in the clear, which is refused.
+				</p>
+			} else {
+				<ul class="rows">
+					<li>
+						<span class="title">Username</span>
+						<input type="text" name="__username" value={ s.Username } autocomplete="off"/>
+					</li>
+					<li>
+						<span class="title">Password</span>
+						<input
+							type="password"
+							name="__password"
+							autocomplete="new-password"
+							placeholder={ passwordPlaceholder(s) }
+						/>
+					</li>
+				</ul>
+				<p class="muted">
+					Leave the password blank to keep the stored one. Clear both fields to
+					remove the login.
+				</p>
+			}
+
+			<div class="actions"><button type="submit" class="primary">Save</button></div>
+		</form>
+	}
+}
+
+// optionField renders the control a module asked for.
+templ optionField(o scraper.Option, value string) {
+	switch o.Kind {
+		case scraper.OptionCheckBox:
+			<input type="checkbox" name={ o.Name } value="1" checked?={ value == "1" }/>
+		case scraper.OptionSpinEdit:
+			<input type="number" name={ o.Name } value={ value }/>
+		case scraper.OptionComboBox:
+			<select name={ o.Name }>
+				for i, item := range o.Items {
+					<option value={ fmt.Sprint(i) } selected?={ value == fmt.Sprint(i) }>{ item }</option>
+				}
+			</select>
+		default:
+			<input type="text" name={ o.Name } value={ value }/>
+	}
+}

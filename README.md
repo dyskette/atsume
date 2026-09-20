@@ -25,9 +25,9 @@ downloads, CBZ output, and a web UI with live progress over SSE.
 atsume carries one patch against gopher-lua; see [docs/UPSTREAM.md](docs/UPSTREAM.md).
 Without it, 255 of 621 modules fail at handler time.
 
-Not implemented yet: Puppeteer-backed modules, the MangaFox watermark remover,
-and anti-bot solving. Modules needing those fail loudly and name the missing
-capability rather than returning blank fields.
+Not implemented yet: Puppeteer-backed modules and the MangaFox watermark
+remover. Modules needing those fail loudly and name the missing capability
+rather than returning blank fields.
 
 The 15 modules that do not load break down as 14 written against Lua 5.3 syntax
 (bitwise operators, floor division) that gopher-lua's 5.1 parser rejects, plus
@@ -65,8 +65,9 @@ secret store.
 | `ATSUME_WORKERS` | `3` | Chapters downloaded concurrently |
 | `ATSUME_HOST_CONCURRENCY` | `2` | Simultaneous requests per site |
 | `ATSUME_HOST_RPS` | `1` | Requests per second per site |
-| `ATSUME_FLARESOLVERR_URL` | — | Anti-bot solver, if you run one |
-| `ATSUME_SECRET_KEY` | — | Encrypts stored module credentials |
+| `ATSUME_FLARESOLVERR_URL` | — | FlareSolverr address, used only after a request is refused by an interstitial |
+| `ATSUME_NOTIFY_URL` | — | Receives a JSON POST when a check finds new chapters |
+| `ATSUME_SECRET_KEY` | — | Encrypts stored module credentials; without it, storing a login is refused |
 | `ATSUME_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 Pin `ATSUME_MODULES_REF` to a commit SHA in production. `master` tracks upstream
@@ -79,6 +80,39 @@ a backlog, not news. From then on each check downloads only what appeared since
 the last one. Use **Download all pending** on the series page to fetch a
 backlog deliberately, and the toggle on that page to stop checking a series
 without untracking it.
+
+### Module settings
+
+Each site has a settings page reachable from its listing. Modules declare their
+own options — show paid chapters, preferred language, a delay — and the form is
+generated from those declarations rather than written per module.
+
+The 28 modules that implement a login take a username and password there. The
+password is encrypted with a key derived from `ATSUME_SECRET_KEY`; without a key
+set, storing one is refused rather than written in the clear. A failed login
+fails the scrape, because a module that needed an account and did not get one
+returns a teaser page that would otherwise be recorded as the real chapter list.
+
+### Notifications
+
+`ATSUME_NOTIFY_URL` receives a JSON POST when a check finds new chapters:
+
+```json
+{"event":"new_chapters","series":"…","module":"…","count":2,
+ "chapters":["Chapter 41","Chapter 42"],"message":"…: 2 new chapter(s)"}
+```
+
+The shape is plain JSON rather than any one service's format — ntfy, Gotify,
+Apprise and a Discord webhook all differ, and guessing which from the URL would
+break on self-hosted instances.
+
+### Anti-bot challenges
+
+With `ATSUME_FLARESOLVERR_URL` set, a request refused by a Cloudflare or
+DDoS-Guard interstitial is retried through FlareSolverr, and the clearance
+cookie and user agent it earns are carried forward. It is consulted only after a
+refusal that actually looks like a challenge, so an ordinary 403 never costs a
+browser run.
 
 ### Output layout
 

@@ -150,6 +150,62 @@ func (s *Server) handleDownloadChapter(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, ui.ChapterRow(chapter))
 }
 
+func (s *Server) handleModuleSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := s.App.ModuleSettings(r.Context(), r.PathValue("name"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.ModuleSettings(settings, false))
+}
+
+func (s *Server) handleSaveModuleSettings(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	settings, err := s.App.ModuleSettings(r.Context(), name)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Read every declared option rather than whatever the form posted, so an
+	// unchecked checkbox — which browsers omit entirely — is recorded as off.
+	values := map[string]string{}
+	for _, o := range settings.Options {
+		if o.Kind == scraper.OptionCheckBox {
+			values[o.Name] = "0"
+			if r.PostForm.Get(o.Name) != "" {
+				values[o.Name] = "1"
+			}
+			continue
+		}
+		values[o.Name] = r.PostForm.Get(o.Name)
+	}
+
+	username := r.PostForm.Get("__username")
+	password := r.PostForm.Get("__password")
+	updateLogin := settings.SupportsLogin && settings.SecretsEnabled
+	if updateLogin && password == "" && settings.HasCredentials && username != "" {
+		// A blank password with a username means "keep the stored one".
+		updateLogin = false
+	}
+
+	if err := s.App.SaveModuleSettings(r.Context(), name, values, username, password, updateLogin); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	settings, err = s.App.ModuleSettings(r.Context(), name)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.ModuleSettings(settings, true))
+}
+
 // handleSubscribe turns automatic checking for one series on or off.
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

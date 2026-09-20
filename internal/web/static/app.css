@@ -105,3 +105,10 @@ footer {
 }
 
 .head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+
+.saved { color: var(--ok); }
+h2 { font-size: 1.05rem; margin: 1.4rem 0 0.4rem; }
+input[type=text], input[type=password], input[type=number], select {
+	padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--line);
+	background: var(--bg); color: var(--text); min-width: 14rem;
+}
