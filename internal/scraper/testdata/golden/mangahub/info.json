@@ -1,0 +1,16 @@
+{"data":{"manga":{
+  "title":"Vagabond",
+  "slug":"vagabond",
+  "status":"completed",
+  "image":"vagabond/cover.jpg",
+  "author":"Takehiko Inoue",
+  "artist":"Takehiko Inoue",
+  "genres":"Action, Historical, Seinen",
+  "description":"Shinmen Takezo becomes Miyamoto Musashi.",
+  "alternativeTitle":"バガボンド",
+  "chapters":[
+    {"number":"1","title":"The Age of Warring States"},
+    {"number":"2","title":""},
+    {"number":"3","title":"Chapter 3 - Already Numbered"}
+  ]
+}}}

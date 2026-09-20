@@ -1,0 +1,18 @@
+{"post":{
+  "id":12345,
+  "slug":"blood-and-steel",
+  "postTitle":"Blood and Steel",
+  "alternativeTitles":"철혈 / Cheolhyeol",
+  "featuredImage":"https://cdn.example.test/covers/bas.webp",
+  "author":"Han Jiwoo",
+  "artist":"Studio Ember",
+  "seriesType":"MANHWA",
+  "seriesStatus":"ONGOING",
+  "genres":[{"name":"Action"},{"name":"Drama"}],
+  "postContent":"<p>A smith forges a blade.</p><p>The blade forges him back.</p>",
+  "chapters":[
+    {"id":9001,"number":"1","slug":"chapter-1","title":"","price":"0"},
+    {"id":9002,"number":"2","slug":"chapter-2","title":"Awakening","price":"0"},
+    {"id":9003,"number":"3","slug":"chapter-3","title":"Locked","price":"150"}
+  ]
+}}

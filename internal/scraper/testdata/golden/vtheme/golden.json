@@ -1,0 +1,26 @@
+{
+  "template": "VTheme",
+  "info": {
+    "title": "Blood and Steel",
+    "alt_titles": "철혈 / Cheolhyeol",
+    "cover_link": "https://cdn.example.test/covers/bas.webp",
+    "authors": "Han Jiwoo",
+    "artists": "Studio Ember",
+    "genres": "Action, Drama, Manhwa",
+    "status": "ongoing",
+    "summary": "A smith forges a blade.\r\nThe blade forges him back.",
+    "chapter_links": [
+      "blood-and-steel/chapter-2/9002",
+      "blood-and-steel/chapter-1/9001"
+    ],
+    "chapter_names": [
+      "Chapter 2 - Awakening",
+      "Chapter 1"
+    ]
+  },
+  "pages": [
+    "https://cdn.example.test/bas/1/01.webp",
+    "https://cdn.example.test/bas/1/02.webp",
+    "https://cdn.example.test/bas/1/03.webp"
+  ]
+}

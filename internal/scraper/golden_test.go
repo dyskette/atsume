@@ -55,11 +55,79 @@ type goldenCase struct {
 	// needsChainedForIn marks a template that iterates with the
 	// `x.XPath(expr).Get()` idiom, which an unpatched runtime miscompiles.
 	needsChainedForIn bool
+
+	// rootURL, when set, replaces the test server: the module talks to fixed
+	// API hosts instead, and exchanges seeds a cassette with the responses.
+	// Templates built on a separate API host cannot be pointed at a local
+	// server, because they derive the API address from RootURL or hard-code it.
+	rootURL   string
+	exchanges []goldenExchange
 	// module is the Lua source, with %s replaced by the server URL.
 	module string
 }
 
 var goldenCases = []goldenCase{
+	{
+		name:              "mangahub",
+		template:          "MangaHub",
+		rootURL:           "https://mangahub.example.test",
+		seriesPath:        "/manga/vagabond",
+		chapterPath:       "/vagabond/chapter-1",
+		needsChainedForIn: false,
+		exchanges: []goldenExchange{
+			{method: "POST", url: "https://api.mghcdn.com/graphql", contains: "{manga(", file: "info.json"},
+			{method: "POST", url: "https://api.mghcdn.com/graphql", contains: "{chapter(", file: "pages.json"},
+		},
+		module: `
+function Init()
+	local m = NewWebsiteModule()
+	m.ID              = 'c3d4e5f60718293a4b5c6d7e8f901234'
+	m.Name            = 'GoldenHub'
+	m.RootURL         = '%s'
+	m.Category        = 'English'
+	m.OnGetInfo       = 'GetInfo'
+	m.OnGetPageNumber = 'GetPageNumber'
+end
+
+-- Variables is a per-site constant the module supplies, not the template.
+Variables = 'mn03'
+
+local Template = require 'templates.MangaHub'
+
+function GetInfo()       Template.GetInfo()       return no_error end
+function GetPageNumber() return Template.GetPageNumber() end
+`,
+	},
+	{
+		name:              "vtheme",
+		template:          "VTheme",
+		rootURL:           "https://vtheme.example.test",
+		seriesPath:        "/series/blood-and-steel",
+		chapterPath:       "/series/blood-and-steel/9001",
+		needsChainedForIn: true,
+		exchanges: []goldenExchange{
+			{method: "GET", url: "https://vtheme.example.test/series/blood-and-steel", file: "series.html"},
+			{method: "GET", url: "https://api.vtheme.example.test/api/post?postId=12345", file: "post.json"},
+			{method: "GET", url: "https://api.vtheme.example.test/api/chapter?chapterId=9001", file: "chapter.json"},
+		},
+		module: `
+function Init()
+	local m = NewWebsiteModule()
+	m.ID              = 'd4e5f60718293a4b5c6d7e8f90123456'
+	m.Name            = 'GoldenVTheme'
+	m.RootURL         = '%s'
+	m.Category        = 'English'
+	m.OnGetInfo       = 'GetInfo'
+	m.OnGetPageNumber = 'GetPageNumber'
+	m.AddOptionCheckBox('showpaidchapters', 'Show paid chapters', false)
+end
+
+local Template = require 'templates.VTheme'
+
+function GetInfo()       Template.GetInfo()       return no_error end
+function GetPageNumber() return Template.GetPageNumber() end
+`,
+	},
 	{
 		name:     "mangareaderonline",
 		template: "MangaReaderOnline",
@@ -190,14 +258,25 @@ func TestGolden(t *testing.T) {
 				t.Skip("blocked by the gopher-lua generic-for bug; see TestRuntimeSupportsChainedForIn")
 			}
 			caseDir := filepath.Join("testdata", "golden", c.name)
-			srv, base := goldenServer(t, caseDir, c.routes)
+
+			var base string
+			var hostAddr string
+			var transport http.RoundTripper
+			if c.rootURL != "" {
+				base, hostAddr = c.rootURL, strings.TrimPrefix(c.rootURL, "https://")
+				transport = seedCassette(t, caseDir, c.exchanges)
+			} else {
+				var srv *httptest.Server
+				srv, base = goldenServer(t, caseDir, c.routes)
+				hostAddr = srv.Listener.Addr().String()
+			}
 
 			modPath := filepath.Join(t.TempDir(), c.name+".lua")
 			if err := os.WriteFile(modPath, []byte(fmt.Sprintf(c.module, base)), 0o644); err != nil {
 				t.Fatal(err)
 			}
 
-			h := &Host{LuaDir: luaRoot}
+			h := &Host{LuaDir: luaRoot, Transport: transport}
 			r, err := h.Open(context.Background(), modPath)
 			if err != nil {
 				t.Fatal(err)
@@ -234,7 +313,7 @@ func TestGolden(t *testing.T) {
 			// The test server's port changes every run, so it is folded back
 			// into a placeholder before the comparison.
 			normalized := strings.ReplaceAll(mustJSON(t, got), base, "{{BASE}}")
-			normalized = strings.ReplaceAll(normalized, srv.Listener.Addr().String(), "{{HOST}}")
+			normalized = strings.ReplaceAll(normalized, hostAddr, "{{HOST}}")
 
 			goldenPath := filepath.Join(caseDir, "golden.json")
 			if *updateGolden {
@@ -255,6 +334,40 @@ func TestGolden(t *testing.T) {
 			}
 		})
 	}
+}
+
+// goldenExchange is one response seeded into a cassette. A request body is
+// never matched, so a query carrying a nonce still replays.
+type goldenExchange struct {
+	method string
+	url    string
+	file   string
+	// contains selects this response by a substring of the request body, for an
+	// endpoint that serves several operations from one URL.
+	contains string
+}
+
+// seedCassette builds a cassette from a case's declared exchanges.
+func seedCassette(t *testing.T, dir string, exchanges []goldenExchange) *Cassette {
+	t.Helper()
+	c, err := NewCassette(filepath.Join(t.TempDir(), "cassette"), false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range exchanges {
+		body, err := os.ReadFile(filepath.Join(dir, e.file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.contains != "" {
+			c.PutMatching(e.method, e.url, e.contains, 200, body)
+			continue
+		}
+		if err := c.Put(e.method, e.url, nil, 200, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return c
 }
 
 // goldenServer serves the case's fixture files, substituting the live base URL.
