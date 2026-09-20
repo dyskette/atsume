@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # The upstream module corpus moves independently of this repository, so the
+    # drift check runs on a timer as well as on every change.
+    - cron: "17 4 * * *"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      - run: make tools
+      - run: make check
+
+  corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      - run: make tools
+      # Clones FMD2 to measure how much of its XPath surface still translates.
+      # The checkout is never committed; see docs/MODULES.md.
+      - run: make corpus

@@ -1,0 +1,11 @@
+# Example quadlet. PublishPort belongs on the pod, never on the container.
+[Unit]
+Description=atsume pod
+
+[Pod]
+PodName=atsume
+Network=homeservernet.network
+PublishPort=127.0.0.1:8080:8080
+
+[Install]
+WantedBy=default.target
