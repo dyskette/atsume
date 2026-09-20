@@ -1,0 +1,27 @@
+{
+  "template": "KeyoApp",
+  "info": {
+    "title": "Omniscient Reader",
+    "alt_titles": "전지적 독자 시점 / Jeonjijeok Dokja Sijeom",
+    "cover_link": "{{BASE}}/media/covers/orv.webp",
+    "authors": "Sing Shong",
+    "artists": "Sleepy-C",
+    "genres": "Action, Fantasy, Manhwa",
+    "status": "ongoing",
+    "summary": "Only Kim Dokja knows how the story ends.\r\nThen the story becomes reality \u0026 everyone else has to catch up.",
+    "chapter_links": [
+      "{{BASE}}/series/orv/chapter-1",
+      "{{BASE}}/series/orv/chapter-2",
+      "{{BASE}}/series/orv/chapter-3"
+    ],
+    "chapter_names": [
+      "Chapter 1",
+      "Chapter 2",
+      "Chapter 3"
+    ]
+  },
+  "pages": [
+    "{{BASE}}/cdn/orv/1/001.webp",
+    "{{BASE}}/cdn/orv/1/002.webp"
+  ]
+}

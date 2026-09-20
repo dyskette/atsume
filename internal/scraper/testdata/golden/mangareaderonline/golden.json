@@ -1,0 +1,28 @@
+{
+  "template": "MangaReaderOnline",
+  "info": {
+    "title": "\tBerserk   ",
+    "alt_titles": "",
+    "cover_link": "{{BASE}}/uploads/berserk-cover.jpg",
+    "authors": "Kentaro Miura, Studio Gaga",
+    "artists": "Kentaro Miura",
+    "genres": "Action, Dark Fantasy",
+    "status": "ongoing",
+    "summary": "Guts, a former mercenary, hunts the apostles who took everything from him.",
+    "chapter_links": [
+      "{{BASE}}/berserk/372",
+      "{{BASE}}/berserk/373",
+      "{{BASE}}/berserk/374"
+    ],
+    "chapter_names": [
+      "Chapter 372",
+      "Chapter 373",
+      "Chapter 374 – Ill Omen"
+    ]
+  },
+  "pages": [
+    "{{BASE}}/reader/01.jpg",
+    "https://{{HOST}}/reader/02.jpg",
+    "{{BASE}}/reader/03.png"
+  ]
+}

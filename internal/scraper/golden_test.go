@@ -61,6 +61,61 @@ type goldenCase struct {
 
 var goldenCases = []goldenCase{
 	{
+		name:     "mangareaderonline",
+		template: "MangaReaderOnline",
+		routes: map[string]string{
+			"/berserk":     "series.html",
+			"/berserk/374": "chapter.html",
+		},
+		seriesPath:        "/berserk",
+		chapterPath:       "/berserk/374",
+		needsChainedForIn: true,
+		module: `
+function Init()
+	local m = NewWebsiteModule()
+	m.ID              = 'a1b2c3d4e5f60718293a4b5c6d7e8f90'
+	m.Name            = 'GoldenReaderOnline'
+	m.RootURL         = '%s'
+	m.Category        = 'English'
+	m.OnGetInfo       = 'GetInfo'
+	m.OnGetPageNumber = 'GetPageNumber'
+end
+
+local Template = require 'templates.MangaReaderOnline'
+
+function GetInfo()       Template.GetInfo()       return no_error end
+function GetPageNumber() return Template.GetPageNumber() end
+`,
+	},
+	{
+		name:     "keyoapp",
+		template: "KeyoApp",
+		routes: map[string]string{
+			"/series/orv":           "series.html",
+			"/series/orv/chapter-1": "chapter.html",
+		},
+		seriesPath:        "/series/orv",
+		chapterPath:       "/series/orv/chapter-1",
+		needsChainedForIn: true,
+		module: `
+function Init()
+	local m = NewWebsiteModule()
+	m.ID              = 'b2c3d4e5f60718293a4b5c6d7e8f9012'
+	m.Name            = 'GoldenKeyo'
+	m.RootURL         = '%s'
+	m.Category        = 'English'
+	m.OnGetInfo       = 'GetInfo'
+	m.OnGetPageNumber = 'GetPageNumber'
+	m.AddOptionCheckBox('showpaidchapters', 'Show paid chapters', false)
+end
+
+local Template = require 'templates.KeyoApp'
+
+function GetInfo()       Template.GetInfo()       return no_error end
+function GetPageNumber() return Template.GetPageNumber() end
+`,
+	},
+	{
 		name:     "madara",
 		template: "Madara",
 		routes: map[string]string{
