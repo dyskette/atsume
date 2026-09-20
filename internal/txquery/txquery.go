@@ -114,11 +114,36 @@ func (q *Query) eval(expr string, ctx *html.Node) (any, Caps, error) {
 	if err != nil {
 		return nil, caps, err
 	}
-	root := ctx
-	if root == nil {
-		root = q.tree(caps.JSON)
+	return e.Evaluate(htmlquery.CreateXPathNavigator(q.rootFor(caps, ctx))), caps, nil
+}
+
+// rootFor picks the node an expression evaluates against.
+func (q *Query) rootFor(caps Caps, ctx *html.Node) *html.Node {
+	if ctx != nil {
+		return ctx
 	}
-	return e.Evaluate(htmlquery.CreateXPathNavigator(root)), caps, nil
+	if caps.JSONSource != "" {
+		// The JSON is not the response body but the result of an expression
+		// over it, so it is extracted and parsed per call rather than cached.
+		if t := q.jsonFrom(caps.JSONSource); t != nil {
+			return t
+		}
+		return q.htmlTree
+	}
+	return q.tree(caps.JSON)
+}
+
+// jsonFrom evaluates src against the document and parses the result as JSON.
+func (q *Query) jsonFrom(src string) *html.Node {
+	text := q.XPathString(src)
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	t, err := ParseJSONTree([]byte(text))
+	if err != nil {
+		return nil
+	}
+	return t
 }
 
 // evalValues returns the string sequence an expression produces.
@@ -143,11 +168,7 @@ func (q *Query) evalValues(expr string, ctx *html.Node) ([]string, Caps) {
 		if err != nil {
 			continue
 		}
-		root := ctx
-		if root == nil {
-			root = q.tree(caps.JSON)
-		}
-		all = append(all, values(e.Evaluate(htmlquery.CreateXPathNavigator(root)))...)
+		all = append(all, values(e.Evaluate(htmlquery.CreateXPathNavigator(q.rootFor(caps, ctx))))...)
 	}
 	_ = out
 	return postProcess(all, caps), caps
@@ -275,8 +296,7 @@ func (q *Query) XPath(expr string) []*Node {
 	if err != nil {
 		return nil
 	}
-	root := q.tree(caps.JSON)
-	v, ok := e.Evaluate(htmlquery.CreateXPathNavigator(root)).(*xpath.NodeIterator)
+	v, ok := e.Evaluate(htmlquery.CreateXPathNavigator(q.rootFor(caps, nil))).(*xpath.NodeIterator)
 	if !ok {
 		return nil
 	}

@@ -244,3 +244,49 @@ func TestPropertyReturnsNode(t *testing.T) {
 		t.Errorf("absent property = %q, want empty", got)
 	}
 }
+
+// TestJSONFromExpression covers json(expr) where expr is not the document.
+//
+// 47 call sites across 24 modules and templates extract their JSON from a
+// script body or a data attribute rather than the response itself. Discarding
+// the argument parses the wrong document and returns plausible-looking rubbish
+// — the enclosing script text, say — instead of failing.
+func TestJSONFromExpression(t *testing.T) {
+	const doc = `<html><body><script>
+var _data = { episodeList : [{"id":11,"title":"One"},{"id":12,"title":"Two"}] };
+</script>
+<div id="app" data-page='{"props":{"name":"Zed"}}'></div>
+</body></html>`
+	q, err := ParseString(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// From modules/Tapas.lua: the JSON is carved out of a script with string
+	// functions, then parsed.
+	const episodes = `json(//script[contains(.,"var _data")]/concat(` +
+		`substring-before(substring-after(.,"episodeList :"),"]"),"]"))()`
+	if got, want := q.XPathStringAll(episodes+`/title`, ", "), "One, Two"; got != want {
+		out, c := Rewrite(episodes + `/title`)
+		t.Errorf("got %q, want %q\n  rewritten %s\n  source %q", got, want, out, c.JSONSource)
+	}
+
+	// The shape used by Inertia and Next.js sites.
+	if got, want := q.XPathString(`json(//div[@id="app"]/@data-page).props.name`), "Zed"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestJSONOfDocumentStillWorks guards the 516 call sites using json(*)/json(.)
+// against the change above.
+func TestJSONOfDocumentStillWorks(t *testing.T) {
+	q, err := ParseString(`{"a":{"b":"c"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expr := range []string{`json(*).a.b`, `parse-json(.).a.b`} {
+		if got := q.XPathString(expr); got != "c" {
+			t.Errorf("%s = %q, want c", expr, got)
+		}
+	}
+}

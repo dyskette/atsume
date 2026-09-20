@@ -29,6 +29,9 @@ type Caps struct {
 	// members are not all node-sets, so the host evaluates them separately.
 	Parts   []string
 	JSONFns bool // jn:members() / jn:keys()
+	// JSONSource is the expression whose result is the JSON document, for the
+	// json(expr) form where expr does not name the document itself.
+	JSONSource string
 }
 
 func (c Caps) names() []string {
@@ -164,6 +167,12 @@ func rewriteJSON(e string, c *Caps) string {
 				return e
 			}
 			c.JSON = true
+			// json(*) and json(.) mean the document. Anything else names an
+			// expression whose result is the JSON text — a script body, a data
+			// attribute — and discarding it silently parses the wrong document.
+			if arg := strings.TrimSpace(e[open+1 : close]); arg != "*" && arg != "." {
+				c.JSONSource = arg
+			}
 			path, next := consumeChain(e, close+1)
 			e = e[:start] + path + e[next:]
 		}
