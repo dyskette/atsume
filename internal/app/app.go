@@ -18,13 +18,14 @@ import (
 
 // App holds the long-lived collaborators.
 type App struct {
-	Cfg      *config.Config
-	Store    *store.Store
-	Queue    *jobs.Queue
-	Bus      *jobs.Bus
-	Registry *scraper.Registry
-	Limiter  *scraper.HostLimiter
-	Pool     *jobs.Pool
+	Cfg       *config.Config
+	Store     *store.Store
+	Queue     *jobs.Queue
+	Bus       *jobs.Bus
+	Registry  *scraper.Registry
+	Limiter   *scraper.HostLimiter
+	Pool      *jobs.Pool
+	Scheduler *Scheduler
 	// Transport, when set, replaces the default HTTP transport everywhere.
 	Transport http.RoundTripper
 }
@@ -48,6 +49,7 @@ func New(cfg *config.Config, st *store.Store, reg *scraper.Registry) *App {
 			jobs.KindDownloadChapter: a.downloadChapter,
 		},
 	}
+	a.Scheduler = NewScheduler(a)
 	return a
 }
 
@@ -122,6 +124,16 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 		return err
 	}
 
+	// Knowing whether this is the first look at the series decides whether the
+	// chapters it turns up are "new". On a first import every chapter is
+	// unknown, and queuing the whole backlog is rarely what tracking a series
+	// was meant to do.
+	previous, err := a.Store.ListChapters(ctx, id)
+	if err != nil {
+		return err
+	}
+	initialImport := len(previous) == 0
+
 	links, names := info.ChapterLinks.All(), info.ChapterNames.All()
 	chs := make([]store.Chapter, 0, len(links))
 	for i, link := range links {
@@ -134,13 +146,27 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 			URL: link, Name: name, Number: parsed.Number, Volume: parsed.Volume,
 		})
 	}
-	if err := a.Store.ReplaceChapters(ctx, id, chs); err != nil {
+	added, err := a.Store.ReplaceChapters(ctx, id, chs)
+	if err != nil {
 		return err
 	}
 
+	message := fmt.Sprintf("%s: %d chapters", info.Title, len(chs))
+	if len(added) > 0 && !initialImport {
+		message = fmt.Sprintf("%s: %d new chapter(s)", info.Title, len(added))
+		slog.Info("new chapters", "series", info.Title, "count", len(added))
+
+		if a.Cfg.AutoDownload {
+			for _, c := range added {
+				if err := a.EnqueueDownload(ctx, c.ID); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	a.Bus.Publish(jobs.Event{
-		Kind: "series-updated", SeriesID: id, State: "done",
-		Message: fmt.Sprintf("%s: %d chapters", info.Title, len(chs)),
+		Kind: "series-updated", SeriesID: id, State: "done", Message: message,
 	})
 	return nil
 }

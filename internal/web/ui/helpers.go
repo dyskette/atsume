@@ -4,6 +4,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dyskette/atsume/internal/store"
 )
@@ -32,6 +33,25 @@ func stateLabel(c store.Chapter) string {
 		return "failed"
 	default:
 		return "pending"
+	}
+}
+
+// lastChecked renders when a series was last looked at, which is the only
+// signal that automatic checking is actually running.
+func lastChecked(s store.Series) string {
+	if !s.CheckedAt.Valid {
+		return "never checked"
+	}
+	d := time.Since(s.CheckedAt.Time)
+	switch {
+	case d < time.Minute:
+		return "checked just now"
+	case d < time.Hour:
+		return fmt.Sprintf("checked %dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("checked %dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("checked %dd ago", int(d.Hours()/24))
 	}
 }
 

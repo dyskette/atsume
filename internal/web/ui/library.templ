@@ -9,7 +9,14 @@ import (
 // Library is the home page: everything being tracked.
 templ Library(series []store.Series) {
 	@Layout("Library") {
-		<h1>Library</h1>
+		<div class="head">
+			<h1>Library</h1>
+			if len(series) > 0 {
+				<form hx-post="/check" hx-swap="none">
+					<button type="submit">Check all now</button>
+				</form>
+			}
+		</div>
 		if len(series) == 0 {
 			<p class="empty">
 				Nothing tracked yet. Pick a <a href="/modules">site</a> and track a title.
@@ -23,6 +30,7 @@ templ Library(series []store.Series) {
 					if s.Status != "" {
 						<span class="badge">{ s.Status }</span>
 					}
+					<span class="muted">{ lastChecked(s) }</span>
 				</li>
 			}
 		</ul>
@@ -49,6 +57,7 @@ templ SeriesPage(s store.Series, chapters []store.Chapter) {
 			<p class="summary">{ s.Summary }</p>
 		}
 		<div class="actions">
+			@SubscribeButton(s)
 			<form hx-post={ fmt.Sprintf("/series/%d/refresh", s.ID) } hx-swap="none">
 				<button type="submit">Refresh chapters</button>
 			</form>
@@ -98,4 +107,22 @@ templ ChapterProgressRow(c store.Chapter, done int, total int) {
 		<span class="title">{ c.Name }</span>
 		<span class="badge downloading">{ Progress(done, total) }</span>
 	</li>
+}
+
+// SubscribeButton toggles automatic checking for a series. It swaps itself, so
+// the label always reflects the stored state.
+templ SubscribeButton(s store.Series) {
+	<form
+		id={ fmt.Sprintf("subscribe-%d", s.ID) }
+		hx-post={ fmt.Sprintf("/series/%d/subscribe", s.ID) }
+		hx-swap="outerHTML"
+	>
+		if s.Subscribed {
+			<input type="hidden" name="on" value="0"/>
+			<button type="submit" class="primary">Checking for new chapters</button>
+		} else {
+			<input type="hidden" name="on" value="1"/>
+			<button type="submit">Not being checked</button>
+		}
+	</form>
 }

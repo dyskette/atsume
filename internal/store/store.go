@@ -154,33 +154,108 @@ func (s *Store) GetSeries(ctx context.Context, id int64) (Series, error) {
 	return v, err
 }
 
-// ReplaceChapters records a series' chapter list, preserving the state of the
-// chapters already known so that a refresh never re-downloads what is on disk.
-func (s *Store) ReplaceChapters(ctx context.Context, seriesID int64, chs []Chapter) error {
+// ReplaceChapters records a series' chapter list and returns the chapters that
+// were not previously known.
+//
+// Existing rows keep their state, so a refresh never re-downloads what is
+// already on disk. The newly seen chapters are what a subscription check acts
+// on, which is why they are reported rather than counted.
+func (s *Store) ReplaceChapters(ctx context.Context, seriesID int64, chs []Chapter) ([]Chapter, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
+
+	known, err := knownChapterURLs(ctx, tx, seriesID)
+	if err != nil {
+		return nil, err
+	}
 
 	const q = `
 		INSERT INTO chapters (series_id, url, name, number, volume, position)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (series_id, url) DO UPDATE SET
 			name = excluded.name, number = excluded.number,
-			volume = excluded.volume, position = excluded.position`
+			volume = excluded.volume, position = excluded.position
+		RETURNING id`
 	stmt, err := tx.PrepareContext(ctx, q)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer stmt.Close()
 
+	var added []Chapter
 	for i, c := range chs {
-		if _, err := stmt.ExecContext(ctx, seriesID, c.URL, c.Name, c.Number, c.Volume, i); err != nil {
-			return err
+		var id int64
+		if err := stmt.QueryRowContext(ctx, seriesID, c.URL, c.Name, c.Number, c.Volume, i).Scan(&id); err != nil {
+			return nil, err
+		}
+		if !known[c.URL] {
+			c.ID, c.SeriesID, c.Position, c.State = id, seriesID, i, ChapterPending
+			added = append(added, c)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return added, nil
+}
+
+func knownChapterURLs(ctx context.Context, tx *sql.Tx, seriesID int64) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT url FROM chapters WHERE series_id = ?`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	known := map[string]bool{}
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, err
+		}
+		known[u] = true
+	}
+	return known, rows.Err()
+}
+
+// SeriesDueForCheck returns subscribed series whose last check is older than
+// interval, oldest first, capped at limit.
+//
+// Ordering by checked_at means a backlog drains fairly rather than starving
+// whichever series happens to sort last.
+func (s *Store) SeriesDueForCheck(ctx context.Context, interval time.Duration, limit int) ([]Series, error) {
+	const q = `
+		SELECT id, module_id, module_name, url, title, cover_url, authors,
+		       artists, genres, status, summary, subscribed, checked_at
+		FROM series
+		WHERE subscribed = 1 AND (checked_at IS NULL OR checked_at < ?)
+		ORDER BY checked_at IS NOT NULL, checked_at
+		LIMIT ?`
+	rows, err := s.DB.QueryContext(ctx, q, time.Now().Add(-interval), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Series
+	for rows.Next() {
+		var v Series
+		if err := rows.Scan(&v.ID, &v.ModuleID, &v.ModuleName, &v.URL, &v.Title,
+			&v.CoverURL, &v.Authors, &v.Artists, &v.Genres, &v.Status,
+			&v.Summary, &v.Subscribed, &v.CheckedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// SetSubscribed turns automatic checking for a series on or off.
+func (s *Store) SetSubscribed(ctx context.Context, id int64, on bool) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE series SET subscribed = ? WHERE id = ?`, on, id)
+	return err
 }
 
 // ListChapters returns a series' chapters in reading order.

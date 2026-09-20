@@ -150,6 +150,32 @@ func (s *Server) handleDownloadChapter(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, ui.ChapterRow(chapter))
 }
 
+// handleSubscribe turns automatic checking for one series on or off.
+func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	on := r.FormValue("on") == "1"
+	if err := s.App.Store.SetSubscribed(r.Context(), id, on); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	series, err := s.App.Store.GetSeries(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.SubscribeButton(series))
+}
+
+// handleCheckNow asks the scheduler for an immediate sweep.
+func (s *Server) handleCheckNow(w http.ResponseWriter, r *http.Request) {
+	s.App.Scheduler.CheckNow()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	stats, err := s.App.Queue.Stats(r.Context())
 	if err != nil {
@@ -157,7 +183,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"modules":%d,"ref":%q,"jobs":{"pending":%d,"running":%d,"failed":%d}}`,
+	fmt.Fprintf(w, `{"modules":%d,"ref":%q,"check_interval":%q,"jobs":{"pending":%d,"running":%d,"failed":%d}}`,
 		len(s.App.Registry.Modules()), s.App.Registry.Ref(),
+		s.App.Cfg.CheckInterval.String(),
 		stats["pending"], stats["running"], stats["failed"])
 }

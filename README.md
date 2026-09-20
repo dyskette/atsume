@@ -11,14 +11,19 @@ deliberately does not include a reader or a library model.
 ```
    browse a site  ->  track a title  ->  chapters queued  ->  CBZ in your library
         Lua module         SQLite            worker pool          Komga scans it
+                              ^                    |
+                              +--- every 6h, new chapters only
 ```
 
 ## Status
 
 **606 of 621 upstream modules load** (97.6%). Working: module loading, the
-TXQuery/XPath translation layer, JavaScript execution for protected pages, the
-job queue, image downloads, CBZ output, and a web UI with live progress over
-SSE.
+TXQuery/XPath translation layer, JavaScript execution for protected pages,
+image descrambling, scheduled subscription checks, the job queue, image
+downloads, CBZ output, and a web UI with live progress over SSE.
+
+atsume carries one patch against gopher-lua; see [docs/UPSTREAM.md](docs/UPSTREAM.md).
+Without it, 255 of 621 modules fail at handler time.
 
 Not implemented yet: Puppeteer-backed modules, the MangaFox watermark remover,
 and anti-bot solving. Modules needing those fail loudly and name the missing
@@ -54,6 +59,9 @@ secret store.
 | `ATSUME_LIBRARY_DIR` | `/library` | Where CBZ files are written |
 | `ATSUME_MODULES_REPO` | FMD2 on GitHub | Module source repository |
 | `ATSUME_MODULES_REF` | `master` | Pinned revision |
+| `ATSUME_CHECK_INTERVAL` | `6h` | How often a subscribed series is re-checked; `0` disables it |
+| `ATSUME_CHECK_BATCH` | `10` | Series enqueued per sweep, so a large library spreads out |
+| `ATSUME_AUTO_DOWNLOAD` | `true` | Queue newly found chapters automatically |
 | `ATSUME_WORKERS` | `3` | Chapters downloaded concurrently |
 | `ATSUME_HOST_CONCURRENCY` | `2` | Simultaneous requests per site |
 | `ATSUME_HOST_RPS` | `1` | Requests per second per site |
@@ -63,6 +71,14 @@ secret store.
 
 Pin `ATSUME_MODULES_REF` to a commit SHA in production. `master` tracks upstream
 and a bad commit there would otherwise reach you unreviewed.
+
+### Subscriptions
+
+Tracking a series records its chapters but downloads nothing: a first import is
+a backlog, not news. From then on each check downloads only what appeared since
+the last one. Use **Download all pending** on the series page to fetch a
+backlog deliberately, and the toggle on that page to stop checking a series
+without untracking it.
 
 ### Output layout
 

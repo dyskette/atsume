@@ -64,6 +64,7 @@ func run() error {
 	a := app.New(cfg, st, reg)
 
 	go a.Pool.Run(ctx)
+	go a.Scheduler.Run(ctx)
 
 	srv := web.New(a, cfg.Addr)
 	errs := make(chan error, 1)

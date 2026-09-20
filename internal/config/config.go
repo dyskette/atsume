@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config is the full runtime configuration. Every field has a working default
@@ -24,6 +25,16 @@ type Config struct {
 	// program; see docs/MODULES.md.
 	ModulesRepo string
 	ModulesRef  string
+
+	// CheckInterval is how often a subscribed series is re-checked for new
+	// chapters. Zero disables automatic checking entirely.
+	CheckInterval time.Duration
+	// CheckBatch caps how many series one scheduler tick enqueues, so a large
+	// library spreads its checks out instead of flooding the queue at boot.
+	CheckBatch int
+	// AutoDownload queues newly discovered chapters for download. With it off,
+	// a check only records that they exist.
+	AutoDownload bool
 
 	// Workers is the number of chapters downloaded concurrently.
 	Workers int
@@ -57,9 +68,16 @@ func Load() (*Config, error) {
 		FlaresolverrURL: env("ATSUME_FLARESOLVERR_URL", ""),
 		SecretKey:       env("ATSUME_SECRET_KEY", ""),
 		LogLevel:        env("ATSUME_LOG_LEVEL", "info"),
+		AutoDownload:    envBool("ATSUME_AUTO_DOWNLOAD", true),
 	}
 
 	var err error
+	if c.CheckInterval, err = envDuration("ATSUME_CHECK_INTERVAL", 6*time.Hour); err != nil {
+		return nil, err
+	}
+	if c.CheckBatch, err = envInt("ATSUME_CHECK_BATCH", 10); err != nil {
+		return nil, err
+	}
 	if c.Workers, err = envInt("ATSUME_WORKERS", 3); err != nil {
 		return nil, err
 	}
@@ -78,6 +96,17 @@ func Load() (*Config, error) {
 	}
 	if c.HostRPS <= 0 {
 		return nil, fmt.Errorf("ATSUME_HOST_RPS must be greater than 0")
+	}
+	if c.CheckInterval < 0 {
+		return nil, fmt.Errorf("ATSUME_CHECK_INTERVAL cannot be negative")
+	}
+	// A very short interval would hammer every tracked site; the sites are not
+	// ours and new chapters do not appear minute to minute.
+	if c.CheckInterval > 0 && c.CheckInterval < 15*time.Minute {
+		return nil, fmt.Errorf("ATSUME_CHECK_INTERVAL must be at least 15m, or 0 to disable")
+	}
+	if c.CheckBatch < 1 {
+		return nil, fmt.Errorf("ATSUME_CHECK_BATCH must be at least 1")
 	}
 	return c, nil
 }
@@ -105,6 +134,29 @@ func envInt(key string, def int) (int, error) {
 		return 0, fmt.Errorf("%s: %w", key, err)
 	}
 	return n, nil
+}
+
+func envBool(key string, def bool) bool {
+	switch strings.ToLower(env(key, "")) {
+	case "":
+		return def
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
+
+func envDuration(key string, def time.Duration) (time.Duration, error) {
+	raw := env(key, "")
+	if raw == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return d, nil
 }
 
 func envFloat(key string, def float64) (float64, error) {
