@@ -337,13 +337,33 @@ func MaybeFillHost(root, u string) string {
 	return base.ResolveReference(ref).String()
 }
 
-// MangaInfoStatusIfPos maps a site's status text onto FMD2's vocabulary. Each
+// Default keyword lists for MangaInfoStatusIfPos, matching uBaseUnit.pas.
+//
+// Modules call it with one argument and rely on these; without them a site that
+// says "Completed" records no status at all.
+const (
+	defaultOngoing   = "ongoing"
+	defaultCompleted = "complete"
+	defaultHiatus    = "hiatus"
+	defaultDropped   = "cancel"
+)
+
+// MangaInfoStatusIfPos maps a site's status text onto a fixed vocabulary. Each
 // argument is a pipe-separated list of substrings to look for.
+//
+// The order is ongoing, completed, hiatus, dropped — the same as upstream,
+// which matters when a status contains keywords from more than one list.
+// Upstream returns numeric codes and the literal "Unknown"; readable strings
+// are used here instead, with "" for no match so the interface can simply omit
+// the badge.
 func MangaInfoStatusIfPos(s, ongoing, completed, hiatus, dropped string) string {
+	if strings.TrimSpace(s) == "" {
+		return ""
+	}
 	lower := strings.ToLower(s)
 	for _, c := range []struct{ list, out string }{
-		{completed, "completed"},
 		{ongoing, "ongoing"},
+		{completed, "completed"},
 		{hiatus, "hiatus"},
 		{dropped, "dropped"},
 	} {
@@ -408,8 +428,9 @@ func registerBuiltins(L *lua.LState) {
 	}))
 	L.SetGlobal("MangaInfoStatusIfPos", L.NewFunction(func(L *lua.LState) int {
 		L.Push(lua.LString(MangaInfoStatusIfPos(
-			L.CheckString(1), L.OptString(2, ""), L.OptString(3, ""),
-			L.OptString(4, ""), L.OptString(5, ""))))
+			L.CheckString(1),
+			L.OptString(2, defaultOngoing), L.OptString(3, defaultCompleted),
+			L.OptString(4, defaultHiatus), L.OptString(5, defaultDropped))))
 		return 1
 	}))
 }

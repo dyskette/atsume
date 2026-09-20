@@ -480,7 +480,7 @@ func rewriteSequence(e string, c *Caps) string {
 		// A union only works when every member is a node-set. When one is not —
 		// a concat() or a literal — record the members so the host can evaluate
 		// them one by one; the union stays as a fallback.
-		if i == 0 && close == len(e)-1 && anyNonNodeSet(parts) {
+		if isWholeExpression(e, i, close) && anyNonNodeSet(parts) {
 			c.Parts = parts
 		}
 		repl := "(" + strings.Join(parts, " | ") + ")"
@@ -692,6 +692,27 @@ func normalizeQuotes(e string) string {
 		i = end - 1
 	}
 	return b.String()
+}
+
+// isWholeExpression reports whether the span from open to close is the entire
+// expression apart from redundant wrapping parentheses.
+//
+// unwrapCall parenthesises the argument it keeps, so `string-join((a, b), sep)`
+// becomes `((a, b))` and the sequence sits one level in. Stripping those
+// parentheses outright is not an option: for a bare `(a, b)` they are the
+// sequence itself.
+func isWholeExpression(e string, open, close int) bool {
+	for _, r := range e[:open] {
+		if r != '(' && r != ' ' && r != '\t' {
+			return false
+		}
+	}
+	for _, r := range e[close+1:] {
+		if r != ')' && r != ' ' && r != '\t' {
+			return false
+		}
+	}
+	return true
 }
 
 // anyNonNodeSet reports whether a sequence member cannot appear in a union.

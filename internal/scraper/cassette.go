@@ -33,6 +33,19 @@ type Cassette struct {
 
 	mu   sync.Mutex
 	used map[string]bool
+	// matchers are seeded responses selected by a substring of the request
+	// body. They exist because an API can serve several operations from one
+	// URL — a GraphQL endpoint being the usual case — so neither the URL nor an
+	// exact body is a workable key for a hand-written fixture.
+	matchers []matcher
+}
+
+type matcher struct {
+	method   string
+	url      string
+	contains string
+	status   int
+	body     []byte
 }
 
 // NewCassette opens a cassette directory. In record mode the directory is
@@ -71,6 +84,63 @@ func key(method, url string, body []byte) string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
+// urlKey identifies an exchange by method and URL alone.
+//
+// It is the fallback when no body-specific recording exists, which covers the
+// common case of a POST carrying a nonce or timestamp that differs on every
+// run and would otherwise never match a recording.
+func urlKey(method, url string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "url-only\n%s\n%s\n", method, url)
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// PutMatching seeds a response selected by a substring of the request body.
+func (c *Cassette) PutMatching(method, url, contains string, status int, body []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.matchers = append(c.matchers, matcher{
+		method: method, url: url, contains: contains, status: status, body: body,
+	})
+}
+
+// match finds a seeded matcher for a request.
+func (c *Cassette) match(method, url string, body []byte) (matcher, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, m := range c.matchers {
+		if m.method == method && m.url == url && strings.Contains(string(body), m.contains) {
+			return m, true
+		}
+	}
+	return matcher{}, false
+}
+
+// Put seeds a response into the cassette.
+//
+// A nil reqBody stores it under the URL-only key, so a hand-written fixture
+// need not reproduce a request body exactly.
+func (c *Cassette) Put(method, url string, reqBody []byte, status int, respBody []byte) error {
+	if err := os.MkdirAll(c.dir, 0o755); err != nil {
+		return err
+	}
+	k := urlKey(method, url)
+	if reqBody != nil {
+		k = key(method, url, reqBody)
+	}
+	ex := exchange{Method: method, URL: url, Status: status}
+	if isText(respBody) {
+		ex.Body = string(respBody)
+	} else {
+		ex.Base64 = encodeBase64(respBody)
+	}
+	out, err := json.MarshalIndent(ex, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.path(k), out, 0o644)
+}
+
 func (c *Cassette) path(k string) string { return filepath.Join(c.dir, k+".json") }
 
 // RoundTrip replays a recorded response, or records a live one.
@@ -91,10 +161,31 @@ func (c *Cassette) RoundTrip(req *http.Request) (*http.Response, error) {
 	c.used[k] = true
 	c.mu.Unlock()
 
-	if !c.record {
-		return c.replay(k, req)
+	if c.record {
+		return c.recordOne(k, req, body)
 	}
-	return c.recordOne(k, req, body)
+	if m, ok := c.match(req.Method, req.URL.String(), body); ok {
+		return &http.Response{
+			StatusCode:    m.status,
+			Status:        http.StatusText(m.status),
+			Header:        http.Header{},
+			Body:          io.NopCloser(bytes.NewReader(m.body)),
+			ContentLength: int64(len(m.body)),
+			Request:       req,
+		}, nil
+	}
+	// Fall back to a URL-only recording when nothing matches the exact body.
+	if _, err := os.Stat(c.path(k)); err != nil {
+		if alt := urlKey(req.Method, req.URL.String()); alt != k {
+			if _, err := os.Stat(c.path(alt)); err == nil {
+				c.mu.Lock()
+				c.used[alt] = true
+				c.mu.Unlock()
+				return c.replay(alt, req)
+			}
+		}
+	}
+	return c.replay(k, req)
 }
 
 func (c *Cassette) replay(k string, req *http.Request) (*http.Response, error) {

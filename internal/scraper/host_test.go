@@ -394,3 +394,30 @@ end
 		}
 	}
 }
+
+// TestStatusDefaults pins MangaInfoStatusIfPos against uBaseUnit.pas.
+//
+// Modules call it with a single argument and depend on the default keyword
+// lists; without them a site reporting "Completed" records no status at all.
+// The order also matters: upstream tries ongoing before completed.
+func TestStatusDefaults(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Completed", "completed"},
+		{"Ongoing", "ongoing"},
+		{"On Hiatus", "hiatus"},
+		{"Cancelled", "dropped"},
+		{"", ""},
+		{"something else", ""},
+	}
+	for _, c := range cases {
+		got := MangaInfoStatusIfPos(c.in, defaultOngoing, defaultCompleted, defaultHiatus, defaultDropped)
+		if got != c.want {
+			t.Errorf("MangaInfoStatusIfPos(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+
+	// Ongoing wins when a status matches both lists, as upstream orders it.
+	if got := MangaInfoStatusIfPos("Ongoing (was completed)", "ongoing", "complete", "", ""); got != "ongoing" {
+		t.Errorf("overlapping status = %q, want ongoing", got)
+	}
+}
