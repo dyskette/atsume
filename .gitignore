@@ -1,0 +1,9 @@
+/bin/
+*_templ.go
+
+# Upstream FMD2 website modules are GPL-2.0-only, which is incompatible with
+# this project's GPL-3.0 licence. They are fetched at runtime and, for tests,
+# into these ignored paths. Never commit a module file or anything derived from
+# one — see docs/MODULES.md.
+testdata/fmd2/
+testdata/corpus.json
