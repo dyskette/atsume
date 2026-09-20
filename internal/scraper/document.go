@@ -10,6 +10,22 @@ import lua "github.com/yuin/gopher-lua"
 // is userdata that also renders as a string.
 type Document struct{ data []byte }
 
+// Set replaces the body. Modules rewrite HTTP.Document in place, for instance
+// when descrambling a tiled image.
+func (d *Document) Set(b []byte) {
+	if d != nil {
+		d.data = b
+	}
+}
+
+// Bytes returns the body.
+func (d *Document) Bytes() []byte {
+	if d == nil {
+		return nil
+	}
+	return d.data
+}
+
 // String returns the body as text.
 func (d *Document) String() string {
 	if d == nil {
@@ -47,11 +63,23 @@ func registerDocument(L *lua.LState) {
 	}))
 }
 
-func pushDocument(L *lua.LState, data []byte) lua.LValue {
+// pushDocument wraps an existing Document. The same pointer is shared with Go,
+// so a module rewriting it is visible to the caller afterwards.
+func pushDocument(L *lua.LState, d *Document) lua.LValue {
 	ud := L.NewUserData()
-	ud.Value = &Document{data: data}
+	ud.Value = d
 	L.SetMetatable(ud, L.GetTypeMetatable(documentTypeName))
 	return ud
+}
+
+// documentArg returns the Document at argument n, or nil when it is not one.
+func documentArg(L *lua.LState, n int) *Document {
+	ud, ok := L.Get(n).(*lua.LUserData)
+	if !ok {
+		return nil
+	}
+	d, _ := ud.Value.(*Document)
+	return d
 }
 
 // argText reads a text argument that may arrive either as a Lua string or as a

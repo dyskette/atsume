@@ -45,9 +45,10 @@ type HTTP struct {
 	LastURL    string
 	Terminated bool
 
-	// Document holds the last response body. Modules read it as a string and
-	// hand it straight to CreateTXQuery.
-	Document []byte
+	// Document holds the last response body. It is a pointer so that a module
+	// rewriting it in place — descrambling a tiled image, for instance — is
+	// visible here afterwards.
+	Document *Document
 }
 
 // NewHTTP builds a client with its own cookie jar.
@@ -57,11 +58,12 @@ func NewHTTP(ctx context.Context, limiter Limiter) *HTTP {
 	}
 	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	return &HTTP{
-		ctx:     ctx,
-		client:  &http.Client{Jar: jar, Timeout: 60 * time.Second},
-		limiter: limiter,
-		Headers: NewStrings(),
-		Cookies: NewStrings(),
+		ctx:      ctx,
+		client:   &http.Client{Jar: jar, Timeout: 60 * time.Second},
+		limiter:  limiter,
+		Headers:  NewStrings(),
+		Cookies:  NewStrings(),
+		Document: &Document{},
 
 		UserAgent:  DefaultUserAgent,
 		RetryCount: 2,
@@ -71,7 +73,7 @@ func NewHTTP(ctx context.Context, limiter Limiter) *HTTP {
 // do performs one request with retries, recording the outcome on the receiver.
 // It returns false rather than an error because that is what Lua handlers test.
 func (h *HTTP) do(method, rawURL, body string) bool {
-	h.Document = nil
+	h.Document.Set(nil)
 	h.ResultCode = 0
 
 	var lastErr error
@@ -134,7 +136,7 @@ func (h *HTTP) attempt(method, rawURL, body string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	h.Document = data
+	h.Document.Set(data)
 	return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 }
 
@@ -142,7 +144,7 @@ func (h *HTTP) attempt(method, rawURL, body string) (bool, error) {
 func (h *HTTP) Reset() {
 	h.Headers.Clear()
 	h.MimeType = ""
-	h.Document = nil
+	h.Document.Set(nil)
 	h.ResultCode = 0
 }
 

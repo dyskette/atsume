@@ -32,12 +32,12 @@ func registerLibs(L *lua.LState, luaDir string) {
 	preload("fmd.fileutil", fileutilLoader)
 	preload("fmd.gzip", gzipLoader)
 	preload("fmd.duktape", duktapeLoader(luaDir))
+	preload("fmd.imagepuzzle", imagepuzzleLoader)
 
 	// Capabilities that are not implemented yet. Registering a stub that raises
 	// keeps the failure loud and specific: the module that needs it names itself
 	// in the error rather than silently returning empty fields.
 	for name, need := range map[string]string{
-		"fmd.imagepuzzle":       "the image descrambler",
 		"fmd.mangafoxwatermark": "the MangaFox watermark remover",
 		"fmd.subprocess":        "external process execution",
 	} {

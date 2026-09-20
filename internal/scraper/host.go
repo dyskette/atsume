@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -94,6 +95,7 @@ func (h *Host) Open(ctx context.Context, moduleFile string) (*Runner, error) {
 		filepath.Join(h.LuaDir, "?.lua")+";"+filepath.Join(h.LuaDir, "?", "init.lua")))
 
 	registerDocument(L)
+	registerImagePuzzle(L)
 	registerStrings(L)
 	registerValues(L)
 	registerQuery(L)
@@ -333,4 +335,60 @@ func (r *Runner) GetPageNumber(chapterURL string) ([]string, error) {
 		return nil, fmt.Errorf("%s: could not read pages for %s", r.mod.Name, chapterURL)
 	}
 	return r.task.PageLinks.All(), nil
+}
+
+// HasHandler reports whether the module implements an event.
+func (r *Runner) HasHandler(event string) bool {
+	_, ok := r.mod.Handler(event)
+	return ok
+}
+
+// BeforeDownloadImage runs OnBeforeDownloadImage and returns the request
+// headers the module set.
+//
+// 113 modules implement this, almost always to set a Referer that the image
+// host requires. Skipping it yields a 403 or a placeholder image rather than an
+// obvious failure.
+func (r *Runner) BeforeDownloadImage(imageURL string) (map[string]string, error) {
+	if !r.HasHandler("OnBeforeDownloadImage") {
+		return nil, nil
+	}
+	r.http.Headers.Clear()
+	r.L.SetGlobal("URL", lua.LString(imageURL))
+
+	if _, err := r.call("OnBeforeDownloadImage"); err != nil {
+		return nil, err
+	}
+
+	headers := map[string]string{}
+	for _, raw := range r.http.Headers.All() {
+		if k, v, ok := strings.Cut(raw, "="); ok {
+			headers[strings.TrimSpace(k)] = v
+		}
+	}
+	return headers, nil
+}
+
+// DownloadImage runs OnDownloadImage, returning the bytes the module produced.
+//
+// Modules implementing this fetch the image themselves and may transform it
+// before handing it back — descrambling a tiled image, for instance — so the
+// result is taken from HTTP.Document rather than fetched again by the host.
+func (r *Runner) DownloadImage(imageURL string) ([]byte, error) {
+	r.http.Document.Set(nil)
+	r.L.SetGlobal("URL", lua.LString(imageURL))
+
+	v, err := r.call("OnDownloadImage")
+	if err != nil {
+		return nil, err
+	}
+	if !lua.LVAsBool(v) {
+		return nil, fmt.Errorf("%s: module declined to download %s", r.mod.Name, imageURL)
+	}
+
+	data := r.http.Document.Bytes()
+	if len(data) == 0 {
+		return nil, fmt.Errorf("%s: module returned no image data for %s", r.mod.Name, imageURL)
+	}
+	return data, nil
 }
