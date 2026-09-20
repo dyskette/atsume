@@ -248,9 +248,10 @@ func nodeIndex(L *lua.LState) int {
 			return 1
 		}))
 	case "GetProperty":
-		// On the JSON tree a property is just a child element.
+		// Upstream returns a value object here, and modules chain straight into
+		// .ToString(), so this must be a node rather than a plain string.
 		L.Push(L.NewFunction(func(L *lua.LState) int {
-			L.Push(lua.LString(n.XPathString(L.CheckString(1))))
+			L.Push(pushNode(L, n.Property(L.CheckString(1))))
 			return 1
 		}))
 	case "XPathString":

@@ -177,3 +177,70 @@ func TestAllNodeSetSequenceStaysAUnion(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// TestJSONFromEncodedDocument covers a body that was HTML-encoded before being
+// handed to CreateTXQuery.
+//
+// Modules do that so a `<` inside a JSON string is not parsed as markup, which
+// means the raw bytes are no longer valid JSON and the entities have to be
+// decoded before json() can read them.
+func TestJSONFromEncodedDocument(t *testing.T) {
+	// What crypto.HTMLEncode produces for {"result":{"list":[{"name":"a<b"}]}}
+	const encoded = `{&quot;result&quot;:{&quot;list&quot;:[{&quot;name&quot;:&quot;a&lt;b&quot;}]}}`
+	q, err := ParseString(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := q.XPathString(`json(*).result.list().name`), "a<b"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestPlainJSONStillParses guards the common case against the fallback above.
+func TestPlainJSONStillParses(t *testing.T) {
+	q, err := ParseString(`{"result":{"list":[{"name":"plain"}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := q.XPathString(`json(*).result.list().name`), "plain"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestAttributeNameCaseFolding covers an XPath naming an attribute in mixed
+// case.
+//
+// Go's HTML parser lowercases attribute names as the specification requires, so
+// a case-sensitive match against `@data-URL` finds nothing. internettools folds
+// the case for HTML, and modules are written assuming it — WebToons reads every
+// page URL through `@data-URL`, and without folding a chapter comes back with
+// no pages and no error.
+func TestAttributeNameCaseFolding(t *testing.T) {
+	q, err := ParseString(`<div id="_imageList"><img class="_images" data-url="/01.jpg"><img class="_images" data-url="/02.jpg"></div>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := q.XPathValues(`//div[@id="_imageList"]/img[@class="_images"]/@data-URL`, nil)
+	if len(got) != 2 || got[0] != "/01.jpg" || got[1] != "/02.jpg" {
+		t.Errorf("got %v, want the two page URLs", got)
+	}
+}
+
+// TestPropertyReturnsNode covers GetProperty's contract: modules chain into
+// .ToString() on the result, so a missing property must still be a node.
+func TestPropertyReturnsNode(t *testing.T) {
+	q, err := ParseString(`{"items":[{"title":"One"},{"other":2}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := q.XPath(`json(*).items()`)
+	if len(nodes) != 2 {
+		t.Fatalf("got %d items, want 2", len(nodes))
+	}
+	if got := nodes[0].Property("title").Text(); got != "One" {
+		t.Errorf("present property = %q, want One", got)
+	}
+	if got := nodes[1].Property("title").Text(); got != "" {
+		t.Errorf("absent property = %q, want empty", got)
+	}
+}

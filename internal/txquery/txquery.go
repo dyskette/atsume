@@ -40,12 +40,11 @@ type Query struct {
 type Node struct {
 	n *html.Node
 	q *Query
-	// attr holds the value when this result is an attribute rather than an
-	// element. antchfx reports an attribute match as its owning element, so
-	// without this a module iterating `img/@uid` would read the element's inner
-	// text — empty — instead of the attribute.
-	attr   string
-	isAttr bool
+	// text overrides the node's string value. It carries an attribute's value,
+	// because antchfx reports an attribute match as its owning element, and it
+	// lets an absent JSON property be returned as an empty node rather than nil.
+	text    string
+	hasText bool
 }
 
 // Parse reads a document. It never fails on malformed markup: html.Parse
@@ -77,14 +76,35 @@ func (q *Query) tree(needJSON bool) *html.Node {
 	}
 	if !q.jsonDone {
 		q.jsonDone = true
-		if t, err := ParseJSONTree(q.raw); err == nil {
-			q.jsonTree = t
-		}
+		q.jsonTree = q.buildJSONTree()
 	}
 	if q.jsonTree == nil {
 		return q.htmlTree // not JSON after all; let the expression come up empty
 	}
 	return q.jsonTree
+}
+
+// buildJSONTree parses the document as JSON.
+//
+// The raw body is tried first, which covers an ordinary JSON response. When
+// that fails the document's text content is tried instead: modules run the body
+// through HTMLEncode before handing it to CreateTXQuery, so that a `<` inside a
+// JSON string is not parsed as markup, and the entities have to be decoded
+// again before the result is JSON. internettools reads the string value of the
+// document for json(), which decodes them as a side effect; doing the same
+// keeps both shapes working.
+func (q *Query) buildJSONTree() *html.Node {
+	if t, err := ParseJSONTree(q.raw); err == nil {
+		return t
+	}
+	text := htmlquery.InnerText(q.htmlTree)
+	if text == "" {
+		return nil
+	}
+	if t, err := ParseJSONTree([]byte(text)); err == nil {
+		return t
+	}
+	return nil
 }
 
 // eval rewrites and evaluates expr, returning the raw antchfx result.
@@ -274,7 +294,7 @@ func collectNodes(it *xpath.NodeIterator, q *Query) []*Node {
 		}
 		node := &Node{n: nav.Current(), q: q}
 		if nav.NodeType() == xpath.AttributeNode {
-			node.isAttr, node.attr = true, nav.Value()
+			node.hasText, node.text = true, nav.Value()
 		}
 		nodes = append(nodes, node)
 	}
@@ -305,6 +325,27 @@ func (n *Node) XPathHREFTitleAll(expr string) (links, names []string) {
 // XPathCount counts matches relative to this node.
 func (n *Node) XPathCount(expr string) int { return len(n.XPath(expr)) }
 
+// Property returns a named child, which on the JSON node tree is how a property
+// is reached.
+//
+// A missing property yields an empty node rather than nil, because modules
+// chain straight into .ToString() on the result and upstream returns a value
+// object there, not nothing.
+func (n *Node) Property(name string) *Node {
+	if nodes := n.XPath(name); len(nodes) > 0 {
+		return nodes[0]
+	}
+	return &Node{q: n.q, hasText: true}
+}
+
+// Attribute returns an attribute value, or "" when absent.
+func (n *Node) Attribute(name string) string {
+	if n.n == nil {
+		return ""
+	}
+	return htmlquery.SelectAttr(n.n, name)
+}
+
 func hrefAll(nodes []*Node, useTitle bool) (links, names []string) {
 	for _, n := range nodes {
 		links = append(links, n.Attribute("href"))
@@ -321,14 +362,14 @@ func hrefAll(nodes []*Node, useTitle bool) (links, names []string) {
 
 // Text returns the node's string value.
 func (n *Node) Text() string {
-	if n.isAttr {
-		return n.attr
+	if n.hasText {
+		return n.text
+	}
+	if n.n == nil {
+		return ""
 	}
 	return htmlquery.InnerText(n.n)
 }
-
-// Attribute returns an attribute value, or "" when absent.
-func (n *Node) Attribute(name string) string { return htmlquery.SelectAttr(n.n, name) }
 
 // XPathString evaluates an expression relative to this node, which is how the
 // modules read fields out of an iterated JSON member.

@@ -717,11 +717,42 @@ func anyNonNodeSet(parts []string) bool {
 	return false
 }
 
+// rewriteAttrCase lowercases attribute names.
+//
+// Go's HTML parser lowercases attribute names, as the HTML specification
+// requires, but XPath matching is case-sensitive — so `@data-URL` matches
+// nothing against a document whose attribute is stored as `data-url`.
+// internettools folds the case for HTML documents; modules are written assuming
+// it, and the mismatch yields an empty result rather than an error.
+func rewriteAttrCase(e string) string {
+	var b strings.Builder
+	for i := 0; i < len(e); i++ {
+		if j := skipLiteral(e, i); j > 0 {
+			b.WriteString(e[i:j])
+			i = j - 1
+			continue
+		}
+		if e[i] != '@' {
+			b.WriteByte(e[i])
+			continue
+		}
+		j := i + 1
+		for j < len(e) && (isNameChar(e[j]) || e[j] == '-' || e[j] == '_' || e[j] == ':') {
+			j++
+		}
+		b.WriteByte('@')
+		b.WriteString(strings.ToLower(e[i+1 : j]))
+		i = j - 1
+	}
+	return b.String()
+}
+
 // Rewrite applies every pass, returning an XPath 1.0 expression plus the host
 // capabilities it depends on.
 func Rewrite(e string) (string, Caps) {
 	var c Caps
 	e = normalizeQuotes(e)
+	e = rewriteAttrCase(e)
 	e = rewriteJSON(e, &c)
 	e = rewriteJSONFns(e, &c)
 	e = rewriteLookup(e, &c)
