@@ -314,6 +314,90 @@ func (s *Store) PendingChapters(ctx context.Context, seriesID int64) ([]Chapter,
 	return out, nil
 }
 
+// ModuleOptions reads the operator's overrides for a module.
+func (s *Store) ModuleOptions(ctx context.Context, moduleName string) (map[string]string, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT name, value FROM module_options WHERE module_name = ?`, moduleName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]string{}
+	for rows.Next() {
+		var name, value string
+		if err := rows.Scan(&name, &value); err != nil {
+			return nil, err
+		}
+		out[name] = value
+	}
+	return out, rows.Err()
+}
+
+// SetModuleOption stores one override.
+func (s *Store) SetModuleOption(ctx context.Context, moduleName, name, value string) error {
+	const q = `INSERT INTO module_options (module_name, name, value) VALUES (?, ?, ?)
+	           ON CONFLICT (module_name, name) DO UPDATE SET value = excluded.value`
+	_, err := s.DB.ExecContext(ctx, q, moduleName, name, value)
+	return err
+}
+
+// Credentials are a module's stored login.
+type Credentials struct {
+	ModuleName string
+	Username   string
+	Password   string
+}
+
+// SetCredentials stores a module login, encrypting the password.
+func (s *Store) SetCredentials(ctx context.Context, sealer *Sealer, c Credentials) error {
+	if c.Username == "" && c.Password == "" {
+		_, err := s.DB.ExecContext(ctx,
+			`DELETE FROM module_credentials WHERE module_name = ?`, c.ModuleName)
+		return err
+	}
+	sealed, err := sealer.Seal(c.Password)
+	if err != nil {
+		return err
+	}
+	const q = `INSERT INTO module_credentials (module_name, username, password_enc, updated_at)
+	           VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+	           ON CONFLICT (module_name) DO UPDATE SET
+	               username = excluded.username,
+	               password_enc = excluded.password_enc,
+	               updated_at = CURRENT_TIMESTAMP`
+	_, err = s.DB.ExecContext(ctx, q, c.ModuleName, c.Username, sealed)
+	return err
+}
+
+// Credentials reads a module login, or nil when none is stored.
+func (s *Store) Credentials(ctx context.Context, sealer *Sealer, moduleName string) (*Credentials, error) {
+	var username string
+	var sealed []byte
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT username, password_enc FROM module_credentials WHERE module_name = ?`,
+		moduleName).Scan(&username, &sealed)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	password, err := sealer.Open(sealed)
+	if err != nil {
+		return nil, err
+	}
+	return &Credentials{ModuleName: moduleName, Username: username, Password: password}, nil
+}
+
+// HasCredentials reports whether a login is stored, without decrypting it.
+func (s *Store) HasCredentials(ctx context.Context, moduleName string) bool {
+	var n int
+	_ = s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM module_credentials WHERE module_name = ?`, moduleName).Scan(&n)
+	return n > 0
+}
+
 // Setting reads a stored setting, returning def when unset.
 func (s *Store) Setting(ctx context.Context, key, def string) string {
 	var v string

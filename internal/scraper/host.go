@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -25,6 +26,8 @@ type Host struct {
 	// Transport, when set, replaces the default HTTP transport. Tests supply a
 	// Cassette here to replay recorded pages.
 	Transport http.RoundTripper
+	// Solver, when set, recovers requests refused by an anti-bot interstitial.
+	Solver *Flaresolverr
 }
 
 // Runner is one module bound to one Lua state.
@@ -81,7 +84,7 @@ func (h *Host) Open(ctx context.Context, moduleFile string) (*Runner, error) {
 
 	r := &Runner{
 		L:         L,
-		http:      NewHTTP(ctx, h.Limiter, h.Transport),
+		http:      NewHTTP(ctx, h.Limiter, h.Transport, h.Solver),
 		mangaInfo: NewMangaInfo(),
 		task:      NewTask(),
 		links:     NewStrings(),
@@ -191,6 +194,34 @@ func (r *Runner) SetDirectoryIndex(i int) { r.directoryIndex = i }
 
 // SetOption overrides a module-declared setting before a handler runs.
 func (r *Runner) SetOption(name string, v lua.LValue) { r.options[name] = v }
+
+// SetOptionString stores an override from its text form, converting it to the
+// type the module declared. A checkbox read back as the string "true" would be
+// truthy either way, but a spin edit compared with a number would not.
+func (r *Runner) SetOptionString(name, value string) {
+	kind := OptionEditBox
+	for _, o := range r.mod.Options {
+		if o.Name == name {
+			kind = o.Kind
+			break
+		}
+	}
+	switch kind {
+	case OptionCheckBox:
+		r.options[name] = lua.LBool(value == "1" || strings.EqualFold(value, "true"))
+	case OptionSpinEdit, OptionComboBox:
+		if n, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+			r.options[name] = lua.LNumber(n)
+			return
+		}
+		r.options[name] = lua.LString(value)
+	default:
+		r.options[name] = lua.LString(value)
+	}
+}
+
+// Options returns the settings the module declared.
+func (r *Runner) Options() []Option { return r.mod.Options }
 
 // OnStatus registers a callback for UPDATELIST.UpdateStatusText, which modules
 // use to report progress while walking a long directory.
@@ -395,4 +426,47 @@ func (r *Runner) DownloadImage(imageURL string) ([]byte, error) {
 		return nil, fmt.Errorf("%s: module returned no image data for %s", r.mod.Name, imageURL)
 	}
 	return data, nil
+}
+
+// Login runs the module's OnLogin handler.
+//
+// It reports whether the module considered the login successful. The account
+// state the handler sets is also checked, because several modules return true
+// while recording asInvalid.
+func (r *Runner) Login() (bool, error) {
+	if !r.HasHandler("OnLogin") {
+		return false, fmt.Errorf("module %s has no login handler", r.mod.Name)
+	}
+	if !r.account.Enabled {
+		return false, fmt.Errorf("module %s has no credentials configured", r.mod.Name)
+	}
+
+	v, err := r.call("OnLogin")
+	if err != nil {
+		return false, err
+	}
+	ok := lua.LVAsBool(v)
+	if r.account.Status == asInvalid {
+		return false, fmt.Errorf("module %s rejected the credentials", r.mod.Name)
+	}
+	return ok, nil
+}
+
+// AccountStatus reports the state the module recorded during login.
+func (r *Runner) AccountStatus() int { return r.account.Status }
+
+// AfterImageSaved runs the module's OnAfterImageSaved handler against a file on
+// disk.
+//
+// FMD2 writes each page out before packing, so the handler is given a path and
+// edits the file in place — removing a watermark, for instance. atsume keeps
+// pages in memory, so a file is materialised only for the modules that declare
+// this, and the result is read back.
+func (r *Runner) AfterImageSaved(path string) error {
+	if !r.HasHandler("OnAfterImageSaved") {
+		return nil
+	}
+	r.L.SetGlobal("FILENAME", lua.LString(path))
+	_, err := r.call("OnAfterImageSaved")
+	return err
 }

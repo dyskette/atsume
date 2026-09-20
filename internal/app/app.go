@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/dyskette/atsume/internal/config"
 	"github.com/dyskette/atsume/internal/download"
@@ -18,14 +20,18 @@ import (
 
 // App holds the long-lived collaborators.
 type App struct {
-	Cfg       *config.Config
-	Store     *store.Store
-	Queue     *jobs.Queue
-	Bus       *jobs.Bus
-	Registry  *scraper.Registry
+	Cfg      *config.Config
+	Store    *store.Store
+	Queue    *jobs.Queue
+	Bus      *jobs.Bus
+	Registry *scraper.Registry
+	// Sealer encrypts stored module credentials.
+	Sealer    *store.Sealer
 	Limiter   *scraper.HostLimiter
 	Pool      *jobs.Pool
 	Scheduler *Scheduler
+	Notifier  *Notifier
+	Solver    *scraper.Flaresolverr
 	// Transport, when set, replaces the default HTTP transport everywhere.
 	Transport http.RoundTripper
 }
@@ -34,6 +40,7 @@ type App struct {
 func New(cfg *config.Config, st *store.Store, reg *scraper.Registry) *App {
 	a := &App{
 		Cfg:      cfg,
+		Sealer:   store.NewSealer(cfg.SecretKey),
 		Store:    st,
 		Queue:    jobs.NewQueue(st.DB),
 		Bus:      jobs.NewBus(),
@@ -50,7 +57,15 @@ func New(cfg *config.Config, st *store.Store, reg *scraper.Registry) *App {
 		},
 	}
 	a.Scheduler = NewScheduler(a)
+	a.Notifier = NewNotifier(cfg.NotifyURL, a.Transport)
+	a.Solver = scraper.NewFlaresolverr(cfg.FlaresolverrURL)
 	return a
+}
+
+// errModuleNotFound names the revision, because the usual cause is a module
+// that exists upstream but not in the pinned checkout.
+func errModuleNotFound(name, ref string) error {
+	return fmt.Errorf("no module named %q in revision %s", name, ref)
 }
 
 // openModule loads a module into a fresh Lua state. Each call gets its own
@@ -59,9 +74,53 @@ func New(cfg *config.Config, st *store.Store, reg *scraper.Registry) *App {
 func (a *App) openModule(ctx context.Context, name string) (*scraper.Runner, error) {
 	info, ok := a.Registry.Find(name)
 	if !ok {
-		return nil, fmt.Errorf("no module named %q in revision %s", name, a.Registry.Ref())
+		return nil, errModuleNotFound(name, a.Registry.Ref())
 	}
-	return a.Registry.HostWith(a.Limiter, a.Transport).Open(ctx, info.File)
+	r, err := a.Registry.HostWith(a.Limiter, a.Transport, a.Solver).Open(ctx, info.File)
+	if err != nil {
+		return nil, err
+	}
+	if opts, err := a.Store.ModuleOptions(ctx, r.Module().Name); err == nil {
+		for k, v := range opts {
+			r.SetOptionString(k, v)
+		}
+	}
+	if err := a.applyCredentials(ctx, r); err != nil {
+		r.Close()
+		return nil, err
+	}
+	return r, nil
+}
+
+// applyCredentials supplies a stored login and runs the module's OnLogin
+// handler.
+//
+// A failed login is fatal for the scrape rather than ignored: a module that
+// needs an account and did not get one returns a teaser page, which would
+// otherwise be recorded as the real chapter list.
+func (a *App) applyCredentials(ctx context.Context, r *scraper.Runner) error {
+	name := r.Module().Name
+	if !r.HasHandler("OnLogin") || !a.Store.HasCredentials(ctx, name) {
+		return nil
+	}
+	creds, err := a.Store.Credentials(ctx, a.Sealer, name)
+	if err != nil {
+		return fmt.Errorf("%s credentials: %w", name, err)
+	}
+	if creds == nil {
+		return nil
+	}
+
+	r.SetAccount(creds.Username, creds.Password)
+	ok, err := r.Login()
+	if err != nil {
+		return fmt.Errorf("%s login: %w", name, err)
+	}
+	if !ok {
+		return fmt.Errorf("%s: login failed", name)
+	}
+	slog.Info("module login succeeded", "module", name, "user", creds.Username)
+	return nil
 }
 
 // Browse lists one page of a site's directory.
@@ -156,6 +215,12 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 		message = fmt.Sprintf("%s: %d new chapter(s)", info.Title, len(added))
 		slog.Info("new chapters", "series", info.Title, "count", len(added))
 
+		names := make([]string, 0, len(added))
+		for _, c := range added {
+			names = append(names, c.Name)
+		}
+		a.Notifier.Notify(ctx, newChaptersMessage(id, info.Title, mod.Name, names))
+
 		if a.Cfg.AutoDownload {
 			for _, c := range added {
 				if err := a.EnqueueDownload(ctx, c.ID); err != nil {
@@ -210,6 +275,13 @@ func (a *App) fetchPages(ctx context.Context, r *scraper.Runner, ch store.Chapte
 			}
 		}
 
+		if r.HasHandler("OnAfterImageSaved") {
+			var err error
+			if page, err = a.postProcessImage(r, page, i); err != nil {
+				return nil, fmt.Errorf("page %d of %d: %w", i+1, len(urls), err)
+			}
+		}
+
 		pages = append(pages, page)
 		a.Bus.Publish(jobs.Event{
 			Kind: "chapter-progress", ChapterID: ch.ID, SeriesID: ch.SeriesID,
@@ -217,6 +289,40 @@ func (a *App) fetchPages(ctx context.Context, r *scraper.Runner, ch store.Chapte
 		})
 	}
 	return pages, nil
+}
+
+// postProcessImage hands a page to the module's OnAfterImageSaved handler.
+//
+// The handler expects a path, so the image is written to a temporary file and
+// read back. This runs only for modules that declare the handler — one, at the
+// time of writing — so the round trip costs nothing for everything else.
+func (a *App) postProcessImage(r *scraper.Runner, page download.Page, index int) (download.Page, error) {
+	dir, err := os.MkdirTemp("", "atsume-page-")
+	if err != nil {
+		return page, err
+	}
+	defer os.RemoveAll(dir)
+
+	path := filepath.Join(dir, fmt.Sprintf("%04d%s", index+1, page.Ext))
+	if err := os.WriteFile(path, page.Data, 0o644); err != nil {
+		return page, err
+	}
+	if err := r.AfterImageSaved(path); err != nil {
+		return page, err
+	}
+
+	edited, err := os.ReadFile(path)
+	if err != nil {
+		// A handler may delete the file to drop the page; treat that as "leave
+		// it alone" rather than failing the chapter.
+		return page, nil
+	}
+	if len(edited) == 0 {
+		return page, nil
+	}
+	page.Data = edited
+	page.Ext = download.ImageExt(edited, "", "")
+	return page, nil
 }
 
 // DownloadPayload identifies a chapter to download.

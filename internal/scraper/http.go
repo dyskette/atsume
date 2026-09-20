@@ -35,6 +35,7 @@ type HTTP struct {
 	ctx     context.Context
 	client  *http.Client
 	limiter Limiter
+	solver  *Flaresolverr
 
 	Headers    *Strings
 	Cookies    *Strings
@@ -55,7 +56,7 @@ type HTTP struct {
 //
 // transport may be nil for the default. Tests supply a Cassette so a scrape
 // replays recorded pages instead of reaching the network.
-func NewHTTP(ctx context.Context, limiter Limiter, transport http.RoundTripper) *HTTP {
+func NewHTTP(ctx context.Context, limiter Limiter, transport http.RoundTripper, solver *Flaresolverr) *HTTP {
 	if limiter == nil {
 		limiter = nopLimiter{}
 	}
@@ -64,6 +65,7 @@ func NewHTTP(ctx context.Context, limiter Limiter, transport http.RoundTripper) 
 		ctx:       ctx,
 		client:    &http.Client{Jar: jar, Timeout: 60 * time.Second, Transport: transport},
 		limiter:   limiter,
+		solver:    solver,
 		Headers:   NewStrings(),
 		Cookies:   NewStrings(),
 		Document:  &Document{},
@@ -99,6 +101,11 @@ func (h *HTTP) do(method, rawURL, body string) bool {
 			return true
 		}
 		lastErr = err
+		// An anti-bot interstitial is recoverable where an ordinary refusal is
+		// not, so it is checked before giving up on a 4xx.
+		if h.trySolve(rawURL) {
+			return true
+		}
 		// a 4xx is a real answer; retrying will not change it
 		if h.ResultCode >= 400 && h.ResultCode < 500 {
 			return false
@@ -126,6 +133,13 @@ func (h *HTTP) attempt(method, rawURL, body string) (bool, error) {
 			req.Header.Set(strings.TrimSpace(k), v)
 		}
 	}
+	// Cookies the module set itself. The jar handles what a server sends back,
+	// but a module assigning HTTP.Cookies.Values['ageGatePass'] expects that to
+	// travel with the request, and silently dropping it yields a gate page
+	// rather than an error.
+	if cookies := h.Cookies.All(); len(cookies) > 0 {
+		req.Header.Set("Cookie", strings.Join(cookies, "; "))
+	}
 
 	resp, err := h.client.Do(req)
 	if err != nil {
@@ -135,6 +149,11 @@ func (h *HTTP) attempt(method, rawURL, body string) (bool, error) {
 
 	h.ResultCode = resp.StatusCode
 	h.LastURL = resp.Request.URL.String()
+	// Modules read HTTP.Cookies after a login to check whether the server
+	// issued the session cookie they were looking for.
+	for _, c := range resp.Cookies() {
+		h.Cookies.SetValue(c.Name, c.Value)
+	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return false, err

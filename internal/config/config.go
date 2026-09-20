@@ -44,6 +44,9 @@ type Config struct {
 
 	// FlaresolverrURL, when set, is used to solve anti-bot challenges.
 	FlaresolverrURL string
+	// NotifyURL, when set, receives a JSON POST when a check finds new
+	// chapters.
+	NotifyURL string
 
 	// SecretKey encrypts stored module credentials. Empty disables the feature
 	// and module logins are refused rather than stored in the clear.
@@ -66,6 +69,7 @@ func Load() (*Config, error) {
 		ModulesRepo:     env("ATSUME_MODULES_REPO", "https://github.com/dazedcat19/FMD2.git"),
 		ModulesRef:      env("ATSUME_MODULES_REF", "master"),
 		FlaresolverrURL: env("ATSUME_FLARESOLVERR_URL", ""),
+		NotifyURL:       env("ATSUME_NOTIFY_URL", ""),
 		SecretKey:       env("ATSUME_SECRET_KEY", ""),
 		LogLevel:        env("ATSUME_LOG_LEVEL", "info"),
 		AutoDownload:    envBool("ATSUME_AUTO_DOWNLOAD", true),

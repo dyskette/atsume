@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -70,6 +72,7 @@ func newTestApp(t *testing.T, rootURL string, cfg *config.Config) (*App, *store.
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Registered first so it runs last: cleanups unwind in reverse.
 	t.Cleanup(func() { st.Close() })
 
 	reg := scraper.NewRegistry(filepath.Join(dir, "modules"), "")
@@ -79,8 +82,18 @@ func newTestApp(t *testing.T, rootURL string, cfg *config.Config) (*App, *store.
 
 	a := New(cfg, st, reg)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	t.Cleanup(cancel)
-	go a.Pool.Run(ctx)
+
+	// Wait for the pool to unwind before the store closes, so a worker mid-loop
+	// does not log against a closed database.
+	done := make(chan struct{})
+	go func() { a.Pool.Run(ctx); close(done) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	})
 	return a, st, ctx
 }
 
@@ -299,5 +312,123 @@ func TestSchedulerDisabled(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after the context was cancelled")
+	}
+}
+
+// TestModuleSettingsRoundTrip covers storing and reading back a module's
+// options and login.
+func TestModuleSettingsRoundTrip(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{SecretKey: "test-key"})
+
+	settings, err := a.ModuleSettings(ctx, "TestMadara")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !settings.SecretsEnabled {
+		t.Fatal("secrets should be enabled with a key configured")
+	}
+
+	if err := a.SaveModuleSettings(ctx, "TestMadara",
+		map[string]string{"showgroup": "1"}, "reader", "hunter2", true); err != nil {
+		t.Fatal(err)
+	}
+
+	opts, err := st.ModuleOptions(ctx, "TestMadara")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts["showgroup"] != "1" {
+		t.Errorf("option = %q, want 1", opts["showgroup"])
+	}
+
+	creds, err := st.Credentials(ctx, a.Sealer, "TestMadara")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds == nil || creds.Username != "reader" || creds.Password != "hunter2" {
+		t.Fatalf("credentials round trip gave %+v", creds)
+	}
+
+	// Clearing both fields removes the login.
+	if err := a.SaveModuleSettings(ctx, "TestMadara", nil, "", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if st.HasCredentials(ctx, "TestMadara") {
+		t.Error("credentials should have been removed")
+	}
+}
+
+// TestCredentialsRefusedWithoutKey covers the case where no secret key is set:
+// storing a password is refused rather than done in the clear.
+func TestCredentialsRefusedWithoutKey(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+
+	a, _, ctx := newTestApp(t, srv.URL, &config.Config{})
+	if a.Sealer.Enabled() {
+		t.Fatal("no key configured, sealer should be disabled")
+	}
+	err := a.SaveModuleSettings(ctx, "TestMadara", nil, "reader", "hunter2", true)
+	if !errors.Is(err, store.ErrNoSecretKey) {
+		t.Fatalf("got %v, want ErrNoSecretKey", err)
+	}
+}
+
+// TestNotifyOnNewChapters covers the notification a subscription check sends.
+func TestNotifyOnNewChapters(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+
+	received := make(chan Notification, 4)
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var n Notification
+		_ = json.NewDecoder(r.Body).Decode(&n)
+		received <- n
+	}))
+	t.Cleanup(hook.Close)
+
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{NotifyURL: hook.URL})
+
+	if err := a.EnqueueRefresh(ctx, "TestMadara", srv.URL+"/manga/grow/"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		s, _ := st.ListSeries(ctx)
+		return len(s) == 1
+	}, "series to be stored")
+
+	// The first import is not news, so nothing should have been sent yet.
+	select {
+	case n := <-received:
+		t.Fatalf("notified on the initial import: %+v", n)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	all, _ := st.ListSeries(ctx)
+	chapters.Store(2)
+	if err := a.EnqueueRefresh(ctx, "TestMadara", srv.URL+"/manga/grow/"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, all[0].ID)
+		return len(chs) == 2
+	}, "the new chapter to be recorded")
+
+	select {
+	case n := <-received:
+		if n.Event != "new_chapters" || n.Count != 1 {
+			t.Errorf("notification = %+v", n)
+		}
+		if n.Series != "Growing Series" || len(n.Chapters) != 1 {
+			t.Errorf("notification = %+v", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no notification was sent for a new chapter")
 	}
 }

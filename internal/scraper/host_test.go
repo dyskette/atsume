@@ -421,3 +421,59 @@ func TestStatusDefaults(t *testing.T) {
 		t.Errorf("overlapping status = %q, want ongoing", got)
 	}
 }
+
+// TestCookiesRoundTrip covers HTTP.Cookies in both directions.
+//
+// A module setting a cookie expects it sent — age gates and session tokens are
+// set that way — and a module checking one after a login expects to read what
+// the server issued. Neither worked while the list was write-only.
+func TestCookiesRoundTrip(t *testing.T) {
+	dir := luaDir(t)
+
+	var sawCookie string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawCookie = r.Header.Get("Cookie")
+		http.SetCookie(w, &http.Cookie{Name: "session", Value: "abc123", Path: "/"})
+		fmt.Fprint(w, `<html><body><b>ok</b></body></html>`)
+	}))
+	t.Cleanup(srv.Close)
+
+	path := filepath.Join(t.TempDir(), "cookies.lua")
+	src := `
+function Init()
+	local m = NewWebsiteModule()
+	m.ID              = 'e5f60718293a4b5c6d7e8f9012345678'
+	m.Name            = 'CookieTest'
+	m.RootURL         = '` + srv.URL + `'
+	m.OnGetPageNumber = 'GetPageNumber'
+end
+
+function GetPageNumber()
+	HTTP.Cookies.Values['ageGatePass'] = 'True'
+	if not HTTP.GET(MODULE.RootURL) then return false end
+	TASK.PageLinks.Add('session=' .. HTTP.Cookies.Values['session'])
+	return true
+end
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &Host{LuaDir: dir}
+	r, err := h.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	got, err := r.GetPageNumber(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sawCookie, "ageGatePass=True") {
+		t.Errorf("server saw Cookie %q, want it to carry ageGatePass", sawCookie)
+	}
+	if len(got) != 1 || got[0] != "session=abc123" {
+		t.Errorf("module read %v, want the server's session cookie", got)
+	}
+}

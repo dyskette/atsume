@@ -129,9 +129,9 @@ func (r *Registry) Host(limiter Limiter) *Host {
 }
 
 // HostWith returns a Host bound to the active checkout using a specific
-// transport.
-func (r *Registry) HostWith(limiter Limiter, transport http.RoundTripper) *Host {
-	return &Host{LuaDir: r.LuaDir(), Limiter: limiter, Transport: transport}
+// transport and anti-bot solver.
+func (r *Registry) HostWith(limiter Limiter, transport http.RoundTripper, solver *Flaresolverr) *Host {
+	return &Host{LuaDir: r.LuaDir(), Limiter: limiter, Transport: transport, Solver: solver}
 }
 
 func discover(dir string) ([]ModuleInfo, error) {
