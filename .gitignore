@@ -7,3 +7,8 @@
 # one — see docs/MODULES.md.
 testdata/fmd2/
 testdata/corpus.json
+
+# Recorded traffic is a site's own content, and so is anything derived from it.
+# Capture locally with ATSUME_RECORD=1; see internal/scraper/recorded_test.go.
+internal/scraper/testdata/recorded/*/cassette/
+internal/scraper/testdata/recorded/*/golden.json

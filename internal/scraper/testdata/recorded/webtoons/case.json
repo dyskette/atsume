@@ -1,0 +1,6 @@
+{
+  "module": "WebToons",
+  "series_url": "https://www.webtoons.com/en/fantasy/tower-of-god/list?title_no=95",
+  "chapter_url": "https://www.webtoons.com/en/fantasy/tower-of-god/season-1-ep-0/viewer?title_no=95&episode_no=1",
+  "note": "Webtoon Entertainment's own free-to-read platform, chosen over an aggregator. Spans two hosts (www and the m.webtoons.com episode API), which an httptest server cannot reproduce."
+}
