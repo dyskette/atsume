@@ -142,6 +142,54 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 	return nil
 }
 
+// fetchPages downloads a chapter's images in order, honouring the image hooks
+// the module implements.
+//
+// OnBeforeDownloadImage supplies request headers — usually the Referer an image
+// host demands — and OnDownloadImage, when present, means the module fetches
+// and transforms the image itself. Descrambling a tiled image happens there, so
+// bypassing these hooks yields 403s or scrambled pages rather than an error.
+func (a *App) fetchPages(ctx context.Context, r *scraper.Runner, ch store.Chapter, urls []string) ([]download.Page, error) {
+	fetcher := download.NewFetcher(a.Limiter)
+	fetcher.Referer = r.Module().RootURL
+	moduleDownloads := r.HasHandler("OnDownloadImage")
+
+	pages := make([]download.Page, 0, len(urls))
+	for i, u := range urls {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		headers, err := r.BeforeDownloadImage(u)
+		if err != nil {
+			return nil, fmt.Errorf("page %d of %d: %w", i+1, len(urls), err)
+		}
+
+		var page download.Page
+		if moduleDownloads {
+			data, err := r.DownloadImage(u)
+			if err != nil {
+				return nil, fmt.Errorf("page %d of %d: %w", i+1, len(urls), err)
+			}
+			// The module may have re-encoded the image, so the extension comes
+			// from the bytes rather than the URL.
+			page = download.Page{Data: data, Ext: download.ImageExt(data, u, "")}
+		} else {
+			page, err = fetcher.Page(ctx, u, headers)
+			if err != nil {
+				return nil, fmt.Errorf("page %d of %d (%s): %w", i+1, len(urls), u, err)
+			}
+		}
+
+		pages = append(pages, page)
+		a.Bus.Publish(jobs.Event{
+			Kind: "chapter-progress", ChapterID: ch.ID, SeriesID: ch.SeriesID,
+			State: store.ChapterDownloading, Done: i + 1, Total: len(urls),
+		})
+	}
+	return pages, nil
+}
+
 // DownloadPayload identifies a chapter to download.
 type DownloadPayload struct {
 	ChapterID int64 `json:"chapter_id"`
@@ -222,15 +270,7 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 		return fail(fmt.Errorf("module returned no pages for %s", ch.URL))
 	}
 
-	fetcher := download.NewFetcher(a.Limiter)
-	fetcher.Referer = r.Module().RootURL
-
-	pages, err := fetcher.Pages(ctx, pageURLs, func(done, total int) {
-		a.Bus.Publish(jobs.Event{
-			Kind: "chapter-progress", ChapterID: ch.ID, SeriesID: ch.SeriesID,
-			State: store.ChapterDownloading, Done: done, Total: total,
-		})
-	})
+	pages, err := a.fetchPages(ctx, r, ch, pageURLs)
 	if err != nil {
 		return fail(err)
 	}

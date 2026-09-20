@@ -1,6 +1,7 @@
 package download
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -44,27 +45,17 @@ const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 // Progress is called after each page is fetched.
 type Progress func(done, total int)
 
-// Pages downloads every URL in order.
+// Page downloads one image.
 //
-// Ordering matters more than speed here: a CBZ is read page by page, so pages
-// are fetched sequentially rather than racing and reassembling. The per-host
-// limiter would serialise them anyway.
-func (f *Fetcher) Pages(ctx context.Context, urls []string, onProgress Progress) ([]Page, error) {
-	pages := make([]Page, 0, len(urls))
-	for i, u := range urls {
-		p, err := f.page(ctx, u)
-		if err != nil {
-			return nil, fmt.Errorf("page %d of %d (%s): %w", i+1, len(urls), u, err)
-		}
-		pages = append(pages, p)
-		if onProgress != nil {
-			onProgress(i+1, len(urls))
-		}
-	}
-	return pages, nil
+// Callers drive the page loop themselves because a module may implement
+// OnDownloadImage and fetch some pages on its own. Ordering matters more than
+// speed regardless: a CBZ is read page by page, and the per-host limiter would
+// serialise concurrent fetches anyway.
+func (f *Fetcher) Page(ctx context.Context, rawURL string, headers map[string]string) (Page, error) {
+	return f.page(ctx, rawURL, headers)
 }
 
-func (f *Fetcher) page(ctx context.Context, rawURL string) (Page, error) {
+func (f *Fetcher) page(ctx context.Context, rawURL string, headers map[string]string) (Page, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return Page{}, err
@@ -77,6 +68,10 @@ func (f *Fetcher) page(ctx context.Context, rawURL string) (Page, error) {
 	req.Header.Set("User-Agent", f.UserAgent)
 	if f.Referer != "" {
 		req.Header.Set("Referer", f.Referer)
+	}
+	// Headers the module set in OnBeforeDownloadImage win over the defaults.
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := f.Client.Do(req)
@@ -96,12 +91,25 @@ func (f *Fetcher) page(ctx context.Context, rawURL string) (Page, error) {
 	if len(data) == 0 {
 		return Page{}, fmt.Errorf("empty response")
 	}
-	return Page{Data: data, Ext: imageExt(rawURL, resp.Header.Get("Content-Type"))}, nil
+	return Page{Data: data, Ext: ImageExt(data, rawURL, resp.Header.Get("Content-Type"))}, nil
 }
 
-// imageExt picks a file extension, preferring the URL and falling back to the
-// declared content type.
-func imageExt(rawURL, contentType string) string {
+// ImageExt picks a file extension for an image.
+//
+// The bytes are consulted first because they are the only source that stays
+// correct after a module transforms the image: descrambling a WebP re-encodes
+// it as PNG, and trusting the URL there would name a PNG ".webp".
+func ImageExt(data []byte, rawURL, contentType string) string {
+	switch {
+	case bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")):
+		return ".png"
+	case bytes.HasPrefix(data, []byte("\xff\xd8\xff")):
+		return ".jpg"
+	case bytes.HasPrefix(data, []byte("GIF8")):
+		return ".gif"
+	case len(data) > 12 && bytes.Equal(data[0:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")):
+		return ".webp"
+	}
 	if ext := path.Ext(strings.SplitN(rawURL, "?", 2)[0]); isImageExt(ext) {
 		return strings.ToLower(ext)
 	}

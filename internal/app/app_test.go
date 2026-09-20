@@ -1,8 +1,13 @@
 package app
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -255,4 +260,208 @@ func waitFor(t *testing.T, ctx context.Context, cond func() bool, what string) {
 		}
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+// gridImage builds an image whose every tile is a distinct flat colour.
+func gridImage(hor, ver, tile int) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, hor*tile, ver*tile))
+	for i := 0; i < hor*ver; i++ {
+		c := color.RGBA{R: uint8(17 * (i + 1)), G: uint8(255 - 13*i), B: uint8(7 * i), A: 255}
+		x0, y0 := (i%hor)*tile, (i/hor)*tile
+		for y := y0; y < y0+tile; y++ {
+			for x := x0; x < x0+tile; x++ {
+				img.Set(x, y, c)
+			}
+		}
+	}
+	return img
+}
+
+// scrambleTiles produces what the site serves: tile i holds what belongs at
+// matrix[i], which is the arrangement DeScramble reverses.
+func scrambleTiles(src *image.RGBA, hor, ver, tile int, matrix []int) []byte {
+	out := image.NewRGBA(src.Bounds())
+	for i := 0; i < hor*ver; i++ {
+		sx, sy := (matrix[i]%hor)*tile, (matrix[i]/hor)*tile
+		dx, dy := (i%hor)*tile, (i/hor)*tile
+		for y := 0; y < tile; y++ {
+			for x := 0; x < tile; x++ {
+				out.Set(dx+x, dy+y, src.At(sx+x, sy+y))
+			}
+		}
+	}
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, out)
+	return buf.Bytes()
+}
+
+// TestScrambledChapterEndToEnd proves the image hooks are wired: a site that
+// serves a tiled, shuffled page and a module that descrambles it in
+// OnDownloadImage must produce a correct image inside the CBZ.
+//
+// It also checks that the Referer from OnBeforeDownloadImage reaches the
+// server, since image hosts commonly 403 without one.
+func TestScrambledChapterEndToEnd(t *testing.T) {
+	const hor, ver, tile = 3, 3, 12
+	matrix := []int{4, 0, 8, 2, 6, 1, 7, 3, 5}
+	original := gridImage(hor, ver, tile)
+	scrambled := scrambleTiles(original, hor, ver, tile, matrix)
+
+	var gotReferer string
+	var base string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/manga/puzzle/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `<html><body>
+			<div class="post-title"><h1>Puzzle Series</h1></div>
+			<li class="wp-manga-chapter"><a href="%s/manga/puzzle/chapter-1/">Chapter 1</a></li>
+		</body></html>`, base)
+	})
+	mux.HandleFunc("/manga/puzzle/chapter-1/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `<div class="page-break"><img data-src="%s/p1.png"></div>`, base)
+	})
+	mux.HandleFunc("/p1.png", func(w http.ResponseWriter, r *http.Request) {
+		gotReferer = r.Header.Get("Referer")
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(scrambled)
+	})
+
+	srv := httptest.NewServer(mux)
+	base = srv.URL
+	t.Cleanup(srv.Close)
+
+	// A module in the shape WolfManga uses: fetch the image itself, then
+	// descramble it in place before handing it back.
+	checkout := t.TempDir()
+	luaDir := filepath.Join(checkout, "lua", "modules")
+	if err := os.MkdirAll(luaDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	upstream := upstreamLua(t)
+	for _, shared := range []string{"templates", "utils"} {
+		if err := os.Symlink(filepath.Join(upstream, shared),
+			filepath.Join(checkout, "lua", shared)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := fmt.Sprintf(`
+function Init()
+	local m = NewWebsiteModule()
+	m.ID                    = 'cccccccccccccccccccccccccccccccc'
+	m.Name                  = 'PuzzleSite'
+	m.RootURL               = '%s'
+	m.OnGetInfo             = 'GetInfo'
+	m.OnGetPageNumber       = 'GetPageNumber'
+	m.OnBeforeDownloadImage = 'BeforeDownloadImage'
+	m.OnDownloadImage       = 'DownloadImage'
+end
+
+local Template = require 'templates.Madara'
+MATRIX = {4, 0, 8, 2, 6, 1, 7, 3, 5}
+
+function GetInfo()       Template.GetInfo() return no_error end
+function GetPageNumber() return Template.GetPageNumber() end
+
+function BeforeDownloadImage()
+	HTTP.Headers.Values['Referer'] = MODULE.RootURL
+	return true
+end
+
+function DownloadImage()
+	if not HTTP.GET(URL) then return false end
+	local puzzle = require 'fmd.imagepuzzle'.Create(3, 3)
+	for i = 0, 8 do
+		puzzle.Matrix[i] = MATRIX[i + 1]
+	end
+	puzzle.DeScramble(HTTP.Document, HTTP.Document)
+	return true
+end
+`, srv.URL)
+	if err := os.WriteFile(filepath.Join(luaDir, "PuzzleSite.lua"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	cfg := &config.Config{
+		DataDir: dir, LibraryDir: filepath.Join(dir, "library"),
+		Workers: 1, HostConcurrency: 4, HostRPS: 1000,
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	reg := scraper.NewRegistry(filepath.Join(dir, "modules"), "")
+	if err := reg.Use(checkout, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	a := New(cfg, st, reg)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	go a.Pool.Run(ctx)
+
+	if err := a.EnqueueRefresh(ctx, "PuzzleSite", srv.URL+"/manga/puzzle/"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		s, err := st.ListSeries(ctx)
+		return err == nil && len(s) == 1
+	}, "series to be stored")
+
+	all, _ := st.ListSeries(ctx)
+	chs, _ := st.ListChapters(ctx, all[0].ID)
+	if len(chs) != 1 {
+		t.Fatalf("got %d chapters", len(chs))
+	}
+
+	if err := a.EnqueueDownload(ctx, chs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		c, err := st.GetChapter(ctx, chs[0].ID)
+		return err == nil && (c.State == store.ChapterDone || c.State == store.ChapterFailed)
+	}, "chapter to finish")
+
+	c, err := st.GetChapter(ctx, chs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.State != store.ChapterDone {
+		t.Fatalf("state = %s, error = %s", c.State, c.Error)
+	}
+	if gotReferer != srv.URL {
+		t.Errorf("Referer = %q, want %q from OnBeforeDownloadImage", gotReferer, srv.URL)
+	}
+
+	// The archive must hold the reassembled image, not what the site served.
+	zr, err := zip.OpenReader(c.FilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	if len(zr.File) != 1 {
+		t.Fatalf("archive holds %d entries", len(zr.File))
+	}
+	if name := zr.File[0].Name; name != "0001.png" {
+		t.Errorf("entry name = %q, want 0001.png", name)
+	}
+	rc, err := zr.File[0].Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	stored, _, err := image.Decode(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < ver*tile; y++ {
+		for x := 0; x < hor*tile; x++ {
+			wr, wg, wb, _ := original.At(x, y).RGBA()
+			gr, gg, gb, _ := stored.At(x, y).RGBA()
+			if wr != gr || wg != gg || wb != gb {
+				t.Fatalf("pixel (%d,%d) differs: the image was not descrambled", x, y)
+			}
+		}
+	}
 }
