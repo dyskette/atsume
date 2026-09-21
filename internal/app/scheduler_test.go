@@ -1002,6 +1002,40 @@ func TestSitesInOneFileAreConfiguredApart(t *testing.T) {
 	}
 }
 
+// TestMirrorIsChosenAndUsed covers why mirrors exist: the address in use has
+// to be changeable when one stops answering.
+func TestMirrorIsChosenAndUsed(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+	a, _, ctx := newCheckoutApp(t, twoSiteCheckout(t, srv.URL))
+
+	s, err := a.ModuleSettings(ctx, "Mirrored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Mirror != srv.URL {
+		t.Errorf("address in use = %q, want the first declared", s.Mirror)
+	}
+
+	if err := a.SaveModuleSettings(ctx, "Mirrored",
+		map[string]string{MirrorOption: "https://second.example"}, "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ = a.ModuleSettings(ctx, "Mirrored"); s.Mirror != "https://second.example" {
+		t.Errorf("address in use = %q, want the chosen one", s.Mirror)
+	}
+
+	// An address upstream no longer declares is ignored rather than honoured.
+	if err := a.SaveModuleSettings(ctx, "Mirrored",
+		map[string]string{MirrorOption: "https://gone.example"}, "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ = a.ModuleSettings(ctx, "Mirrored"); s.Mirror != srv.URL {
+		t.Errorf("address in use = %q, want a fallback to the first", s.Mirror)
+	}
+}
+
 // TestRepairModuleKeys covers series followed before a file was understood to
 // hold more than one site.
 func TestRepairModuleKeys(t *testing.T) {

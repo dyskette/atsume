@@ -437,3 +437,4 @@ li.more { justify-content: center; border-style: dashed; }
 .section-head h2 { font-size: 1rem; margin: 0; }
 .section-head .count { color: var(--muted); font-size: 0.82rem; }
 .section-head + .muted { margin-bottom: 0.4rem; }
+.grid .mirrors { font-size: 0.78rem; }

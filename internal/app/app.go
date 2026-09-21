@@ -78,7 +78,7 @@ func (a *App) openModule(ctx context.Context, name string) (*scraper.Runner, err
 	if !ok {
 		return nil, errModuleNotFound(name, a.Registry.Ref())
 	}
-	r, err := a.openFileRaw(ctx, e.File, e.Site, "")
+	r, err := a.openFileRaw(ctx, e.File, e.Site, a.mirrorFor(ctx, e))
 	if err != nil {
 		return nil, err
 	}

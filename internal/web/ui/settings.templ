@@ -50,6 +50,29 @@ templ ModuleSettings(s *app.ModuleSettings, saved bool) {
 				}
 			</ul>
 
+			if len(s.Mirrors) > 1 {
+				<h2>Address</h2>
+				<p class="muted">
+					{ Count(len(s.Mirrors), "address is", "addresses are") } declared for
+					this site. They serve the same catalogue; pick another when one
+					stops answering.
+				</p>
+				<ul class="rows">
+					<li>
+						<span class="title">In use</span>
+						<select name={ app.MirrorOption }>
+							for _, m := range s.Mirrors {
+								if m == s.Mirror {
+									<option value={ m } selected>{ m }</option>
+								} else {
+									<option value={ m }>{ m }</option>
+								}
+							}
+						</select>
+					</li>
+				</ul>
+			}
+
 			<h2>Account</h2>
 			if !s.SupportsLogin {
 				<p class="muted">This module does not take a login.</p>

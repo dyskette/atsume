@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dyskette/atsume/internal/app"
 	"github.com/dyskette/atsume/internal/scraper"
 	"github.com/dyskette/atsume/internal/store"
 	"github.com/dyskette/atsume/internal/web/ui"
@@ -298,6 +299,13 @@ func (s *Server) handleSaveModuleSettings(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		values[o.Name] = r.PostForm.Get(o.Name)
+	}
+	// The chosen address is not something the module declares, so it is not
+	// in the option list; it is still stored the same way.
+	if len(settings.Mirrors) > 1 {
+		if v := r.PostForm.Get(app.MirrorOption); v != "" {
+			values[app.MirrorOption] = v
+		}
 	}
 
 	username := r.PostForm.Get("__username")

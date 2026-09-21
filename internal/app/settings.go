@@ -27,6 +27,13 @@ type ModuleSettings struct {
 	// a credential is refused rather than done in the clear.
 	SecretsEnabled bool
 
+	// Mirrors are the addresses this site is declared under, and Mirror is
+	// the one in use. Most sites have one address and the choice is not
+	// offered; MangaPark has fourteen, and they exist because these domains
+	// are blocked and abandoned constantly.
+	Mirrors []string
+	Mirror  string
+
 	// Series from this site, so the page that fixes a problem can name what
 	// the problem was about and offer a way back to it.
 	Series []store.Series
@@ -72,6 +79,10 @@ func (a *App) ModuleSettings(ctx context.Context, name string) (*ModuleSettings,
 			s.Username = creds.Username
 		}
 	}
+	if e, ok := a.SiteInfo(ctx, name); ok && e.HasMirrors() {
+		s.Mirrors = e.Mirrors
+		s.Mirror = r.Module().RootURL
+	}
 	if s.Series, err = a.Store.SeriesByModule(ctx, name); err != nil {
 		return nil, err
 	}
@@ -112,6 +123,33 @@ func (a *App) SaveModuleSettings(ctx context.Context, name string, options map[s
 	})
 }
 
+// MirrorOption is the reserved setting holding which of a site's addresses to
+// use. The double underscore keeps it clear of the option names modules
+// declare, which are plain Lua identifiers.
+const MirrorOption = "__mirror"
+
+// mirrorFor returns the address chosen for a site, or none to take the first.
+//
+// A choice that no longer appears among the declarations is ignored rather
+// than honoured: these domains are abandoned constantly, and a stored address
+// that upstream has dropped should not strand a followed series.
+func (a *App) mirrorFor(ctx context.Context, e ModuleEntry) string {
+	if len(e.Mirrors) < 2 {
+		return ""
+	}
+	opts, err := a.Store.ModuleOptions(ctx, e.Site)
+	if err != nil {
+		return ""
+	}
+	chosen := opts[MirrorOption]
+	for _, m := range e.Mirrors {
+		if m == chosen {
+			return chosen
+		}
+	}
+	return ""
+}
+
 // openFileRaw opens one module file, selecting the website named by site.
 //
 // It is the one place that turns a file into a running module, and it applies
@@ -127,7 +165,7 @@ func (a *App) openModuleRaw(ctx context.Context, name string) (*scraper.Runner, 
 	if !ok {
 		return nil, errModuleNotFound(name, a.Registry.Ref())
 	}
-	return a.openFileRaw(ctx, e.File, e.Site, "")
+	return a.openFileRaw(ctx, e.File, e.Site, a.mirrorFor(ctx, e))
 }
 
 // TestLogin signs in to a site with the stored credentials and reports what
