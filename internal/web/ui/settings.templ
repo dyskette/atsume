@@ -7,9 +7,20 @@ import (
 	"github.com/dyskette/atsume/internal/scraper"
 )
 
-// ModuleSettings renders a module's declared options and its login form.
-templ ModuleSettings(s *app.ModuleSettings, saved bool) {
+// ModuleSettingsPage is the settings page as a whole document.
+templ ModuleSettingsPage(s *app.ModuleSettings) {
 	@Layout(s.Module) {
+		@ModuleSettings(s, false)
+	}
+}
+
+// ModuleSettings is the settings content on its own.
+//
+// Saving swaps this in, so it must not carry the page chrome with it: it used
+// to render the whole document into a target inside the page, which is why a
+// save produced a second header and a second footer.
+templ ModuleSettings(s *app.ModuleSettings, saved bool) {
+	<div id="settings">
 		<div class="head">
 			<h1>{ s.Module }</h1>
 			<a href={ templ.SafeURL("/modules/" + s.Module) }>Browse</a>
@@ -20,7 +31,7 @@ templ ModuleSettings(s *app.ModuleSettings, saved bool) {
 		<form
 			hx-post={ fmt.Sprintf("/modules/%s/settings", s.Module) }
 			hx-swap="outerHTML"
-			hx-target="closest main"
+			hx-target="#settings"
 		>
 			<h2>Options</h2>
 			<p class="muted">
@@ -108,7 +119,7 @@ templ ModuleSettings(s *app.ModuleSettings, saved bool) {
 				}
 			</ul>
 		}
-	}
+	</div>
 }
 
 // LoginResult reports what a test sign-in did.

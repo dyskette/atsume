@@ -271,7 +271,7 @@ func (s *Server) handleModuleSettings(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.ModuleSettings(settings, false))
+	s.render(w, r, ui.ModuleSettingsPage(settings))
 }
 
 func (s *Server) handleSaveModuleSettings(w http.ResponseWriter, r *http.Request) {
