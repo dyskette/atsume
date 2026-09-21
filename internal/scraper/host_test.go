@@ -715,3 +715,43 @@ end
 	}
 }
 
+// TestLuaDirectoryEndsWithSeparator covers a contract modules depend on by
+// concatenation.
+//
+// Upstream's fmd.LuaDirectory ends with a path separator, and modules write
+// fmd.LuaDirectory .. 'extras\\thing'. Without it the path silently does not
+// exist, and the module behaves as though the directory were empty — which
+// is how the MangaFox templates went unloaded and every page kept its
+// watermark.
+func TestLuaDirectoryEndsWithSeparator(t *testing.T) {
+	const src = `
+function Init()
+	local m = NewWebsiteModule()
+	m.ID      = '1'
+	m.Name    = 'Pathy'
+	m.RootURL = 'https://example.invalid'
+	DIR = require('fmd.env').LuaDirectory
+end
+`
+	path := filepath.Join(t.TempDir(), "Pathy.lua")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := luaDir(t)
+	h := &Host{LuaDir: dir}
+	r, err := h.Open(context.Background(), path, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	got := r.L.GetGlobal("DIR").String()
+	if want := dir + string(os.PathSeparator); got != want {
+		t.Errorf("fmd.LuaDirectory = %q, want %q", got, want)
+	}
+	// The thing modules actually do with it.
+	joined := got + "modules"
+	if _, err := os.Stat(joined); err != nil {
+		t.Errorf("concatenating onto it does not reach a real path: %v", err)
+	}
+}

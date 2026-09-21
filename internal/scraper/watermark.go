@@ -317,13 +317,19 @@ func mangafoxwatermarkLoader(L *lua.LState) int {
 	L.SetFuncs(t, map[string]lua.LGFunction{
 		// LoadTemplate(directory) returns how many templates were read.
 		"LoadTemplate": func(L *lua.LState) int {
-			loaded, err := loadWatermarkTemplates(L.CheckString(1))
+			dir := L.CheckString(1)
+			loaded, err := loadWatermarkTemplates(dir)
 			if err != nil {
-				// Upstream returns zero for a directory it cannot read, and
-				// the calling module carries on without watermark removal.
-				slog.Debug("mangafox templates", "err", err)
+				// Upstream returns zero for a directory it cannot read and
+				// the module carries on without removing anything. Say so:
+				// a silent zero here looks exactly like a page that had no
+				// watermark, and the pages go out with the banner still on.
+				slog.Warn("no MangaFox watermark templates", "dir", dir, "err", err)
 				L.Push(lua.LNumber(0))
 				return 1
+			}
+			if len(loaded.items) == 0 {
+				slog.Warn("MangaFox watermark template directory is empty", "dir", dir)
 			}
 			held = loaded
 			L.Push(lua.LNumber(len(loaded.items)))

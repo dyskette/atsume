@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"os"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -149,7 +150,11 @@ func envLoader(luaDir string) lua.LGFunction {
 		t := L.NewTable()
 		// Modules branch on this to pick a language-specific directory or parser.
 		L.SetField(t, "SelectedLanguage", lua.LString("en"))
-		L.SetField(t, "LuaDirectory", lua.LString(luaDir))
+		// Upstream ends this with a path separator, and modules concatenate
+		// straight onto it: fmd.LuaDirectory .. 'extras\\mangafoxtemplate'.
+		// Without the separator the result is a path that does not exist,
+		// and the module carries on as though the directory were empty.
+		L.SetField(t, "LuaDirectory", lua.LString(luaDir+string(os.PathSeparator)))
 		L.Push(t)
 		return 1
 	}
