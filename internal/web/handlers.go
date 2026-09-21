@@ -71,9 +71,58 @@ func (s *Server) handleBrowseList(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.BrowseList(ui.BrowseView{
-		Module: module, Page: page, Entries: entries, Tracked: tracked,
-	}))
+	v := ui.BrowseView{Module: module, Page: page, Entries: entries, Tracked: tracked}
+	// "Load more" appends rows to the list already on screen rather than
+	// replacing it, so a filter keeps applying across everything loaded.
+	if r.URL.Query().Get("rows") != "" {
+		s.render(w, r, ui.BrowseRows(v))
+		return
+	}
+	s.render(w, r, ui.BrowseList(v))
+}
+
+// handleFollowMany follows several titles at once.
+//
+// Recognising six series in an index and following them one at a time is six
+// round trips for one intent.
+func (s *Server) handleFollowMany(w http.ResponseWriter, r *http.Request) {
+	module := r.PathValue("name")
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	selected := r.PostForm["sel"]
+	if len(selected) == 0 {
+		s.render(w, r, ui.Notice("Nothing selected.", ""))
+		return
+	}
+
+	var followed int
+	for _, key := range selected {
+		url := r.PostForm.Get("u" + key)
+		if url == "" {
+			continue
+		}
+		if _, err := s.App.Follow(r.Context(), module, url, r.PostForm.Get("t"+key)); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		followed++
+	}
+
+	slog.Info("followed several", "module", module, "count", followed)
+	// Reloading the index would cost another request to the site, so the page
+	// says what happened and offers the library rather than re-fetching.
+	w.Header().Set("HX-Reswap", "outerHTML")
+	w.Header().Set("HX-Retarget", "#follow-many")
+	detail := "their chapter lists are being fetched"
+	if followed == 1 {
+		detail = "its chapter list is being fetched"
+	}
+	s.render(w, r, ui.Notice(
+		fmt.Sprintf("Following %d more — %s.", followed, detail),
+		"/"))
 }
 
 func queryPage(r *http.Request) int {
@@ -91,17 +140,23 @@ func (s *Server) handleTrackSeries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "module and url are required", http.StatusBadRequest)
 		return
 	}
-	if err := s.App.EnqueueRefresh(r.Context(), module, url); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	// The title, not the link: the confirmation replaces the row the reader
-	// just pressed, and a URL slug there reads as a glitch.
 	name := r.FormValue("name")
 	if name == "" {
 		name = url
 	}
-	s.render(w, r, ui.Tracked(name))
+
+	id, err := s.App.Follow(r.Context(), module, url, name)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	// The reply replaces whatever was pressed, in place.
+	if r.FormValue("context") == "page" {
+		s.render(w, r, ui.FollowedAction(name, id))
+		return
+	}
+	s.render(w, r, ui.Followed(name, id))
 }
 
 func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {

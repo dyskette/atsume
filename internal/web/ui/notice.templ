@@ -1,0 +1,15 @@
+package ui
+
+// Notice reports the outcome of an action in the place it was taken.
+//
+// Every action in this interface used to be fire-and-forget — a redirect, a
+// 204, or nothing — so nothing ever confirmed what had been started.
+templ Notice(message string, link string) {
+	<div class="notice">
+		<span class="dot working"></span>
+		<span>{ message }</span>
+		if link != "" {
+			<a href={ templ.SafeURL(link) }>Open library</a>
+		}
+	</div>
+}

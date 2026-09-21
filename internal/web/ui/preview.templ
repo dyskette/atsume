@@ -59,14 +59,13 @@ templ Preview(v PreviewView) {
 					that point on; the { fmt.Sprintf("%d", v.Chapters) } already listed
 					stay a separate, deliberate download.
 				</p>
-				<div class="actions">
-					<form hx-post="/series" hx-swap="none" hx-on::after-request="window.location='/'">
-						<input type="hidden" name="module" value={ v.Module }/>
-						<input type="hidden" name="url" value={ v.SeriesURL }/>
-						<input type="hidden" name="name" value={ v.Info.Title }/>
-						<button type="submit" class="primary">Follow this series</button>
-					</form>
-				</div>
+				<form class="actions" hx-post="/series" hx-swap="outerHTML">
+					<input type="hidden" name="module" value={ v.Module }/>
+					<input type="hidden" name="url" value={ v.SeriesURL }/>
+					<input type="hidden" name="name" value={ v.Info.Title }/>
+					<input type="hidden" name="context" value="page"/>
+					<button type="submit" class="primary">Follow this series</button>
+				</form>
 				if v.Info.Genres != "" {
 					<p class="muted">{ v.Info.Genres }</p>
 				}

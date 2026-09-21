@@ -20,13 +20,17 @@ func (v BrowseView) ListURL() string {
 	return fmt.Sprintf("/modules/%s/list?page=%d", v.Module, v.Page)
 }
 
+// MoreURL fetches the next page as rows to append to the one on screen.
+func (v BrowseView) MoreURL() string {
+	return fmt.Sprintf("/modules/%s/list?page=%d&rows=1", v.Module, v.Page+1)
+}
+
 // Browse is the shell of a site's directory page.
 //
 // The index is fetched separately, after the page has rendered. Fetching it
 // first meant a site that does not answer held the whole page — including the
-// link to its settings — for the length of the HTTP timeout, which is the
-// worst case to be stuck on: a reader whose site is broken is the one most
-// likely to want the settings.
+// link to its settings, which is what a reader whose site is broken most
+// wants.
 templ Browse(v BrowseView) {
 	@Layout(v.Module) {
 		<div class="head">
@@ -34,8 +38,29 @@ templ Browse(v BrowseView) {
 			<a href={ templ.SafeURL("/modules/" + v.Module + "/settings") }>Site settings</a>
 		</div>
 		<p class="muted">
-			{ fmt.Sprintf("Page %d of this site's index. Following a title downloads new chapters from then on, not the back catalogue.", v.Page+1) }
+			Following a title downloads new chapters from then on, not the back
+			catalogue.
 		</p>
+		<div class="filter">
+			<input
+				id="site-filter"
+				type="search"
+				placeholder="Filter the titles loaded below…"
+				autocomplete="off"
+			/>
+			<span id="filter-note" class="muted"></span>
+		</div>
+		<!-- The batch form lives outside the list so appended rows can join it
+		     by id; a form element cannot wrap list items that arrive later. -->
+		<form
+			id="follow-many"
+			class="batch"
+			hx-post={ fmt.Sprintf("/modules/%s/follow", v.Module) }
+			hx-swap="none"
+		>
+			<button type="submit">Follow selected</button>
+			<span class="muted">Tick several titles to follow them in one go.</span>
+		</form>
 		<div
 			id="site-index"
 			hx-get={ v.ListURL() }
@@ -47,12 +72,7 @@ templ Browse(v BrowseView) {
 				{ fmt.Sprintf("Fetching the index from %s. This waits on their server.", v.Module) }
 			</div>
 		</div>
-		<nav class="pager">
-			if v.Page > 0 {
-				<a href={ templ.SafeURL(pageURL(v.Module, v.Page-1)) }>Previous</a>
-			}
-			<a href={ templ.SafeURL(pageURL(v.Module, v.Page+1)) }>Next</a>
-		</nav>
+		<script src="/static/site-filter.js"></script>
 	}
 }
 
@@ -64,36 +84,76 @@ templ BrowseList(v BrowseView) {
 			{ fmt.Sprintf("The module returned no titles for page %d. It may paginate differently, or the site may have nothing more to list.", v.Page+1) }
 		</div>
 	}
-	<ul class="rows">
-		for _, e := range v.Entries {
-			<li>
-				<span class="title">{ e.Name }</span>
-				if id, ok := v.Tracked[e.Link]; ok {
-					<span class="badge done">following</span>
-					<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
-				} else {
-					<a href={ templ.SafeURL(previewURL(v.Module, e.Link)) }>Preview</a>
-					<form hx-post="/series" hx-swap="outerHTML" hx-target="closest li">
-						<input type="hidden" name="module" value={ v.Module }/>
-						<input type="hidden" name="url" value={ e.Link }/>
-						<input type="hidden" name="name" value={ e.Name }/>
-						<button type="submit">Follow</button>
-					</form>
-				}
-			</li>
-		}
+	<ul class="rows" id="site-rows">
+		@BrowseRows(v)
 	</ul>
 }
 
-// Tracked replaces a directory row once the series has been followed.
-//
-// It names the title rather than the URL, and says what was and was not
-// started: the moment someone commits to a series is the moment they need to
-// know a back catalogue is not being fetched.
-templ Tracked(name string) {
-	<li class="tracked">
-		<span class="title">{ name }</span>
-		<span class="muted">fetching the chapter list — new chapters only</span>
-		<span class="badge done">following</span>
+// BrowseRows is the appendable part: the entries plus the control that fetches
+// the page after them.
+templ BrowseRows(v BrowseView) {
+	for i, e := range v.Entries {
+		@BrowseRow(v, i, e)
+	}
+	if len(v.Entries) > 0 {
+		<li class="more">
+			<button
+				type="button"
+				hx-get={ v.MoreURL() }
+				hx-target="closest li"
+				hx-swap="outerHTML"
+			>
+				{ fmt.Sprintf("Load page %d", v.Page+2) }
+			</button>
+		</li>
+	}
+}
+
+// BrowseRow is one entry. The title is the link, because in a catalogue you
+// open the thing by clicking the thing; a separate "Preview" beside "Follow"
+// presented navigation and commitment as siblings.
+templ BrowseRow(v BrowseView, i int, e scraper.Entry) {
+	{{ key := fmt.Sprintf("%d-%d", v.Page, i) }}
+	<li class="site-row" data-title={ e.Name }>
+		if _, ok := v.Tracked[e.Link]; !ok {
+			<input class="pick" type="checkbox" name="sel" value={ key } form="follow-many" aria-label={ "Select " + e.Name }/>
+			<input type="hidden" name={ "u" + key } value={ e.Link } form="follow-many"/>
+			<input type="hidden" name={ "t" + key } value={ e.Name } form="follow-many"/>
+		} else {
+			<span class="pick"></span>
+		}
+		<a class="title" href={ templ.SafeURL(previewURL(v.Module, e.Link)) }>{ e.Name }</a>
+		if id, ok := v.Tracked[e.Link]; ok {
+			<span class="badge done">following</span>
+			<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
+		} else {
+			<form hx-post="/series" hx-swap="outerHTML" hx-target="closest li">
+				<input type="hidden" name="module" value={ v.Module }/>
+				<input type="hidden" name="url" value={ e.Link }/>
+				<input type="hidden" name="name" value={ e.Name }/>
+				<input type="hidden" name="context" value="row"/>
+				<button type="submit">Follow</button>
+			</form>
+		}
 	</li>
+}
+
+// Followed replaces a directory row once the series has been followed. It
+// stays where it was: the reader is mid-scan of an index, and following one
+// title is no reason to move them.
+templ Followed(name string, id int64) {
+	<li class="site-row followed" data-title={ name }>
+		<span class="pick"></span>
+		<a class="title" href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>{ name }</a>
+		<span class="badge done">following</span>
+		<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
+	</li>
+}
+
+// FollowedAction replaces the button on a series page.
+templ FollowedAction(name string, id int64) {
+	<div class="actions">
+		<span class="badge done">following</span>
+		<a class="cta" href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open in library</a>
+	</div>
 }

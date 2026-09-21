@@ -21,6 +21,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /modules/{name}/settings", s.handleModuleSettings)
 	mux.HandleFunc("POST /modules/{name}/settings", s.handleSaveModuleSettings)
 
+	mux.HandleFunc("POST /modules/{name}/follow", s.handleFollowMany)
+
 	mux.HandleFunc("POST /series", s.handleTrackSeries)
 	mux.HandleFunc("GET /series/{id}", s.handleSeries)
 	mux.HandleFunc("GET /series/{id}/cover", s.handleCover)
