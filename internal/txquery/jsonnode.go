@@ -35,7 +35,16 @@ func appendValue(parent *html.Node, v any) {
 			appendValue(el, child)
 		}
 	case nil:
-		// an absent value contributes no text
+		// A JSON null is a value, and TXQuery renders it as the text "null".
+		// Contributing nothing instead made it indistinguishable from an
+		// absent property, and nineteen modules tell the two apart by
+		// comparing against that exact string. MangaDex drops every chapter
+		// whose externalUrl is not "null", so an empty string there meant a
+		// series with chapters listed none, with no error anywhere.
+		//
+		// A property that is absent still yields no element at all, so the
+		// distinction upstream draws is preserved.
+		parent.AppendChild(&html.Node{Type: html.TextNode, Data: "null"})
 	case string:
 		parent.AppendChild(&html.Node{Type: html.TextNode, Data: t})
 	case bool:

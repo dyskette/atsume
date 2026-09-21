@@ -325,3 +325,52 @@ func TestHREFAllFallsBackToTitle(t *testing.T) {
 		}
 	}
 }
+
+// TestJSONNullIsTheStringNull covers the difference between a property that
+// is null and one that is not there.
+//
+// TXQuery renders a JSON null as the text "null", and nineteen modules tell
+// the two apart by comparing against exactly that. MangaDex keeps a chapter
+// only when its externalUrl is "null"; rendering null as an empty string made
+// every chapter look external, so a series with chapters listed none and
+// reported no error doing it.
+func TestJSONNullIsTheStringNull(t *testing.T) {
+	const doc = `{"data":[
+		{"id":"a","attributes":{"externalUrl":null,"chapter":"1","title":null}},
+		{"id":"b","attributes":{"externalUrl":"https://elsewhere.example","chapter":"2"}}
+	]}`
+
+	q, err := ParseString(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := q.XPath("json(*).data()")
+	if len(items) != 2 {
+		t.Fatalf("got %d items, want 2", len(items))
+	}
+
+	// Present and null.
+	if got := items[0].XPathString("attributes/externalUrl"); got != "null" {
+		t.Errorf("a null property is %q, want %q", got, "null")
+	}
+	if got := items[0].XPathString("attributes/title"); got != "null" {
+		t.Errorf("a null title is %q, want %q", got, "null")
+	}
+	// Present with a value.
+	if got := items[1].XPathString("attributes/externalUrl"); got != "https://elsewhere.example" {
+		t.Errorf("got %q", got)
+	}
+	// Absent entirely, which stays an empty string: there is no element to
+	// match, and that is the distinction upstream draws.
+	if got := items[1].XPathString("attributes/title"); got != "" {
+		t.Errorf("an absent property is %q, want empty", got)
+	}
+
+	// The test the module actually performs.
+	for i, want := range []bool{true, false} {
+		keep := items[i].XPathString("attributes/externalUrl") == "null"
+		if keep != want {
+			t.Errorf("item %d: kept=%v, want %v", i, keep, want)
+		}
+	}
+}
