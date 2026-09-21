@@ -187,16 +187,6 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 		return err
 	}
 
-	// Knowing whether this is the first look at the series decides whether the
-	// chapters it turns up are "new". On a first import every chapter is
-	// unknown, and queuing the whole backlog is rarely what tracking a series
-	// was meant to do.
-	previous, err := a.Store.ListChapters(ctx, id)
-	if err != nil {
-		return err
-	}
-	initialImport := len(previous) == 0
-
 	links, names := info.ChapterLinks.All(), info.ChapterNames.All()
 	chs := make([]store.Chapter, 0, len(links))
 	for i, link := range links {
@@ -209,7 +199,10 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 			URL: link, Name: name, Number: parsed.Number, Volume: parsed.Volume,
 		})
 	}
-	added, err := a.Store.ReplaceChapters(ctx, id, chs)
+	// Whether this is the first look at the series decides whether what it
+	// turns up is news or a back catalogue, and queuing a whole back
+	// catalogue is rarely what following a series was meant to do.
+	added, initialImport, err := a.Store.ReplaceChapters(ctx, id, chs)
 	if err != nil {
 		return err
 	}

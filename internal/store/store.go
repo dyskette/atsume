@@ -268,6 +268,15 @@ type SeriesProgress struct {
 	Waiting int // pending or previously failed
 	Active  int // queued or downloading
 	Failed  int
+
+	// New is what arrived while the series was being followed and is not yet
+	// on disk. It is the difference between "a chapter came out" and "there
+	// is a back catalogue here you never asked for", which the library used
+	// to state in identical words.
+	New int
+	// NewestArrival is when a chapter last turned up for this series,
+	// downloaded or not.
+	NewestArrival sql.NullTime
 }
 
 // Progress returns the tally for every series in one query.
@@ -275,7 +284,9 @@ type SeriesProgress struct {
 // The library page needs it for every row, and asking per row would be a query
 // per series on the page a reader looks at most.
 func (s *Store) Progress(ctx context.Context) (map[int64]SeriesProgress, error) {
-	const q = `SELECT series_id, state, COUNT(*) FROM chapters GROUP BY series_id, state`
+	const q = `
+		SELECT series_id, state, backlog, COUNT(*), MAX(arrived_at)
+		FROM chapters GROUP BY series_id, state, backlog`
 	rows, err := s.DB.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
@@ -286,12 +297,23 @@ func (s *Store) Progress(ctx context.Context) (map[int64]SeriesProgress, error) 
 	for rows.Next() {
 		var id int64
 		var state string
+		var backlog bool
 		var n int
-		if err := rows.Scan(&id, &state, &n); err != nil {
+		var newest sql.NullString
+		if err := rows.Scan(&id, &state, &backlog, &n, &newest); err != nil {
 			return nil, err
 		}
+		arrived := parseTimestamp(newest)
 		p := out[id]
 		p.Total += n
+		if !backlog {
+			if state != ChapterDone {
+				p.New += n
+			}
+			if arrived.Valid && (!p.NewestArrival.Valid || arrived.Time.After(p.NewestArrival.Time)) {
+				p.NewestArrival = arrived
+			}
+		}
 		switch state {
 		case ChapterDone:
 			p.Done += n
@@ -308,6 +330,24 @@ func (s *Store) Progress(ctx context.Context) (map[int64]SeriesProgress, error) 
 	return out, rows.Err()
 }
 
+// parseTimestamp reads a SQLite timestamp that arrived as text.
+//
+// The driver converts a column to time.Time from its declared type, and an
+// aggregate has none: MAX(arrived_at) comes back as the string CURRENT_TIMESTAMP
+// wrote, which is UTC and without a zone. A missing or unreadable value is
+// simply absent — a library row is not worth failing a page over.
+func parseTimestamp(v sql.NullString) sql.NullTime {
+	if !v.Valid || v.String == "" {
+		return sql.NullTime{}
+	}
+	for _, layout := range []string{"2006-01-02 15:04:05", time.RFC3339Nano} {
+		if t, err := time.Parse(layout, v.String); err == nil {
+			return sql.NullTime{Time: t.UTC(), Valid: true}
+		}
+	}
+	return sql.NullTime{}
+}
+
 // GetSeries reads one series by id.
 func (s *Store) GetSeries(ctx context.Context, id int64) (Series, error) {
 	const q = `
@@ -321,42 +361,52 @@ func (s *Store) GetSeries(ctx context.Context, id int64) (Series, error) {
 	return v, err
 }
 
-// ReplaceChapters records a series' chapter list and returns the chapters that
-// were not previously known.
+// ReplaceChapters records a series' chapter list, returning the chapters that
+// were not previously known and whether this was the first look at the series.
 //
 // Existing rows keep their state, so a refresh never re-downloads what is
 // already on disk. The newly seen chapters are what a subscription check acts
 // on, which is why they are reported rather than counted.
-func (s *Store) ReplaceChapters(ctx context.Context, seriesID int64, chs []Chapter) ([]Chapter, error) {
+//
+// The first look is decided here rather than by the caller because it is the
+// same question as "which URLs do we already have", and answering it inside
+// the transaction means a concurrent check cannot make both answers true.
+// Chapters found on that first look are marked as backlog: they were already
+// published when the series was followed, and the library must not offer them
+// as news.
+func (s *Store) ReplaceChapters(ctx context.Context, seriesID int64, chs []Chapter) ([]Chapter, bool, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer tx.Rollback()
 
 	known, err := knownChapterURLs(ctx, tx, seriesID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
+	initial := len(known) == 0
+
 	const q = `
-		INSERT INTO chapters (series_id, url, name, number, volume, position)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO chapters (series_id, url, name, number, volume, position,
+		                      arrived_at, backlog)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
 		ON CONFLICT (series_id, url) DO UPDATE SET
 			name = excluded.name, number = excluded.number,
 			volume = excluded.volume, position = excluded.position
 		RETURNING id`
 	stmt, err := tx.PrepareContext(ctx, q)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer stmt.Close()
 
 	var added []Chapter
 	for i, c := range chs {
 		var id int64
-		if err := stmt.QueryRowContext(ctx, seriesID, c.URL, c.Name, c.Number, c.Volume, i).Scan(&id); err != nil {
-			return nil, err
+		if err := stmt.QueryRowContext(ctx, seriesID, c.URL, c.Name, c.Number, c.Volume, i, initial).Scan(&id); err != nil {
+			return nil, false, err
 		}
 		if !known[c.URL] {
 			c.ID, c.SeriesID, c.Position, c.State = id, seriesID, i, ChapterPending
@@ -364,9 +414,9 @@ func (s *Store) ReplaceChapters(ctx context.Context, seriesID int64, chs []Chapt
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return added, nil
+	return added, initial, nil
 }
 
 func knownChapterURLs(ctx context.Context, tx *sql.Tx, seriesID int64) (map[string]bool, error) {

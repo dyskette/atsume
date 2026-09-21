@@ -704,3 +704,60 @@ func TestTestLoginWithoutCredentials(t *testing.T) {
 		t.Errorf("got (%v, %q), want a note that the site takes no login", ok, detail)
 	}
 }
+
+// TestBacklogIsNotNews covers the distinction the library is grouped by.
+//
+// Every chapter is "not downloaded" on the first check, and treating that as
+// news would fill the new-chapters section with back catalogues. Only what
+// turns up on a later check is news.
+func TestBacklogIsNotNews(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(3)
+	srv := growingSite(t, &chapters)
+
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{})
+	id, err := a.Follow(ctx, "TestMadara", srv.URL+"/manga/grow/", "Growing Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return len(chs) == 3
+	}, "the first check")
+
+	progress, err := st.Progress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := progress[id]; p.New != 0 {
+		t.Errorf("first check reported %d new; the whole list was already published", p.New)
+	}
+	if p := progress[id]; p.Waiting != 3 {
+		t.Errorf("waiting = %d, want the 3 chapters of backlog", p.Waiting)
+	}
+
+	// A chapter comes out.
+	chapters.Store(4)
+	if err := a.EnqueueRefresh(ctx, "TestMadara", srv.URL+"/manga/grow/"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return len(chs) == 4
+	}, "the second check")
+
+	progress, err = st.Progress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := progress[id]
+	if p.New != 1 {
+		t.Errorf("new = %d, want the one chapter that came out", p.New)
+	}
+	if !p.NewestArrival.Valid {
+		t.Error("a new chapter should record when it arrived")
+	}
+	if p.Waiting != 4 {
+		t.Errorf("waiting = %d, want all four still undownloaded", p.Waiting)
+	}
+}
