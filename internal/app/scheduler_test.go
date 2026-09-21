@@ -1213,3 +1213,66 @@ func TestMissingFileIsNoticedAndRecoverable(t *testing.T) {
 		t.Errorf("the file was not restored: %v", err)
 	}
 }
+
+// TestCheckReconcilesDeletedFiles covers the other half: the library must
+// stop claiming a file it no longer has, without a page load going near the
+// filesystem.
+func TestCheckReconcilesDeletedFiles(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{})
+
+	id, err := a.Follow(ctx, "TestMadara", srv.URL+"/manga/grow/", "Growing Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return len(chs) == 1
+	}, "the first check")
+	if _, err := a.EnqueueAllPending(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return chs[0].State == store.ChapterDone
+	}, "the chapter to be written")
+
+	chs, _ := st.ListChapters(ctx, id)
+	if err := os.Remove(chs[0].FilePath); err != nil {
+		t.Fatal(err)
+	}
+
+	// The next scheduled check notices.
+	if err := a.EnqueueRefresh(ctx, "TestMadara", srv.URL+"/manga/grow/"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return chs[0].State == store.ChapterPending
+	}, "the check to notice the file had gone")
+
+	// The library counts it as outstanding rather than as something it has.
+	progress, err := st.Progress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := progress[id]; p.Done != 0 || p.Waiting != 1 {
+		t.Errorf("progress = %+v, want nothing downloaded and one waiting", p)
+	}
+
+	// And it is not fetched again behind the reader's back: a file that
+	// disappeared may have been deleted on purpose. Only a newly published
+	// chapter downloads by itself.
+	chs, _ = st.ListChapters(ctx, id)
+	if chs[0].FilePath != "" {
+		t.Errorf("stale path kept: %q", chs[0].FilePath)
+	}
+	if _, err := os.Stat(filepath.Join(a.Cfg.LibraryDir, "Growing Series")); err == nil {
+		entries, _ := os.ReadDir(filepath.Join(a.Cfg.LibraryDir, "Growing Series"))
+		if len(entries) != 0 {
+			t.Errorf("the check re-downloaded on its own: %d files", len(entries))
+		}
+	}
+}

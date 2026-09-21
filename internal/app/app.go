@@ -235,10 +235,62 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 		}
 	}
 
+	// The check is also the moment to notice that files have left. Doing it
+	// here rather than while rendering keeps a page load off the filesystem
+	// and keeps a GET from quietly rewriting rows.
+	if gone, err := a.reconcileFiles(ctx, id); err != nil {
+		slog.Warn("could not check files on disk", "series", info.Title, "err", err)
+	} else if gone > 0 {
+		message += fmt.Sprintf(" · %s missing from disk", plural(gone, "file"))
+	}
+
 	a.Bus.Publish(jobs.Event{
 		Kind: "series-updated", SeriesID: id, State: "done", Message: message,
 	})
 	return nil
+}
+
+// reconcileFiles marks chapters whose file has left as outstanding again,
+// returning how many.
+//
+// The library directory belongs to whatever reads it, and files leave without
+// atsume doing it: deleted through Komga, lost with an unmounted volume,
+// tidied away. Until this the row went on saying "done" forever, and the
+// library counted a file that was not there.
+//
+// A chapter reset this way is not re-fetched on its own. Only a newly
+// published chapter is downloaded automatically; a file that disappeared may
+// have been deleted on purpose, and the reader decides whether to bring it
+// back.
+func (a *App) reconcileFiles(ctx context.Context, seriesID int64) (int, error) {
+	chapters, err := a.Store.ListChapters(ctx, seriesID)
+	if err != nil {
+		return 0, err
+	}
+	missing := a.MissingFiles(chapters)
+	for _, c := range chapters {
+		if !missing[c.ID] {
+			continue
+		}
+		slog.Info("chapter file is gone", "chapter", c.Name, "path", c.FilePath)
+		if err := a.Store.SetChapterState(ctx, c.ID, store.ChapterPending, "", "", 0); err != nil {
+			return 0, err
+		}
+		a.Bus.Publish(jobs.Event{
+			Kind: "chapter-updated", ChapterID: c.ID, SeriesID: seriesID,
+			State: store.ChapterPending,
+		})
+	}
+	return len(missing), nil
+}
+
+// plural renders a count with its noun. Kept here rather than imported from
+// the web layer, which must not be a dependency of the job that runs this.
+func plural(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
 }
 
 // fetchPages downloads a chapter's images in order, honouring the image hooks
