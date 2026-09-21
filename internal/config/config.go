@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dyskette/atsume/internal/prebuilt"
 )
 
 // Config is the full runtime configuration. Every field has a working default
@@ -48,6 +50,11 @@ type Config struct {
 	// chapters.
 	NotifyURL string
 
+	// PrebuiltURL is where published catalogue snapshots live, with <id>
+	// standing for a module's identifier. Empty switches them off, and every
+	// site is then read directly.
+	PrebuiltURL string
+
 	// SecretKey encrypts stored module credentials. Empty disables the feature
 	// and module logins are refused rather than stored in the clear.
 	SecretKey string
@@ -70,6 +77,7 @@ func Load() (*Config, error) {
 		ModulesRef:      env("ATSUME_MODULES_REF", "master"),
 		FlaresolverrURL: env("ATSUME_FLARESOLVERR_URL", ""),
 		NotifyURL:       env("ATSUME_NOTIFY_URL", ""),
+		PrebuiltURL:     env("ATSUME_PREBUILT_URL", prebuilt.DefaultURL),
 		SecretKey:       env("ATSUME_SECRET_KEY", ""),
 		LogLevel:        env("ATSUME_LOG_LEVEL", "info"),
 		AutoDownload:    envBool("ATSUME_AUTO_DOWNLOAD", true),

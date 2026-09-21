@@ -15,6 +15,7 @@ import (
 	"github.com/dyskette/atsume/internal/config"
 	"github.com/dyskette/atsume/internal/download"
 	"github.com/dyskette/atsume/internal/jobs"
+	"github.com/dyskette/atsume/internal/prebuilt"
 	"github.com/dyskette/atsume/internal/scraper"
 	"github.com/dyskette/atsume/internal/store"
 )
@@ -33,6 +34,9 @@ type App struct {
 	Scheduler *Scheduler
 	Notifier  *Notifier
 	Solver    *scraper.Flaresolverr
+	// Snapshots fetches the catalogue snapshots FMD2 publishes, which turn a
+	// site's first read from minutes of crawling into one download.
+	Snapshots *prebuilt.Source
 	// Transport, when set, replaces the default HTTP transport everywhere.
 	Transport http.RoundTripper
 
@@ -55,7 +59,13 @@ func New(cfg *config.Config, st *store.Store, reg *scraper.Registry) *App {
 		Bus:      jobs.NewBus(),
 		Registry: reg,
 		Limiter:  scraper.NewHostLimiter(cfg.HostRPS, cfg.HostConcurrency),
-		started:  time.Now(),
+		Snapshots: func() *prebuilt.Source {
+			if cfg.PrebuiltURL == "" {
+				return nil // switched off; every site is read directly
+			}
+			return prebuilt.New(cfg.PrebuiltURL, nil)
+		}(),
+		started: time.Now(),
 	}
 	a.Pool = &jobs.Pool{
 		Queue:   a.Queue,

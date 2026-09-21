@@ -27,7 +27,31 @@ type SiteCatalogue struct {
 	Titles   int
 	// Exists distinguishes a site never read from one read and found empty.
 	Exists bool
+	// Source is "site" when atsume read the site itself and "prebuilt" when
+	// it downloaded a snapshot somebody else read. The two are not the same
+	// claim and must not read alike.
+	Source string
+	// DataAt is how old the titles are, which for a snapshot is not when it
+	// was downloaded.
+	DataAt time.Time
 }
+
+// FromSite reports whether atsume read this catalogue itself.
+func (c SiteCatalogue) FromSite() bool { return c.Source != SourcePrebuilt }
+
+// Age is how old the titles are, by the best date available.
+func (c SiteCatalogue) Age() time.Time {
+	if !c.DataAt.IsZero() {
+		return c.DataAt
+	}
+	return c.BuiltAt
+}
+
+// Catalogue sources.
+const (
+	SourceSite     = "site"
+	SourcePrebuilt = "prebuilt"
+)
 
 // BeginSiteCatalogue records that a read has started, returning the moment
 // it did.
@@ -104,7 +128,7 @@ func (s *Store) AddSiteTitles(ctx context.Context, site string, read int64, titl
 // The timestamp is stamped here rather than at the start: "read 20 minutes
 // ago" should mean the list is twenty minutes old, and a read of a large
 // site takes minutes of that by itself.
-func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, complete bool, note string, read int64) error {
+func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, complete bool, note, source string, dataAt time.Time, read int64) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -120,10 +144,14 @@ func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, complete b
 			return err
 		}
 	}
+	var data any
+	if !dataAt.IsZero() {
+		data = dataAt.UTC().Format("2006-01-02 15:04:05")
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE site_catalogue
-		SET complete = ?, note = ?, built_at = CURRENT_TIMESTAMP
-		WHERE site = ?`, complete, note, site); err != nil {
+		SET complete = ?, note = ?, source = ?, data_at = ?, built_at = CURRENT_TIMESTAMP
+		WHERE site = ?`, complete, note, source, data, site); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -132,12 +160,12 @@ func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, complete b
 // SiteCatalogueInfo reports what is stored for a site.
 func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalogue, error) {
 	out := SiteCatalogue{Site: site}
-	var built sql.NullString
+	var built, data sql.NullString
 	err := s.DB.QueryRowContext(ctx, `
-		SELECT built_at, complete, note,
+		SELECT built_at, complete, note, source, data_at,
 		       (SELECT COUNT(*) FROM site_title WHERE site = ?)
 		FROM site_catalogue WHERE site = ?`, site, site).
-		Scan(&built, &out.Complete, &out.Note, &out.Titles)
+		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Titles)
 	if err == sql.ErrNoRows {
 		return out, nil
 	}
@@ -147,6 +175,9 @@ func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalog
 	out.Exists = true
 	if t := parseTimestamp(built); t.Valid {
 		out.BuiltAt = t.Time
+	}
+	if t := parseTimestamp(data); t.Valid {
+		out.DataAt = t.Time
 	}
 	return out, nil
 }

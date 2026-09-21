@@ -8,12 +8,17 @@ import (
 	"time"
 
 	"github.com/dyskette/atsume/internal/jobs"
+	"github.com/dyskette/atsume/internal/prebuilt"
 	"github.com/dyskette/atsume/internal/store"
 )
 
-// IndexPayload names a site to read.
+// IndexPayload names a site to read, and where from.
 type IndexPayload struct {
 	Site string `json:"site"`
+	// Source is empty to take whichever is quicker, or "site" to insist on
+	// reading the site itself. A reader who presses "read again" while
+	// looking at a snapshot from 2024 wants the site, not the snapshot.
+	Source string `json:"source,omitempty"`
 }
 
 // indexBatch is how many titles are written at a time while a read runs.
@@ -36,12 +41,13 @@ const maxIndexPositions = 10000
 // happen inside a request. Holding an HTTP connection open that long is its
 // own failure: the browser or the proxy in front gives up first and the work
 // is lost anyway.
-func (a *App) EnqueueIndex(ctx context.Context, site string) error {
+func (a *App) EnqueueIndex(ctx context.Context, site, source string) error {
 	site = a.ResolveModule(ctx, site)
 	if a.Indexing(ctx, site) {
 		return nil
 	}
-	if _, err := a.Queue.Enqueue(ctx, jobs.KindIndexSite, IndexPayload{Site: site}); err != nil {
+	if _, err := a.Queue.Enqueue(ctx, jobs.KindIndexSite,
+		IndexPayload{Site: site, Source: source}); err != nil {
 		return err
 	}
 	a.Pool.Notify()
@@ -78,6 +84,20 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 	}
 	a.publishIndex(p.Site, "working", "Reading the catalogue…", 0)
 
+	// A published snapshot arrives in seconds where reading the site takes
+	// minutes, so it is tried first unless the reader asked for the site.
+	// It may be years old; saying so is the interface's job, not a reason to
+	// make everyone wait.
+	if p.Source != store.SourceSite {
+		switch done, err := a.indexFromSnapshot(ctx, p.Site, read, startedAt); {
+		case err == nil && done:
+			return nil
+		case err != nil:
+			slog.Info("no usable snapshot; reading the site instead",
+				"site", p.Site, "err", err)
+		}
+	}
+
 	var (
 		seq   int
 		batch []store.SiteTitle
@@ -109,7 +129,8 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 			// Whatever was read stays: a partial catalogue a reader can
 			// search beats nothing, as long as it says it is partial.
 			_ = flush()
-			_ = a.Store.FinishSiteCatalogue(ctx, p.Site, false, err.Error(), read)
+			_ = a.Store.FinishSiteCatalogue(ctx, p.Site, false, err.Error(),
+				store.SourceSite, time.Time{}, read)
 			a.publishIndex(p.Site, "failed", err.Error(), seq)
 			return err
 		}
@@ -140,7 +161,8 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 	}
 
 	note := fmt.Sprintf("%s in %s", plural(seq, "title"), humanElapsed(time.Since(startedAt)))
-	if err := a.Store.FinishSiteCatalogue(ctx, p.Site, true, note, read); err != nil {
+	if err := a.Store.FinishSiteCatalogue(ctx, p.Site, true, note,
+		store.SourceSite, time.Now(), read); err != nil {
 		return err
 	}
 	slog.Info("site catalogue read", "site", p.Site, "titles", seq, "took", time.Since(startedAt))
@@ -163,5 +185,63 @@ func humanElapsed(d time.Duration) string {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	default:
 		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+}
+
+// indexFromSnapshot fills a site's catalogue from a published snapshot,
+// reporting whether it managed to.
+//
+// Nearly half the sites have none, and a snapshot that is missing, broken or
+// for a site whose module declares no id is an ordinary outcome rather than
+// a failure: the caller reads the site instead.
+func (a *App) indexFromSnapshot(ctx context.Context, site string, read int64, startedAt time.Time) (bool, error) {
+	if a.Snapshots == nil {
+		return false, prebuilt.ErrNoSnapshot
+	}
+	e, ok := a.SiteInfo(ctx, site)
+	if !ok || e.ID == "" {
+		return false, prebuilt.ErrNoSnapshot
+	}
+
+	a.publishIndex(site, "working", "Looking for a published catalogue…", 0)
+	snap, err := a.Snapshots.Fetch(ctx, e.ID)
+	if err != nil {
+		return false, err
+	}
+
+	titles := make([]store.SiteTitle, 0, len(snap.Titles))
+	for i, t := range snap.Titles {
+		titles = append(titles, store.SiteTitle{URL: t.URL, Name: t.Name, Seq: i})
+	}
+	for start := 0; start < len(titles); start += indexBatch {
+		end := min(start+indexBatch, len(titles))
+		if err := a.Store.AddSiteTitles(ctx, site, read, titles[start:end]); err != nil {
+			return false, err
+		}
+	}
+
+	note := fmt.Sprintf("%s from a published catalogue, %s", plural(len(titles), "title"),
+		humanBytes(snap.Bytes))
+	if err := a.Store.FinishSiteCatalogue(ctx, site, true, note,
+		store.SourcePrebuilt, snap.Newest, read); err != nil {
+		return false, err
+	}
+	slog.Info("site catalogue from snapshot", "site", site, "titles", len(titles),
+		"newest", snap.Newest.Format(time.DateOnly), "bytes", snap.Bytes,
+		"took", time.Since(startedAt))
+	a.publishIndex(site, "done", note, len(titles))
+	return true, nil
+}
+
+// humanBytes renders a download size the way someone deciding about it reads
+// it.
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%d KB", n/(1<<10))
+	default:
+		return fmt.Sprintf("%d bytes", n)
 	}
 }

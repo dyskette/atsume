@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/dyskette/atsume/internal/store"
 )
@@ -49,6 +50,28 @@ func (v BrowseView) More() bool { return v.Offset+len(v.Titles) < v.Found }
 // Empty reports that there is no catalogue at all yet, which is a different
 // thing from a catalogue with nothing in it.
 func (v BrowseView) Empty() bool { return !v.Catalogue.Exists && !v.Indexing }
+
+// staleAfter is when a downloaded catalogue is old enough to say so plainly
+// rather than leave the reader to work it out from a month and a year.
+const staleAfter = 180 * 24 * time.Hour
+
+// Source names where the list came from and how old its titles are.
+func (v BrowseView) Source() string {
+	out := " · from FMD2's published catalogue"
+	if !v.Catalogue.DataAt.IsZero() {
+		out += ", newest entry " + v.Catalogue.DataAt.Format("January 2006")
+	}
+	return out
+}
+
+// StaleSnapshot reports whether a downloaded catalogue is old enough that a
+// reader should be told outright.
+func (v BrowseView) StaleSnapshot() bool {
+	if v.Catalogue.FromSite() || v.Catalogue.Age().IsZero() {
+		return false
+	}
+	return time.Since(v.Catalogue.Age()) > staleAfter
+}
 
 // Browse is a site's page. The catalogue it holds renders at once; a read in
 // progress reports itself as it goes.
@@ -127,7 +150,22 @@ templ CatalogueStatus(v BrowseView) {
 				</form>
 			default:
 				{ Count(v.Catalogue.Titles, "title", "titles") }
-				{ " · read " + ago(v.Catalogue.BuiltAt) }
+				if v.Catalogue.FromSite() {
+					{ " · read from the site " + ago(v.Catalogue.BuiltAt) }
+				} else {
+					<!-- Where it came from and how old the titles are, which
+					     for a downloaded list is not when it was downloaded.
+					     A snapshot can be years older than the file holding
+					     it, and a reader deciding whether to spend four
+					     minutes reading the site needs the first number, not
+					     the second. -->
+					<!-- One expression, because templ puts a space between two
+					     and "catalogue , newest entry" is not a sentence. -->
+					{ v.Source() }
+					if v.StaleSnapshot() {
+						<span class="badge failed">{ olderThan(v.Catalogue.Age()) }</span>
+					}
+				}
 				if !v.Catalogue.Complete {
 					<span class="badge failed" title={ v.Catalogue.Note }>partial</span>
 				}
@@ -137,7 +175,13 @@ templ CatalogueStatus(v BrowseView) {
 					hx-get={ SiteURL(v.Module, "/reread") }
 					hx-target="#catalogue-status"
 					hx-swap="innerHTML"
-				>Read again</button>
+				>
+					if v.Catalogue.FromSite() {
+						Read again
+					} else {
+						Read the site for a current list
+					}
+				</button>
 		}
 	</p>
 }
@@ -259,8 +303,10 @@ templ ConfirmReread(v BrowseView) {
 		<p class="muted">
 			atsume asks the site for its whole list of titles, one request a
 			second.
-			if v.Catalogue.Note != "" {
+			if v.Catalogue.FromSite() && v.Catalogue.Note != "" {
 				{ " Last time: " + v.Catalogue.Note + "." }
+			} else if !v.Catalogue.FromSite() {
+				{ " What is here now was downloaded rather than read, so this is the first time the site itself is asked." }
 			}
 			{ fmt.Sprintf(" The %s already here stay usable while it runs, and are replaced only when it finishes.",
 				Count(v.Catalogue.Titles, "title", "titles")) }

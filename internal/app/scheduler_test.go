@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/dyskette/atsume/internal/config"
+	"github.com/dyskette/atsume/internal/prebuilt"
 	"github.com/dyskette/atsume/internal/scraper"
 	"github.com/dyskette/atsume/internal/store"
 )
@@ -1423,7 +1424,7 @@ func TestSiteCatalogueIsKept(t *testing.T) {
 		t.Fatal("a site nobody has read should not claim a catalogue")
 	}
 
-	if err := a.EnqueueIndex(ctx, "Sectioned"); err != nil {
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, ctx, func() bool {
@@ -1477,7 +1478,7 @@ func TestSiteCatalogueIsKept(t *testing.T) {
 
 	// Reading again replaces rather than accumulates, so a title the site
 	// has dropped does not live forever.
-	if err := a.EnqueueIndex(ctx, "Sectioned"); err != nil {
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, ctx, func() bool {
@@ -1564,7 +1565,7 @@ end
 	}
 
 	a, st, ctx := newCheckoutApp(t, checkout)
-	if err := a.EnqueueIndex(ctx, "Whole"); err != nil {
+	if err := a.EnqueueIndex(ctx, "Whole", store.SourceSite); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, ctx, func() bool {
@@ -1593,7 +1594,7 @@ func TestRereadKeepsTheListUsable(t *testing.T) {
 	srv := sectionedSite(t)
 	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
 
-	if err := a.EnqueueIndex(ctx, "Sectioned"); err != nil {
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, ctx, func() bool {
@@ -1617,7 +1618,7 @@ func TestRereadKeepsTheListUsable(t *testing.T) {
 		[]store.SiteTitle{{URL: "/manga/beta-one/", Name: "Beta One", Seq: 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishSiteCatalogue(ctx, "Sectioned", false, "gave up", read); err != nil {
+	if err := st.FinishSiteCatalogue(ctx, "Sectioned", false, "gave up", store.SourceSite, time.Now(), read); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ = st.SiteCatalogueInfo(ctx, "Sectioned"); info.Titles != 4 {
@@ -1633,10 +1634,141 @@ func TestRereadKeepsTheListUsable(t *testing.T) {
 		[]store.SiteTitle{{URL: "/manga/beta-one/", Name: "Beta One", Seq: 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishSiteCatalogue(ctx, "Sectioned", true, "1 title", read); err != nil {
+	if err := st.FinishSiteCatalogue(ctx, "Sectioned", true, "1 title", store.SourceSite, time.Now(), read); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ = st.SiteCatalogueInfo(ctx, "Sectioned"); info.Titles != 1 {
 		t.Errorf("a completed read left %d titles, want only the one it saw", info.Titles)
 	}
+}
+
+// TestCatalogueFromSnapshot covers the fast path and, more importantly, what
+// it claims about itself.
+//
+// A downloaded list and a list atsume read are not the same claim: one can
+// be years old. The catalogue records which it is and how old the titles
+// are, because the interface has to be able to say so.
+func TestCatalogueFromSnapshot(t *testing.T) {
+	fixture := filepath.Join("..", "prebuilt", "testdata", "snapshot.7z")
+	body, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Skip("no snapshot fixture")
+	}
+	var served atomic.Int32
+	snapshots := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served.Add(1)
+		if !strings.HasSuffix(r.URL.Path, "/sectioned.7z") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(body)
+	}))
+	defer snapshots.Close()
+
+	site := sectionedSite(t)
+	var siteReads atomic.Int32
+	counted := countingProxy(t, site.URL, &siteReads)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckoutWithID(t, counted, "sectioned"))
+	a.Snapshots = prebuilt.New(snapshots.URL+"/<id>.7z", snapshots.Client())
+
+	// A first look takes the published list rather than spending minutes on
+	// the site.
+	if err := a.EnqueueIndex(ctx, "Sectioned", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+		return info.Complete
+	}, "the snapshot to be read")
+
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Source != store.SourcePrebuilt {
+		t.Errorf("source = %q, want the snapshot", info.Source)
+	}
+	if info.Titles != 2 {
+		t.Errorf("stored %d titles from the snapshot", info.Titles)
+	}
+	if info.DataAt.Format("2006-01") != "2024-11" {
+		t.Errorf("data date = %v; a downloaded list has to date itself", info.DataAt)
+	}
+	if siteReads.Load() != 0 {
+		t.Errorf("the site was asked %d times for a list that was published", siteReads.Load())
+	}
+
+	// Asking for the site itself ignores the snapshot, because someone
+	// looking at a list from 2024 who presses "read the site" wants now.
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+		return info.Source == store.SourceSite && info.Complete
+	}, "the site to be read instead")
+	if siteReads.Load() == 0 {
+		t.Error("an explicit read never reached the site")
+	}
+	info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Titles != 4 {
+		t.Errorf("after reading the site the catalogue holds %d titles", info.Titles)
+	}
+}
+
+// TestSnapshotAbsenceFallsBackToTheSite covers the ordinary case: nearly
+// half the sites have no published list, and that must not be a dead end.
+func TestSnapshotAbsenceFallsBackToTheSite(t *testing.T) {
+	snapshots := httptest.NewServer(http.NotFoundHandler())
+	defer snapshots.Close()
+
+	srv := sectionedSite(t)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckoutWithID(t, srv.URL, "sectioned"))
+	a.Snapshots = prebuilt.New(snapshots.URL+"/<id>.7z", snapshots.Client())
+
+	if err := a.EnqueueIndex(ctx, "Sectioned", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+		return info.Complete
+	}, "the site to be read after the snapshot was missing")
+
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Source != store.SourceSite || info.Titles != 4 {
+		t.Errorf("source=%q titles=%d, want a full read of the site", info.Source, info.Titles)
+	}
+}
+
+// countingProxy forwards to a site and counts what it is asked.
+func countingProxy(t *testing.T, target string, hits *atomic.Int32) string {
+	t.Helper()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		res, err := http.Get(target + r.URL.RequestURI())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		w.Header().Set("Content-Type", res.Header.Get("Content-Type"))
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(proxy.Close)
+	return proxy.URL
+}
+
+// sectionedCheckoutWithID is sectionedCheckout with the module declaring the
+// identifier a published snapshot is named after.
+func sectionedCheckoutWithID(t *testing.T, rootURL, id string) string {
+	t.Helper()
+	checkout := sectionedCheckout(t, rootURL)
+	path := filepath.Join(checkout, "lua", "modules", "Sectioned.lua")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := strings.Replace(string(src), "m.ID               = 'sectioned'",
+		fmt.Sprintf("m.ID               = '%s'", id), 1)
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return checkout
 }

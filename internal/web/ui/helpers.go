@@ -175,3 +175,16 @@ func entryLabel(e scraper.Entry) string {
 	}
 	return "Untitled"
 }
+
+// olderThan renders an age as the blunt version, for a list old enough that
+// a month and a year leaves the reader doing arithmetic.
+func olderThan(t time.Time) string {
+	months := int(time.Since(t).Hours() / 24 / 30)
+	if months >= 24 {
+		return fmt.Sprintf("%d years old", months/12)
+	}
+	if months >= 12 {
+		return "over a year old"
+	}
+	return fmt.Sprintf("%d months old", months)
+}

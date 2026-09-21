@@ -71,7 +71,9 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	// titles, and asking them to press a second button to get what they
 	// came for is a toll, not a choice.
 	if v.Empty() {
-		if err := s.App.EnqueueIndex(r.Context(), v.Module); err != nil {
+		// Whichever is quicker: a published snapshot if there is one, the
+		// site itself otherwise.
+		if err := s.App.EnqueueIndex(r.Context(), v.Module, ""); err != nil {
 			s.fail(w, r, err)
 			return
 		}
@@ -98,7 +100,9 @@ func (s *Server) handleBrowseList(w http.ResponseWriter, r *http.Request) {
 
 // handleIndexSite reads a site's catalogue again.
 func (s *Server) handleIndexSite(w http.ResponseWriter, r *http.Request) {
-	if err := s.App.EnqueueIndex(r.Context(), r.PathValue("name")); err != nil {
+	// An explicit re-read means the site. Someone looking at a snapshot from
+	// 2024 and pressing this wants what the site says now.
+	if err := s.App.EnqueueIndex(r.Context(), r.PathValue("name"), store.SourceSite); err != nil {
 		s.fail(w, r, err)
 		return
 	}
