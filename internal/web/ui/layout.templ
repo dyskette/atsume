@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/dyskette/atsume/internal/scraper"
+import "fmt"
 
 // Layout is the page chrome. The SSE connection lives here so that every page
 // receives chapter progress without opening a stream of its own.
@@ -40,31 +40,52 @@ templ Layout(title string) {
 	</html>
 }
 
-// ModuleList shows the sites available in the current module revision.
-templ ModuleList(mods []scraper.ModuleInfo, ref string, query string) {
+// Sites is the chooser. Several hundred entries is too many to present as one
+// flat list, so they are grouped by the category each module declares.
+templ Sites(v SitesView) {
 	@Layout("Sites") {
-		<h1>Sites</h1>
-		<p class="muted">{ len(mods) } modules at revision { ref }</p>
-		<form class="search" hx-get="/modules" hx-target="#module-list" hx-trigger="input changed delay:200ms, search">
+		<div class="head">
+			<h1>Sites</h1>
+		</div>
+		<p class="muted">
+			{ fmt.Sprintf("%d sites, from the FMD2 module catalogue at %s.", v.Total, v.Ref) }
+			atsume does not vouch for them — some have moved or closed since the
+			module for them was written.
+		</p>
+		<form class="search" hx-get="/modules" hx-target="#site-list" hx-trigger="input changed delay:200ms, search">
 			<input
 				type="search"
 				name="q"
-				value={ query }
-				placeholder="Filter sites…"
+				value={ v.Query }
+				placeholder="Search sites by name or category…"
 				autocomplete="off"
 			/>
 		</form>
-		<ul id="module-list" class="grid">
-			@ModuleItems(mods)
-		</ul>
+		<div id="site-list">
+			@SiteGroups(v)
+		</div>
 	}
 }
 
-// ModuleItems is the swappable part of the site list.
-templ ModuleItems(mods []scraper.ModuleInfo) {
-	for _, m := range mods {
-		<li>
-			<a href={ templ.SafeURL("/modules/" + m.Name) }>{ m.Name }</a>
-		</li>
+// SiteGroups is the swappable part, so a search does not reload the page.
+templ SiteGroups(v SitesView) {
+	if v.Found == 0 {
+		<div class="empty">
+			<strong>No sites match</strong>
+			Nothing in the catalogue matches “{ v.Query }”.
+		</div>
+	}
+	for _, g := range v.Groups {
+		if g.Category != "" {
+			<h2 class="category">
+				{ g.Category }
+				<span class="muted">{ fmt.Sprintf("%d", len(g.Entries)) }</span>
+			</h2>
+		}
+		<ul class="grid">
+			for _, e := range g.Entries {
+				<li><a href={ templ.SafeURL("/modules/" + e.Name) }>{ e.Name }</a></li>
+			}
+		</ul>
 	}
 }

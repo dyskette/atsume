@@ -22,34 +22,30 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.Library(series))
+	progress, err := s.App.Store.Progress(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	v := ui.LibraryView{Destination: s.App.Cfg.LibraryDir}
+	for _, item := range series {
+		v.Rows = append(v.Rows, ui.LibraryRow{Series: item, Progress: progress[item.ID]})
+	}
+	s.render(w, r, ui.Library(v))
 }
 
 func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	mods := filterModules(s.App.Registry.Modules(), query)
+	v := ui.BuildSites(s.App.ModuleCatalogue(r.Context()), query)
 
 	// htmx sends this header when swapping the list in place; a full page load
 	// needs the chrome around it.
 	if r.Header.Get("HX-Request") == "true" {
-		s.render(w, r, ui.ModuleItems(mods))
+		s.render(w, r, ui.SiteGroups(v))
 		return
 	}
-	s.render(w, r, ui.ModuleList(mods, s.App.Registry.Ref(), query))
-}
-
-func filterModules(mods []scraper.ModuleInfo, query string) []scraper.ModuleInfo {
-	if query == "" {
-		return mods
-	}
-	q := strings.ToLower(query)
-	out := make([]scraper.ModuleInfo, 0, len(mods))
-	for _, m := range mods {
-		if strings.Contains(strings.ToLower(m.Name), q) {
-			out = append(out, m)
-		}
-	}
-	return out
+	s.render(w, r, ui.Sites(v))
 }
 
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +60,14 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.Browse(module, page, entries))
+	tracked, err := s.App.Store.TrackedURLs(r.Context(), module)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.Browse(ui.BrowseView{
+		Module: module, Page: page, Entries: entries, Tracked: tracked,
+	}))
 }
 
 func (s *Server) handleTrackSeries(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +81,13 @@ func (s *Server) handleTrackSeries(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.Tracked(url))
+	// The title, not the link: the confirmation replaces the row the reader
+	// just pressed, and a URL slug there reads as a glitch.
+	name := r.FormValue("name")
+	if name == "" {
+		name = url
+	}
+	s.render(w, r, ui.Tracked(name))
 }
 
 func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {

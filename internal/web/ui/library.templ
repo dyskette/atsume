@@ -6,37 +6,62 @@ import (
 	"github.com/dyskette/atsume/internal/store"
 )
 
-// Library is the home page: everything being tracked.
-templ Library(series []store.Series) {
+// Library is the home page: what is being followed and whether it is current.
+templ Library(v LibraryView) {
 	@Layout("Library") {
 		<div class="head">
 			<h1>Library</h1>
-			if len(series) > 0 {
+			if len(v.Rows) > 0 {
 				<form hx-post="/check" hx-swap="none">
 					<button type="submit">Check all now</button>
 				</form>
 			}
 		</div>
-		if len(series) == 0 {
+		if len(v.Rows) == 0 {
 			<div class="empty">
-				<strong>Nothing tracked yet</strong>
-				Pick a <a href="/modules">site</a>, find a title, and track it. New
-				chapters are checked for automatically from then on.
+				<strong>Nothing here yet</strong>
+				<p>
+					atsume watches manga sites and writes finished chapters to
+					<code>{ v.Destination }</code>, where Komga — or whatever reads that
+					folder — picks them up.
+				</p>
+				<p>
+					Pick a site, find a title, and follow it. New chapters are downloaded
+					automatically from then on. Chapters already published are not:
+					fetching a backlog stays your decision.
+				</p>
+				<p><a class="cta" href="/modules">Browse sites</a></p>
 			</div>
+		} else if n := v.NeedsAttention(); n > 0 {
+			<p class="attention">{ fmt.Sprintf("%d series need attention.", n) }</p>
 		}
-		<ul class="rows">
-			for _, s := range series {
-				<li>
-					<a class="title" href={ templ.SafeURL(fmt.Sprintf("/series/%d", s.ID)) }>{ s.Title }</a>
-					<span class="muted">{ s.ModuleName }</span>
-					if s.Status != "" {
-						<span class="badge">{ s.Status }</span>
-					}
-					<span class="muted">{ lastChecked(s) }</span>
-				</li>
+		<ul class="rows library">
+			for _, row := range v.Rows {
+				@LibraryItem(row)
 			}
 		</ul>
 	}
+}
+
+// LibraryItem is one series: cover, what it is, and whether it is current.
+templ LibraryItem(r LibraryRow) {
+	{{ label, kind := r.State() }}
+	<li>
+		<a class="thumb" href={ templ.SafeURL(fmt.Sprintf("/series/%d", r.Series.ID)) }>
+			if r.Series.CoverURL != "" {
+				<img
+					src={ fmt.Sprintf("/series/%d/cover", r.Series.ID) }
+					alt=""
+					loading="lazy"
+				/>
+			}
+		</a>
+		<div class="grow">
+			<a class="title" href={ templ.SafeURL(fmt.Sprintf("/series/%d", r.Series.ID)) }>{ r.Series.Title }</a>
+			<div class="muted">{ r.Detail() }</div>
+		</div>
+		<span class={ "badge", kind }>{ label }</span>
+	</li>
 }
 
 // ChapterRow is swapped in place over SSE as a download progresses. The id is

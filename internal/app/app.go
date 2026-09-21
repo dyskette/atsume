@@ -34,6 +34,8 @@ type App struct {
 	Solver    *scraper.Flaresolverr
 	// Transport, when set, replaces the default HTTP transport everywhere.
 	Transport http.RoundTripper
+
+	catalogue catalogueCache
 }
 
 // New builds an App from its dependencies.

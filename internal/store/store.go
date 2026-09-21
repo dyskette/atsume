@@ -141,6 +141,78 @@ func (s *Store) ListSeries(ctx context.Context) ([]Series, error) {
 	return out, rows.Err()
 }
 
+// TrackedURLs returns the series already followed from a module, keyed by the
+// URL the site lists them under.
+//
+// A directory listing uses it to mark what is already in the library; without
+// it the same series can be added twice with no warning.
+func (s *Store) TrackedURLs(ctx context.Context, moduleName string) (map[string]int64, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT url, id FROM series WHERE module_name = ?`, moduleName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]int64{}
+	for rows.Next() {
+		var url string
+		var id int64
+		if err := rows.Scan(&url, &id); err != nil {
+			return nil, err
+		}
+		out[url] = id
+	}
+	return out, rows.Err()
+}
+
+// SeriesProgress is the chapter tally for one series.
+type SeriesProgress struct {
+	Total   int
+	Done    int
+	Waiting int // pending or previously failed
+	Active  int // queued or downloading
+	Failed  int
+}
+
+// Progress returns the tally for every series in one query.
+//
+// The library page needs it for every row, and asking per row would be a query
+// per series on the page a reader looks at most.
+func (s *Store) Progress(ctx context.Context) (map[int64]SeriesProgress, error) {
+	const q = `SELECT series_id, state, COUNT(*) FROM chapters GROUP BY series_id, state`
+	rows, err := s.DB.QueryContext(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[int64]SeriesProgress{}
+	for rows.Next() {
+		var id int64
+		var state string
+		var n int
+		if err := rows.Scan(&id, &state, &n); err != nil {
+			return nil, err
+		}
+		p := out[id]
+		p.Total += n
+		switch state {
+		case ChapterDone:
+			p.Done += n
+		case ChapterQueued, ChapterDownloading:
+			p.Active += n
+		case ChapterFailed:
+			p.Failed += n
+			p.Waiting += n
+		default:
+			p.Waiting += n
+		}
+		out[id] = p
+	}
+	return out, rows.Err()
+}
+
 // GetSeries reads one series by id.
 func (s *Store) GetSeries(ctx context.Context, id int64) (Series, error) {
 	const q = `
