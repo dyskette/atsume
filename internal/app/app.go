@@ -316,13 +316,23 @@ func (a *App) postProcessImage(r *scraper.Runner, page download.Page, index int)
 		return page, err
 	}
 
-	edited, err := os.ReadFile(path)
-	if err != nil {
-		// A handler may delete the file to drop the page; treat that as "leave
-		// it alone" rather than failing the chapter.
-		return page, nil
+	// A handler may rename the file rather than rewrite it — the MangaFox
+	// watermark remover writes a .png beside a .jpg and deletes the original
+	// — so whatever is left in the directory is the result. Reading only the
+	// path we wrote would silently discard the handler's work.
+	written := path
+	if _, err := os.Stat(path); err != nil {
+		names, err := os.ReadDir(dir)
+		if err != nil || len(names) == 0 {
+			// A handler may also delete the file to drop the page; treat that
+			// as "leave it alone" rather than failing the chapter.
+			return page, nil
+		}
+		written = filepath.Join(dir, names[0].Name())
 	}
-	if len(edited) == 0 {
+
+	edited, err := os.ReadFile(written)
+	if err != nil || len(edited) == 0 {
 		return page, nil
 	}
 	page.Data = edited
