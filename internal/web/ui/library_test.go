@@ -64,9 +64,11 @@ func TestLibraryRowState(t *testing.T) {
 			label: "not checked yet", kind: "",
 		},
 		{
-			name:  "checked and found nothing is a failure",
+			// Not the same as a failed download, and not fixed the same way:
+			// the check worked, the site listed nothing.
+			name:  "checked and found nothing is its own state",
 			row:   LibraryRow{Series: store.Series{CheckedAt: checked}},
-			label: "no chapters found", kind: "failed",
+			label: "no chapters found", kind: "empty",
 		},
 	}
 
@@ -110,30 +112,33 @@ func TestSections(t *testing.T) {
 	}
 
 	got := LibraryView{Rows: rows}.Sections()
-	if len(got) != 3 {
-		t.Fatalf("got %d sections, want 3", len(got))
+	if len(got) != 4 {
+		t.Fatalf("got %d sections, want 4", len(got))
 	}
-	// Order is the order of the reader's questions: what is wrong, what is
-	// new, then the collection.
-	if got[0].Title != "Needs attention" || len(got[0].Rows) != 2 {
+	// Order is the order of the reader's questions: what produced nothing,
+	// what broke, what is new, then the collection. The first two used to
+	// share a heading, which offered one answer to two different problems.
+	if got[0].Title != "Nothing found on the site" || len(got[0].Rows) != 1 {
 		t.Errorf("first section = %q with %d rows", got[0].Title, len(got[0].Rows))
 	}
-	if got[1].Title != "New chapters" || len(got[1].Rows) != 1 {
+	if got[0].Rows[0].Series.Title != "Empty" {
+		t.Errorf("first section holds %q", got[0].Rows[0].Series.Title)
+	}
+	if got[1].Title != "Downloads failed" || len(got[1].Rows) != 1 {
 		t.Errorf("second section = %q with %d rows", got[1].Title, len(got[1].Rows))
 	}
-	if got[1].Rows[0].Series.Title != "Arrived" {
-		t.Errorf("new section holds %q", got[1].Rows[0].Series.Title)
+	if got[1].Rows[0].Series.Title != "Broken" {
+		t.Errorf("second section holds %q", got[1].Rows[0].Series.Title)
 	}
-	// A backlog is not news, however large it is.
-	if got[2].Title != "Everything else" || len(got[2].Rows) != 2 {
+	if got[2].Title != "New chapters" || len(got[2].Rows) != 1 {
 		t.Errorf("third section = %q with %d rows", got[2].Title, len(got[2].Rows))
 	}
-
-	// Rows arrive alphabetically and must stay that way inside a section, so
-	// a series is where the reader last saw it.
-	if got[0].Rows[0].Series.Title != "Broken" || got[0].Rows[1].Series.Title != "Empty" {
-		t.Errorf("attention section reordered: %q, %q",
-			got[0].Rows[0].Series.Title, got[0].Rows[1].Series.Title)
+	if got[2].Rows[0].Series.Title != "Arrived" {
+		t.Errorf("new section holds %q", got[2].Rows[0].Series.Title)
+	}
+	// A backlog is not news, however large it is.
+	if got[3].Title != "Everything else" || len(got[3].Rows) != 2 {
+		t.Errorf("last section = %q with %d rows", got[3].Title, len(got[3].Rows))
 	}
 
 	// With nothing wrong and nothing new there is one group, and calling it

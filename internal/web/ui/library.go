@@ -32,8 +32,11 @@ func (r LibraryRow) State() (label, kind string) {
 		return fmt.Sprintf("%d downloading", r.Progress.Active), "downloading"
 	case r.Progress.Total == 0 && !r.Series.CheckedAt.Valid:
 		return "not checked yet", ""
+	// Distinct from a failed download: the check worked and the site listed
+	// nothing. Retrying the download would be the wrong move, and grouping
+	// the two under one heading offered one answer to two questions.
 	case r.Progress.Total == 0:
-		return "no chapters found", "failed"
+		return "no chapters found", "empty"
 	// A chapter that came out is not the same event as a back catalogue that
 	// was always there, and saying "24 not downloaded" for both is what made
 	// the page unable to answer the only question it is opened for.
@@ -66,13 +69,6 @@ func (r LibraryRow) Detail() string {
 	return out
 }
 
-// needsAttention reports whether something about this row is wrong, as opposed
-// to merely outstanding.
-func (r LibraryRow) needsAttention() bool {
-	_, kind := r.State()
-	return kind == "failed"
-}
-
 // Section is one group of library rows under a heading that says what the
 // group means.
 type Section struct {
@@ -90,11 +86,14 @@ type Section struct {
 // for is still where they left it, which sorting the whole page by recency
 // would have cost.
 func (v LibraryView) Sections() []Section {
-	var attention, arrived, rest []LibraryRow
+	var empty, failed, arrived, rest []LibraryRow
 	for _, r := range v.Rows {
+		_, kind := r.State()
 		switch {
-		case r.needsAttention():
-			attention = append(attention, r)
+		case kind == "empty":
+			empty = append(empty, r)
+		case kind == "failed":
+			failed = append(failed, r)
 		case r.Progress.New > 0:
 			arrived = append(arrived, r)
 		default:
@@ -102,12 +101,23 @@ func (v LibraryView) Sections() []Section {
 		}
 	}
 
-	out := make([]Section, 0, 3)
-	if len(attention) > 0 {
+	out := make([]Section, 0, 4)
+	// Two different failures with two different fixes. Under one heading a
+	// reader had to open each row to find out which kind it was.
+	if len(empty) > 0 {
 		out = append(out, Section{
-			Title: "Needs attention",
-			Blurb: "These could not be checked, or a download failed.",
-			Rows:  attention,
+			Title: "Nothing found on the site",
+			Blurb: "The check worked and the site listed no chapters. Usually a " +
+				"login it wants, or an address that has moved.",
+			Rows: empty,
+		})
+	}
+	if len(failed) > 0 {
+		out = append(out, Section{
+			Title: "Downloads failed",
+			Blurb: "The chapters are known; fetching them did not work. These can " +
+				"be retried.",
+			Rows: failed,
 		})
 	}
 	if len(arrived) > 0 {
