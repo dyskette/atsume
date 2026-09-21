@@ -25,6 +25,10 @@ type ModuleSettings struct {
 	// SecretsEnabled is false when no key is configured, in which case storing
 	// a credential is refused rather than done in the clear.
 	SecretsEnabled bool
+
+	// Series from this site, so the page that fixes a problem can name what
+	// the problem was about and offer a way back to it.
+	Series []store.Series
 }
 
 // ModuleSettings loads a module far enough to read its declarations.
@@ -62,6 +66,9 @@ func (a *App) ModuleSettings(ctx context.Context, name string) (*ModuleSettings,
 		if creds, err := a.Store.Credentials(ctx, a.Sealer, name); err == nil && creds != nil {
 			s.Username = creds.Username
 		}
+	}
+	if s.Series, err = a.Store.SeriesByModule(ctx, name); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -108,4 +115,64 @@ func (a *App) openModuleRaw(ctx context.Context, name string) (*scraper.Runner, 
 		return nil, errModuleNotFound(name, a.Registry.Ref())
 	}
 	return a.Registry.HostWith(a.Limiter, a.Transport, a.Solver).Open(ctx, info.File)
+}
+
+// TestLogin signs in to a site with the stored credentials and reports what
+// happened.
+//
+// Typing a password and being told nothing is the worst feedback loop in the
+// interface: the only way to find out used to be re-checking a series and
+// seeing whether chapters appeared. The module already records a verdict —
+// its account status — and nothing was reading it.
+func (a *App) TestLogin(ctx context.Context, moduleKey string) (ok bool, detail string) {
+	if !a.Sealer.Enabled() {
+		return false, "No secret key is configured, so no credentials are stored."
+	}
+	creds, err := a.Store.Credentials(ctx, a.Sealer, moduleKey)
+	if err != nil {
+		return false, err.Error()
+	}
+	if creds == nil {
+		return false, "No username and password are saved for this site yet."
+	}
+
+	// Opened raw so a failing login cannot stop the page that fixes it from
+	// loading; the credentials are applied by hand here instead.
+	r, err := a.openModuleRaw(ctx, a.ResolveModule(ctx, moduleKey))
+	if err != nil {
+		return false, err.Error()
+	}
+	defer r.Close()
+
+	if !r.HasHandler("OnLogin") {
+		return false, "This site does not take a login."
+	}
+	r.SetAccount(creds.Username, creds.Password)
+
+	signedIn, err := r.Login()
+	switch {
+	case err != nil:
+		return false, err.Error()
+	case !signedIn:
+		return false, "The site refused the credentials."
+	default:
+		return true, "Signed in as " + creds.Username + "."
+	}
+}
+
+// RecheckSite queues a fresh check of every series from one site.
+//
+// A setting only takes effect on the next check, which nothing said, so
+// changing one appeared to do nothing at all.
+func (a *App) RecheckSite(ctx context.Context, moduleKey string) (int, error) {
+	series, err := a.Store.SeriesByModule(ctx, moduleKey)
+	if err != nil {
+		return 0, err
+	}
+	for _, v := range series {
+		if err := a.EnqueueRefresh(ctx, v.Key(), v.URL); err != nil {
+			return 0, err
+		}
+	}
+	return len(series), nil
 }

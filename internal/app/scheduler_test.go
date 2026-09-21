@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -647,5 +648,59 @@ func TestFollowIsImmediate(t *testing.T) {
 	all, _ = st.ListSeries(ctx)
 	if len(all) != 1 {
 		t.Errorf("following twice created %d rows", len(all))
+	}
+}
+
+// TestRecheckSite covers the loop the settings page closes: a change only
+// applies from the next check, so the page offers to run them.
+func TestRecheckSite(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+
+	a, _, ctx := newTestApp(t, srv.URL, &config.Config{})
+	if _, err := a.Follow(ctx, "TestMadara", srv.URL+"/manga/grow/", "Growing Series"); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := a.RecheckSite(ctx, "TestMadara")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("queued %d re-checks, want 1", n)
+	}
+
+	// A site with nothing followed from it is not an error.
+	if n, err = a.RecheckSite(ctx, "NothingHere"); err != nil || n != 0 {
+		t.Errorf("got (%d, %v), want (0, nil)", n, err)
+	}
+}
+
+// TestTestLoginWithoutCredentials covers the answers the button gives when
+// there is nothing to test, which are the common cases.
+func TestTestLoginWithoutCredentials(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+
+	// No key configured at all.
+	a, _, ctx := newTestApp(t, srv.URL, &config.Config{})
+	if ok, detail := a.TestLogin(ctx, "TestMadara"); ok || !strings.Contains(detail, "secret key") {
+		t.Errorf("got (%v, %q), want a note about the missing key", ok, detail)
+	}
+
+	// Key configured, nothing saved.
+	b, _, bctx := newTestApp(t, srv.URL, &config.Config{SecretKey: "k"})
+	if ok, detail := b.TestLogin(bctx, "TestMadara"); ok || !strings.Contains(detail, "No username") {
+		t.Errorf("got (%v, %q), want a note that nothing is saved", ok, detail)
+	}
+
+	// Saved, but the module takes no login.
+	if err := b.SaveModuleSettings(bctx, "TestMadara", nil, "reader", "pw", true); err != nil {
+		t.Fatal(err)
+	}
+	if ok, detail := b.TestLogin(bctx, "TestMadara"); ok || !strings.Contains(detail, "does not take a login") {
+		t.Errorf("got (%v, %q), want a note that the site takes no login", ok, detail)
 	}
 }

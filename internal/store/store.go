@@ -215,6 +215,24 @@ func (s *Store) Queue(ctx context.Context) (QueueStatus, error) {
 	return out, rows.Err()
 }
 
+// SeriesByModule lists the series that came from one site.
+//
+// The settings page shows them because a setting is changed in order to fix a
+// series, and the page otherwise gives no way back to what prompted the visit.
+func (s *Store) SeriesByModule(ctx context.Context, moduleKey string) ([]Series, error) {
+	all, err := s.ListSeries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Series
+	for _, v := range all {
+		if v.Key() == moduleKey || v.ModuleName == moduleKey {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
 // TrackedURLs returns the series already followed from a module, keyed by the
 // URL the site lists them under.
 //
