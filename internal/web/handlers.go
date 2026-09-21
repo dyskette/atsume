@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -48,12 +49,17 @@ func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, ui.Sites(v))
 }
 
+// handleBrowse renders the page without touching the site.
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	module := r.PathValue("name")
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page < 0 {
-		page = 0
-	}
+	s.render(w, r, ui.Browse(ui.BrowseView{
+		Module: r.PathValue("name"),
+		Page:   queryPage(r),
+	}))
+}
+
+// handleBrowseList fetches the index, which is what can be slow.
+func (s *Server) handleBrowseList(w http.ResponseWriter, r *http.Request) {
+	module, page := r.PathValue("name"), queryPage(r)
 
 	entries, err := s.App.Browse(r.Context(), module, page)
 	if err != nil {
@@ -65,9 +71,17 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.Browse(ui.BrowseView{
+	s.render(w, r, ui.BrowseList(ui.BrowseView{
 		Module: module, Page: page, Entries: entries, Tracked: tracked,
 	}))
+}
+
+func queryPage(r *http.Request) int {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 0 {
+		return 0
+	}
+	return page
 }
 
 func (s *Server) handleTrackSeries(w http.ResponseWriter, r *http.Request) {
@@ -106,18 +120,23 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.SeriesPage(s.seriesView(series, chapters)))
+	s.render(w, r, ui.SeriesPage(s.seriesView(r.Context(), series, chapters)))
 }
 
 // seriesView assembles what the series page renders.
-func (s *Server) seriesView(series store.Series, chapters []store.Chapter) ui.SeriesView {
-	return ui.SeriesView{
+func (s *Server) seriesView(ctx context.Context, series store.Series, chapters []store.Chapter) ui.SeriesView {
+	v := ui.SeriesView{
 		Series:        series,
 		Chapters:      chapters,
 		Counts:        ui.CountChapters(chapters),
 		Destination:   s.App.SeriesDestination(series.Title),
 		CheckInterval: s.App.Cfg.CheckInterval,
 	}
+	if info, ok := s.App.SiteInfo(ctx, series.Key()); ok {
+		v.SiteNeedsLogin = info.NeedsLogin
+	}
+	v.SiteHasCredentials = s.App.Store.HasCredentials(ctx, series.Key())
+	return v
 }
 
 // handleCover serves a series cover through atsume rather than linking it.
@@ -151,7 +170,7 @@ func (s *Server) handleRefreshSeries(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := s.App.EnqueueRefresh(r.Context(), series.ModuleName, series.URL); err != nil {
+	if err := s.App.EnqueueRefresh(r.Context(), series.Key(), series.URL); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -247,6 +266,42 @@ func (s *Server) handleSaveModuleSettings(w http.ResponseWriter, r *http.Request
 	s.render(w, r, ui.ModuleSettings(settings, true))
 }
 
+// handlePreview shows a series before it is followed.
+func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
+	module := r.PathValue("name")
+	seriesURL := r.URL.Query().Get("url")
+	if seriesURL == "" {
+		http.Error(w, "no series address given", http.StatusBadRequest)
+		return
+	}
+
+	info, err := s.App.Preview(r.Context(), module, seriesURL)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.Preview(ui.PreviewView{
+		Module:    module,
+		SeriesURL: seriesURL,
+		Info:      info,
+		Chapters:  info.ChapterLinks.Count(),
+	}))
+}
+
+// handlePreviewCover proxies a cover for a series with no library row to key
+// a cache on.
+func (s *Server) handlePreviewCover(w http.ResponseWriter, r *http.Request) {
+	data, contentType, err := s.App.CoverByURL(r.Context(), r.PathValue("name"), r.URL.Query().Get("url"))
+	if err != nil {
+		slog.Debug("preview cover unavailable", "err", err)
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(data)
+}
+
 // handleSubscribe turns automatic checking for one series on or off.
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -269,13 +324,22 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.FollowControl(s.seriesView(series, chapters)))
+	s.render(w, r, ui.FollowControl(s.seriesView(r.Context(), series, chapters)))
 }
 
 // handleCheckNow asks the scheduler for an immediate sweep.
 func (s *Server) handleCheckNow(w http.ResponseWriter, r *http.Request) {
 	s.App.Scheduler.CheckNow()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleQueue serves the status line, which the footer fetches on load.
+func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
+	q, err := s.App.Store.Queue(r.Context())
+	if err != nil {
+		slog.Error("queue status", "err", err)
+	}
+	s.render(w, r, ui.QueueStatus(q))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

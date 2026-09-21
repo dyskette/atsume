@@ -1,0 +1,30 @@
+package ui
+
+import (
+	"fmt"
+
+	"github.com/dyskette/atsume/internal/store"
+)
+
+// QueueStatus is the persistent status line.
+//
+// It is the only element on every page, so its job is ambient awareness: is
+// anything happening, and is anything wrong. A word that never changes — which
+// is what "idle" was — occupies that space without earning it.
+templ QueueStatus(q store.QueueStatus) {
+	<span id="queue-status" sse-swap="queue" hx-swap="outerHTML" class="queue">
+		if q.Busy() {
+			<span class="dot working"></span>
+			<span>{ queueBusyText(q) }</span>
+		} else if q.Failed > 0 {
+			<span class="dot bad"></span>
+			<span>Nothing in progress</span>
+		} else {
+			<span class="dot"></span>
+			<span>Nothing in progress</span>
+		}
+		if q.Failed > 0 {
+			<a class="failed-link" href="/">{ fmt.Sprintf("%d failed", q.Failed) }</a>
+		}
+	</span>
+}

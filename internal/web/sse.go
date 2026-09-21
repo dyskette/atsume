@@ -13,6 +13,10 @@ import (
 	"github.com/dyskette/atsume/internal/web/ui"
 )
 
+// statusInterval throttles the footer. A chapter emits one event per page, and
+// the status line does not need to keep up with that.
+const statusInterval = 500 * time.Millisecond
+
 // handleEvents streams progress to the browser as server-sent events.
 //
 // Every message carries rendered HTML rather than JSON: htmx swaps it straight
@@ -37,6 +41,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	events, cancel := s.App.Bus.Subscribe()
 	defer cancel()
 
+	var lastStatus time.Time
+
 	// A periodic comment keeps idle connections alive through proxies that drop
 	// quiet ones.
 	ping := time.NewTicker(25 * time.Second)
@@ -55,11 +61,19 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if !open {
 				return
 			}
-			name, html := s.renderEvent(r.Context(), e)
-			if name == "" {
-				continue
+			if name, html := s.renderEvent(r.Context(), e); name != "" {
+				writeEvent(w, name, html)
 			}
-			writeEvent(w, name, html)
+			// The status line is derived here rather than published by the
+			// worker: every event that matters to it is already on this
+			// stream, and recomputing once per page of a download would be
+			// a query per image.
+			if time.Since(lastStatus) > statusInterval {
+				lastStatus = time.Now()
+				if q, err := s.App.Store.Queue(r.Context()); err == nil {
+					writeEvent(w, "queue", renderToString(r.Context(), ui.QueueStatus(q)))
+				}
+			}
 			flusher.Flush()
 		}
 	}

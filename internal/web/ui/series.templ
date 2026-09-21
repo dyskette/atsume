@@ -29,6 +29,8 @@ templ SeriesPage(v SeriesView) {
 					}
 					{ " · " }
 					<a href={ templ.SafeURL(v.Series.URL) } target="_blank" rel="noreferrer noopener">Open on site</a>
+					{ " · " }
+					<a href={ templ.SafeURL(v.SettingsURL()) }>Site settings</a>
 				</p>
 				if v.HaveLine() != "" {
 					<p class="have">{ v.HaveLine() }</p>
@@ -88,7 +90,10 @@ templ chaptersEmpty(v SeriesView) {
 	{{ headline, detail := v.ChaptersEmptyReason() }}
 	<div class="empty">
 		<strong>{ headline }</strong>
-		{ detail }
+		<p>{ detail }</p>
+		if v.SiteNeedsLogin && !v.SiteHasCredentials {
+			<p><a class="cta" href={ templ.SafeURL(v.SettingsURL()) }>Add an account for { v.Series.ModuleName }</a></p>
+		}
 	</div>
 }
 

@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -17,6 +18,11 @@ func pageURL(module string, page int) string {
 		return "/modules/" + module
 	}
 	return fmt.Sprintf("/modules/%s?page=%d", module, page)
+}
+
+// previewURL is a look at a series before committing to it.
+func previewURL(module, link string) string {
+	return "/modules/" + module + "/preview?url=" + url.QueryEscape(link)
 }
 
 // stateLabel renders a chapter's state for display.
@@ -72,6 +78,19 @@ func passwordPlaceholder(s *app.ModuleSettings) string {
 		return "unchanged"
 	}
 	return ""
+}
+
+// queueBusyText says what is happening in the fewest words that are still
+// specific: a count alone reads as a number with no verb.
+func queueBusyText(q store.QueueStatus) string {
+	switch {
+	case q.Downloading > 0 && q.Queued > 0:
+		return fmt.Sprintf("Downloading %d, %d waiting", q.Downloading, q.Queued)
+	case q.Downloading > 0:
+		return fmt.Sprintf("Downloading %d", q.Downloading)
+	default:
+		return fmt.Sprintf("%d waiting to download", q.Queued)
+	}
 }
 
 // truncate shortens a message for inline display, keeping the full text in the

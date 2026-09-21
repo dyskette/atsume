@@ -32,8 +32,16 @@ templ Layout(title string) {
 			</main>
 			<footer>
 				<div class="bar">
-					<span class="muted">Chapters land in your library directory.</span>
-					<span id="queue-status" sse-swap="queue">idle</span>
+					<!-- Fetches its own state on load so a page opened mid-download is
+					     correct immediately, then follows the stream. -->
+					<span
+						id="queue-status"
+						class="queue"
+						hx-get="/queue"
+						hx-trigger="load"
+						hx-swap="outerHTML"
+						sse-swap="queue"
+					></span>
 				</div>
 			</footer>
 		</body>

@@ -55,6 +55,20 @@ type SeriesView struct {
 	// CheckInterval is how often a followed series is re-checked. Zero means
 	// automatic checking is switched off entirely.
 	CheckInterval time.Duration
+
+	// SiteNeedsLogin and SiteHasCredentials decide whether an empty chapter
+	// list is worth blaming on a missing account.
+	SiteNeedsLogin     bool
+	SiteHasCredentials bool
+}
+
+// SettingsURL is where this series' site is configured.
+//
+// The page links to it because a check can fail for a reason only a setting
+// fixes, and the settings were previously reachable only by knowing the module
+// name and navigating in from the site chooser.
+func (v SeriesView) SettingsURL() string {
+	return "/modules/" + v.Series.Key() + "/settings"
 }
 
 // HaveLine states what the reader has, in the terms they care about.
@@ -96,9 +110,18 @@ func (v SeriesView) ChaptersEmptyReason() (headline, detail string) {
 		return "Not checked yet",
 			"Press “Check for new chapters” to fetch the chapter list from " + v.Series.ModuleName + "."
 	}
+	// A gated site answers normally and simply omits the chapters, so an empty
+	// list is the expected symptom of a missing account rather than a puzzle.
+	if v.SiteNeedsLogin && !v.SiteHasCredentials {
+		return "This site needs an account",
+			v.Series.ModuleName + " only lists chapters to signed-in readers. The page was " +
+				"fetched successfully and simply contained none. Add a username and password " +
+				"in the site's settings, then check again."
+	}
 	return "No chapters listed",
 		"The last check reached " + v.Series.ModuleName + " but it listed no chapters. " +
-			"The series may have moved, or the module for this site may be out of date."
+			"The series may have moved, the module for this site may be out of date, or the " +
+			"series may genuinely have nothing published yet."
 }
 
 // humanDuration renders an interval the way someone would say it.

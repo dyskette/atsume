@@ -357,3 +357,32 @@ h2.category {
 	border-bottom: 1px solid var(--line);
 }
 h2.category .muted { font-size: 0.82rem; font-weight: 400; }
+
+/* The status line is the only element on every page; it earns that by saying
+   whether anything is happening, not by displaying a constant. */
+.queue { display: inline-flex; align-items: center; gap: 0.5rem; }
+.dot {
+	width: 0.5rem;
+	height: 0.5rem;
+	border-radius: 50%;
+	background: var(--line);
+	flex: none;
+}
+.dot.working { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+.dot.bad { background: var(--err); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .dot.working { animation: none; } }
+
+.failed-link { color: var(--err); margin-left: 0.6rem; }
+
+.loading {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	margin: 1.5rem 0;
+	padding: 1rem;
+	border: 1px dashed var(--line);
+	border-radius: 8px;
+	color: var(--muted);
+	font-size: 0.9rem;
+}

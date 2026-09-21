@@ -1,0 +1,82 @@
+package ui
+
+import (
+	"fmt"
+	"net/url"
+
+	"github.com/dyskette/atsume/internal/scraper"
+)
+
+// PreviewView is a look at a series that is not in the library.
+type PreviewView struct {
+	Module    string
+	SeriesURL string
+	Info      *scraper.MangaInfo
+	// Chapters is how many the site lists, which is the number that tells a
+	// reader whether following this will eventually mean a large backlog.
+	Chapters int
+}
+
+// CoverURL routes the cover through atsume, because the image hosts these
+// sites use refuse a request whose Referer is not their own.
+func (v PreviewView) CoverURL() string {
+	return fmt.Sprintf("/modules/%s/preview-cover?url=%s",
+		v.Module, url.QueryEscape(v.Info.CoverLink))
+}
+
+// Preview shows a series before it is followed.
+templ Preview(v PreviewView) {
+	@Layout(v.Info.Title) {
+		<div class="head">
+			<h1>{ v.Info.Title }</h1>
+			<a href={ templ.SafeURL("/modules/" + v.Module) }>Back to { v.Module }</a>
+		</div>
+		<div class="series-head">
+			if v.Info.CoverLink != "" {
+				<img class="cover" src={ v.CoverURL() } alt="" loading="lazy"/>
+			}
+			<div class="series-meta">
+				<p class="muted">
+					{ v.Module }
+					if v.Info.Status != "" {
+						{ " · " }{ v.Info.Status }
+					}
+					if v.Info.Authors != "" {
+						{ " · " }{ v.Info.Authors }
+					}
+					{ " · " }
+					<a href={ templ.SafeURL(v.SeriesURL) } target="_blank" rel="noreferrer noopener">Open on site</a>
+				</p>
+				<p class="have">
+					if v.Chapters > 0 {
+						{ fmt.Sprintf("%d chapters listed", v.Chapters) }
+					} else {
+						No chapters listed
+					}
+				</p>
+				<p class="muted">
+					Not in your library. Following downloads chapters published from
+					that point on; the { fmt.Sprintf("%d", v.Chapters) } already listed
+					stay a separate, deliberate download.
+				</p>
+				<div class="actions">
+					<form hx-post="/series" hx-swap="none" hx-on::after-request="window.location='/'">
+						<input type="hidden" name="module" value={ v.Module }/>
+						<input type="hidden" name="url" value={ v.SeriesURL }/>
+						<input type="hidden" name="name" value={ v.Info.Title }/>
+						<button type="submit" class="primary">Follow this series</button>
+					</form>
+				</div>
+				if v.Info.Genres != "" {
+					<p class="muted">{ v.Info.Genres }</p>
+				}
+			</div>
+		</div>
+		if v.Info.Summary != "" {
+			<details class="description" open>
+				<summary>Description</summary>
+				<p class="summary">{ v.Info.Summary }</p>
+			</details>
+		}
+	}
+}

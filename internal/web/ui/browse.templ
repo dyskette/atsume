@@ -15,44 +15,38 @@ type BrowseView struct {
 	Tracked map[string]int64
 }
 
-// Browse lists one page of a site's directory.
+// ListURL is where the index for this page is fetched from.
+func (v BrowseView) ListURL() string {
+	return fmt.Sprintf("/modules/%s/list?page=%d", v.Module, v.Page)
+}
+
+// Browse is the shell of a site's directory page.
 //
-// The listing a module returns is only names and links — no covers, no
-// counts. Fetching those would mean a request to someone else's server for
-// every row, so the page says what it is rather than pretending to more.
+// The index is fetched separately, after the page has rendered. Fetching it
+// first meant a site that does not answer held the whole page — including the
+// link to its settings — for the length of the HTTP timeout, which is the
+// worst case to be stuck on: a reader whose site is broken is the one most
+// likely to want the settings.
 templ Browse(v BrowseView) {
 	@Layout(v.Module) {
 		<div class="head">
 			<h1>{ v.Module }</h1>
-			<a href={ templ.SafeURL("/modules/" + v.Module + "/settings") }>Settings</a>
+			<a href={ templ.SafeURL("/modules/" + v.Module + "/settings") }>Site settings</a>
 		</div>
 		<p class="muted">
 			{ fmt.Sprintf("Page %d of this site's index. Following a title downloads new chapters from then on, not the back catalogue.", v.Page+1) }
 		</p>
-		if len(v.Entries) == 0 {
-			<div class="empty">
-				<strong>Nothing on this page</strong>
-				{ fmt.Sprintf("The module returned no titles for page %d. It may paginate differently, or the site may have nothing more to list.", v.Page+1) }
+		<div
+			id="site-index"
+			hx-get={ v.ListURL() }
+			hx-trigger="load"
+			hx-swap="innerHTML"
+		>
+			<div class="loading">
+				<span class="dot working"></span>
+				{ fmt.Sprintf("Fetching the index from %s. This waits on their server.", v.Module) }
 			</div>
-		}
-		<ul class="rows">
-			for _, e := range v.Entries {
-				<li>
-					<span class="title">{ e.Name }</span>
-					if id, ok := v.Tracked[e.Link]; ok {
-						<span class="badge done">following</span>
-						<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
-					} else {
-						<form hx-post="/series" hx-swap="outerHTML" hx-target="closest li">
-							<input type="hidden" name="module" value={ v.Module }/>
-							<input type="hidden" name="url" value={ e.Link }/>
-							<input type="hidden" name="name" value={ e.Name }/>
-							<button type="submit">Follow</button>
-						</form>
-					}
-				</li>
-			}
-		</ul>
+		</div>
 		<nav class="pager">
 			if v.Page > 0 {
 				<a href={ templ.SafeURL(pageURL(v.Module, v.Page-1)) }>Previous</a>
@@ -60,6 +54,35 @@ templ Browse(v BrowseView) {
 			<a href={ templ.SafeURL(pageURL(v.Module, v.Page+1)) }>Next</a>
 		</nav>
 	}
+}
+
+// BrowseList is the index itself, swapped in once the site answers.
+templ BrowseList(v BrowseView) {
+	if len(v.Entries) == 0 {
+		<div class="empty">
+			<strong>Nothing on this page</strong>
+			{ fmt.Sprintf("The module returned no titles for page %d. It may paginate differently, or the site may have nothing more to list.", v.Page+1) }
+		</div>
+	}
+	<ul class="rows">
+		for _, e := range v.Entries {
+			<li>
+				<span class="title">{ e.Name }</span>
+				if id, ok := v.Tracked[e.Link]; ok {
+					<span class="badge done">following</span>
+					<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
+				} else {
+					<a href={ templ.SafeURL(previewURL(v.Module, e.Link)) }>Preview</a>
+					<form hx-post="/series" hx-swap="outerHTML" hx-target="closest li">
+						<input type="hidden" name="module" value={ v.Module }/>
+						<input type="hidden" name="url" value={ e.Link }/>
+						<input type="hidden" name="name" value={ e.Name }/>
+						<button type="submit">Follow</button>
+					</form>
+				}
+			</li>
+		}
+	</ul>
 }
 
 // Tracked replaces a directory row once the series has been followed.
