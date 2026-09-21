@@ -84,11 +84,27 @@ func TestLibraryRowState(t *testing.T) {
 
 func TestLibraryRowDetail(t *testing.T) {
 	r := LibraryRow{
-		Series:   store.Series{ModuleName: "Madara", Status: "ongoing", Subscribed: true},
+		Series: store.Series{
+			ModuleName: "Madara", ModuleKey: "Madara",
+			Status: "ongoing", Subscribed: true,
+			CheckedAt: sql.NullTime{Time: time.Now(), Valid: true},
+		},
 		Progress: store.SeriesProgress{Total: 40, Done: 12},
 	}
-	if got, want := r.Detail(), "Madara · ongoing · 12 of 40 downloaded"; got != want {
+	// The site is rendered separately so it can be a link to its settings,
+	// which is where a failing row is usually fixed.
+	if got, want := r.Site(), "Madara"; got != want {
+		t.Errorf("site = %q, want %q", got, want)
+	}
+	if got, want := r.Detail(), " · ongoing · 12 of 40 downloaded · checked just now"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+
+	// When it was last looked at is on every row: without it the page looks
+	// the same whether checking works or stopped weeks ago.
+	r.Series.CheckedAt = sql.NullTime{}
+	if got := r.Detail(); !strings.Contains(got, "never checked") {
+		t.Errorf("got %q, want it to say it has never been checked", got)
 	}
 
 	// Not following is worth saying: the row would otherwise look the same as
@@ -209,5 +225,70 @@ func TestBuildSites(t *testing.T) {
 	}
 	if got := BuildSites(cat, "nothing here").Found; got != 0 {
 		t.Errorf("no-match search found %d", got)
+	}
+}
+
+// TestStalled covers the warning that a library cannot do without.
+//
+// A scheduler that has died looks exactly like one with nothing due: every
+// row keeps its last known state and the page goes on implying it is current.
+func TestStalled(t *testing.T) {
+	rows := []LibraryRow{{Series: store.Series{Title: "Anything"}}}
+	const interval = time.Hour
+
+	cases := []struct {
+		name string
+		v    LibraryView
+		want bool
+	}{
+		{
+			name: "a recent sweep is fine",
+			v: LibraryView{Rows: rows, CheckInterval: interval,
+				Swept: true, LastSweep: time.Now().Add(-30 * time.Minute)},
+		},
+		{
+			// One late sweep is not an alarm; the queue can be busy.
+			name: "a sweep running late is not an alarm",
+			v: LibraryView{Rows: rows, CheckInterval: interval,
+				Swept: true, LastSweep: time.Now().Add(-90 * time.Minute)},
+		},
+		{
+			name: "past the grace, say so",
+			v: LibraryView{Rows: rows, CheckInterval: interval,
+				Swept: true, LastSweep: time.Now().Add(-5 * time.Hour)},
+			want: true,
+		},
+		{
+			// The first sweep is deliberately delayed, so a fresh start is
+			// not evidence of anything.
+			name: "just started and nothing swept yet",
+			v:    LibraryView{Rows: rows, CheckInterval: interval, Uptime: time.Minute},
+		},
+		{
+			name: "up for hours and never swept",
+			v:    LibraryView{Rows: rows, CheckInterval: interval, Uptime: 5 * time.Hour},
+			want: true,
+		},
+		{
+			// Switched off on purpose is not a fault.
+			name: "checking is disabled",
+			v:    LibraryView{Rows: rows, Uptime: 5 * time.Hour},
+		},
+		{
+			name: "an empty library has nothing to be stale",
+			v:    LibraryView{CheckInterval: interval, Uptime: 5 * time.Hour},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, why := c.v.Stalled()
+			if got != c.want {
+				t.Errorf("Stalled() = %v, want %v (%q)", got, c.want, why)
+			}
+			if got && why == "" {
+				t.Error("a warning with nothing to say is no warning")
+			}
+		})
 	}
 }

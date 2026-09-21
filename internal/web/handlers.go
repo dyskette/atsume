@@ -30,7 +30,12 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	v := ui.LibraryView{Destination: s.App.Cfg.LibraryDir}
+	v := ui.LibraryView{
+		Destination:   s.App.Cfg.LibraryDir,
+		CheckInterval: s.App.Cfg.CheckInterval,
+		Uptime:        s.App.Uptime(),
+	}
+	v.LastSweep, v.Swept = s.App.Scheduler.LastSweep()
 	for _, item := range series {
 		v.Rows = append(v.Rows, ui.LibraryRow{Series: item, Progress: progress[item.ID]})
 	}

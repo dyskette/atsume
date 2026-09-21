@@ -33,6 +33,12 @@ templ Library(v LibraryView) {
 				<p><a class="cta" href="/modules">Browse sites</a></p>
 			</div>
 		}
+		if stalled, why := v.Stalled(); stalled {
+			<p class="attention">
+				<strong>Checking has stopped.</strong>
+				{ " " + why }
+			</p>
+		}
 		for _, section := range v.Sections() {
 			<div class="section-head">
 				<h2>{ section.Title }</h2>
@@ -65,7 +71,10 @@ templ LibraryItem(r LibraryRow) {
 		</a>
 		<div class="grow">
 			<a class="title" href={ templ.SafeURL(fmt.Sprintf("/series/%d", r.Series.ID)) }>{ r.Series.Title }</a>
-			<div class="muted">{ r.Detail() }</div>
+			<div class="muted">
+				<a class="site" href={ templ.SafeURL(SiteURL(r.Site(), "/settings")) }>{ r.Series.ModuleName }</a>
+				{ r.Detail() }
+			</div>
 		</div>
 		<span class={ "badge", kind }>{ label }</span>
 	</li>

@@ -442,3 +442,7 @@ li.more { justify-content: center; border-style: dashed; }
    one they know should not have to wonder. It does not pretend to work. */
 .grid a.broken { color: var(--muted); text-decoration: line-through; }
 .grid .mirrors { font-size: 0.78rem; }
+/* The site a series came from, linked to its settings: a failing row is
+   usually failing for a reason only that page can fix. */
+.rows.library .muted a.site { color: var(--muted); text-decoration: none; }
+.rows.library .muted a.site:hover { color: var(--accent); text-decoration: underline; }

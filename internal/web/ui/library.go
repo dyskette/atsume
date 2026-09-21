@@ -19,6 +19,18 @@ type LibraryView struct {
 	// Destination is where chapters are written, stated on the empty page
 	// because it is the only thing connecting atsume to a library server.
 	Destination string
+
+	// CheckInterval is how often a subscribed series is re-checked, and zero
+	// when automatic checking is switched off.
+	CheckInterval time.Duration
+	// LastSweep is when the scheduler last ran, and Swept whether it has run
+	// at all since the program started.
+	LastSweep time.Time
+	Swept     bool
+	// Uptime is how long the program has been running, which is what makes a
+	// scheduler that has never run distinguishable from one that started a
+	// moment ago.
+	Uptime time.Duration
 }
 
 // State is the short answer to "is this one up to date", which is the question
@@ -49,9 +61,16 @@ func (r LibraryRow) State() (label, kind string) {
 	}
 }
 
-// Detail is the supporting line: where it came from and how much is on disk.
+// Site is where the series came from. The library links it, because a row
+// that is failing is usually failing for a reason only that site's settings
+// can fix, and the only route there used to be to remember the name and
+// navigate in from the chooser.
+func (r LibraryRow) Site() string { return r.Series.Key() }
+
+// Detail is the supporting line: what it is and how much is on disk. The site
+// is rendered separately, as a link.
 func (r LibraryRow) Detail() string {
-	out := r.Series.ModuleName
+	var out string
 	if r.Series.Status != "" {
 		out += " · " + r.Series.Status
 	}
@@ -63,6 +82,9 @@ func (r LibraryRow) Detail() string {
 	if r.Progress.New > 0 && r.Progress.NewestArrival.Valid {
 		out += " · arrived " + ago(r.Progress.NewestArrival.Time)
 	}
+	// When it was last looked at. A library that cannot say this looks the
+	// same whether checking is working or stopped weeks ago.
+	out += " · " + lastChecked(r.Series)
 	if !r.Series.Subscribed {
 		out += " · not following"
 	}
@@ -135,6 +157,37 @@ func (v LibraryView) Sections() []Section {
 		out = append(out, Section{Title: title, Rows: rest})
 	}
 	return out
+}
+
+// Stalled reports whether automatic checking has stopped happening, and says
+// so in the terms the reader set it in.
+//
+// A scheduler that has died looks exactly like one with nothing due: every
+// row keeps its last known state and the page goes on implying it is current.
+// The grace is two intervals, so a sweep running late is not an alarm.
+func (v LibraryView) Stalled() (bool, string) {
+	if v.CheckInterval <= 0 || len(v.Rows) == 0 {
+		return false, ""
+	}
+	grace := 2 * v.CheckInterval
+	if !v.Swept {
+		// Nothing has swept yet. That is normal for the first minute after a
+		// restart and not normal an interval later.
+		if v.Uptime < grace {
+			return false, ""
+		}
+		return true, fmt.Sprintf(
+			"No check has run since atsume started %s ago, though one is due every %s.",
+			humanDuration(v.Uptime.Truncate(time.Minute)), humanDuration(v.CheckInterval))
+	}
+	since := time.Since(v.LastSweep)
+	if since < grace {
+		return false, ""
+	}
+	return true, fmt.Sprintf(
+		"The last check ran %s ago, though one is due every %s. Nothing below is "+
+			"necessarily current.",
+		humanDuration(since.Truncate(time.Minute)), humanDuration(v.CheckInterval))
 }
 
 // ago is a rough relative time. The library needs "recently or not", not a
