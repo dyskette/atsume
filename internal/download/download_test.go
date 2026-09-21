@@ -2,6 +2,7 @@ package download
 
 import (
 	"archive/zip"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -73,6 +74,16 @@ func TestWriteCBZ(t *testing.T) {
 	}
 	if got := filepath.Base(path); got != "Solo Leveling - c001.cbz" {
 		t.Errorf("path = %q", got)
+	}
+
+	// The archive has to be readable by whatever scans the library, which is
+	// rarely the process that wrote it.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o644 {
+		t.Errorf("mode = %o, want 644", perm)
 	}
 
 	zr, err := zip.OpenReader(path)

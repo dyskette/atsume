@@ -110,5 +110,11 @@ func WriteCBZ(path string, pages []Page) (err error) {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	// CreateTemp makes the file owner-only. A library directory is normally
+	// read by something else — a library server in another container, a share
+	// — so an archive nobody else can open is not much use.
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return err
+	}
 	return os.Rename(tmp.Name(), path)
 }
