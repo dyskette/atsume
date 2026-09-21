@@ -31,7 +31,8 @@ ENV ATSUME_ADDR=:8080 \
 EXPOSE 8080
 VOLUME ["/data", "/library"]
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
-    CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
+# No HEALTHCHECK here: podman builds OCI images by default and ignores it with
+# a warning. Declare the check in whatever runs the image — the quadlet in
+# deploy/ does, with HealthCmd.
 
 ENTRYPOINT ["/usr/local/bin/atsume"]

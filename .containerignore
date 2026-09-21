@@ -1,0 +1,11 @@
+# The build context only needs source. Everything here is either produced by a
+# build, recorded from a third party, or a checkout of someone else's repo.
+.git/
+bin/
+reference/
+patches/
+docs/
+deploy/
+*_templ.go
+internal/scraper/testdata/recorded/*/cassette/
+internal/scraper/testdata/recorded/*/golden.json
