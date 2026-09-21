@@ -437,4 +437,8 @@ li.more { justify-content: center; border-style: dashed; }
 .section-head h2 { font-size: 1rem; margin: 0; }
 .section-head .count { color: var(--muted); font-size: 0.82rem; }
 .section-head + .muted { margin-bottom: 0.4rem; }
+
+/* A site whose module will not load is listed, because a reader looking for
+   one they know should not have to wonder. It does not pretend to work. */
+.grid a.broken { color: var(--muted); text-decoration: line-through; }
 .grid .mirrors { font-size: 0.78rem; }

@@ -46,7 +46,15 @@ type ModuleEntry struct {
 	// sites have one. MangaPark has fourteen, and they exist because these
 	// domains are blocked and abandoned constantly.
 	Mirrors []string
+	// Err is why the file would not load, when it would not. Such a site is
+	// still listed — a reader looking for one they know would otherwise
+	// think atsume had never heard of it — but it is listed as unavailable
+	// rather than looking exactly like one that works until it is clicked.
+	Err string
 }
+
+// Available reports whether the site can be opened at all.
+func (e ModuleEntry) Available() bool { return e.Err == "" }
 
 // HasMirrors reports whether there is a choice of address to make.
 func (e ModuleEntry) HasMirrors() bool { return len(e.Mirrors) > 1 }
@@ -125,7 +133,9 @@ func (a *App) ModuleCatalogue(ctx context.Context) Catalogue {
 			// only name available — the file's. Any sites it declared before
 			// it failed are lost with it, which is why a broken file can
 			// cost more than one site.
-			entries = append(entries, ModuleEntry{Site: f.Name, File: f.File, FileName: f.Name})
+			entries = append(entries, ModuleEntry{
+				Site: f.Name, File: f.File, FileName: f.Name, Err: err.Error(),
+			})
 			continue
 		}
 		entries = append(entries, sitesOf(r.Sites(), f.File, f.Name)...)
