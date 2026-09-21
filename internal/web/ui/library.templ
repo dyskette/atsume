@@ -33,6 +33,25 @@ templ Library(v LibraryView) {
 				<p><a class="cta" href="/modules">Browse sites</a></p>
 			</div>
 		}
+		if series, chapters := v.Waiting(); series > 0 {
+			<!-- The batch form sits outside the lists so rows in any section
+			     can join it by id; a form cannot wrap list items spread over
+			     several lists. -->
+			<form
+				id="download-many"
+				class="batch"
+				hx-post="/download"
+				hx-target="#download-result"
+				hx-swap="innerHTML"
+			>
+				<button type="submit">Download selected</button>
+				<span class="muted">
+					{ Count(chapters, "chapter is", "chapters are") } waiting across
+					{ Count(series, "series", "series") }.
+				</span>
+				<span id="download-result"></span>
+			</form>
+		}
 		if stalled, why := v.Stalled(); stalled {
 			<p class="attention">
 				<strong>Checking has stopped.</strong>
@@ -60,6 +79,18 @@ templ Library(v LibraryView) {
 templ LibraryItem(r LibraryRow) {
 	{{ label, kind := r.State() }}
 	<li>
+		if r.Actionable() {
+			<input
+				class="pick"
+				type="checkbox"
+				name="sel"
+				value={ fmt.Sprintf("%d", r.Series.ID) }
+				form="download-many"
+				aria-label={ "Select " + r.Series.Title }
+			/>
+		} else {
+			<span class="pick"></span>
+		}
 		<a class="thumb" href={ templ.SafeURL(fmt.Sprintf("/series/%d", r.Series.ID)) }>
 			if r.Series.CoverURL != "" {
 				<img
@@ -77,6 +108,11 @@ templ LibraryItem(r LibraryRow) {
 			</div>
 		</div>
 		<span class={ "badge", kind }>{ label }</span>
+		if r.Actionable() {
+			<form hx-post={ fmt.Sprintf("/series/%d/download", r.Series.ID) } hx-swap="none">
+				<button type="submit">{ "Download " + Count(r.Waiting(), "chapter", "chapters") }</button>
+			</form>
+		}
 	</li>
 }
 

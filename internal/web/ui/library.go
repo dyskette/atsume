@@ -61,6 +61,14 @@ func (r LibraryRow) State() (label, kind string) {
 	}
 }
 
+// Waiting is how many chapters are known but not on disk. It is what the
+// library can act on: following in bulk without downloading in bulk was half
+// a workflow, and the only way through was to open each series in turn.
+func (r LibraryRow) Waiting() int { return r.Progress.Waiting }
+
+// Actionable reports whether this row has anything to download.
+func (r LibraryRow) Actionable() bool { return r.Progress.Waiting > 0 }
+
 // Site is where the series came from. The library links it, because a row
 // that is failing is usually failing for a reason only that site's settings
 // can fix, and the only route there used to be to remember the name and
@@ -188,6 +196,18 @@ func (v LibraryView) Stalled() (bool, string) {
 		"The last check ran %s ago, though one is due every %s. Nothing below is "+
 			"necessarily current.",
 		humanDuration(since.Truncate(time.Minute)), humanDuration(v.CheckInterval))
+}
+
+// Waiting counts the chapters the whole library could fetch, so the page can
+// offer to do it once rather than per row.
+func (v LibraryView) Waiting() (series, chapters int) {
+	for _, r := range v.Rows {
+		if r.Actionable() {
+			series++
+			chapters += r.Waiting()
+		}
+	}
+	return series, chapters
 }
 
 // ago is a rough relative time. The library needs "recently or not", not a

@@ -33,6 +33,7 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("POST /series/{id}/subscribe", s.handleSubscribe)
 	mux.HandleFunc("POST /check", s.handleCheckNow)
+	mux.HandleFunc("POST /download", s.handleDownloadMany)
 
 	mux.HandleFunc("POST /chapters/{id}/download", s.handleDownloadChapter)
 

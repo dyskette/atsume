@@ -292,3 +292,24 @@ func TestStalled(t *testing.T) {
 		})
 	}
 }
+
+// TestLibraryWaiting covers what the page can act on.
+func TestLibraryWaiting(t *testing.T) {
+	v := LibraryView{Rows: []LibraryRow{
+		{Progress: store.SeriesProgress{Total: 4, Done: 4}},
+		{Progress: store.SeriesProgress{Total: 4, Done: 1, Waiting: 3}},
+		{Progress: store.SeriesProgress{Total: 2, Waiting: 2}},
+		// Already running: nothing to queue, so nothing to offer.
+		{Progress: store.SeriesProgress{Total: 5, Active: 5}},
+	}}
+	series, chapters := v.Waiting()
+	if series != 2 || chapters != 5 {
+		t.Errorf("waiting = %d series / %d chapters, want 2 / 5", series, chapters)
+	}
+	if v.Rows[0].Actionable() || v.Rows[3].Actionable() {
+		t.Error("a row with nothing to fetch offers nothing")
+	}
+	if !v.Rows[1].Actionable() || v.Rows[1].Waiting() != 3 {
+		t.Error("a row with a backlog offers to fetch it")
+	}
+}

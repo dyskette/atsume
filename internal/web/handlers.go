@@ -394,6 +394,49 @@ func (s *Server) handleRecheck(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, ui.Notice("Queued "+ui.Count(n, "re-check", "re-checks")+".", "/"))
 }
 
+// handleDownloadMany queues the outstanding chapters of several series.
+//
+// Following in bulk without downloading in bulk was half a workflow: six
+// titles followed from one index landed in a library that could only be
+// acted on one page at a time.
+func (s *Server) handleDownloadMany(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	selected := r.PostForm["sel"]
+	if len(selected) == 0 {
+		s.render(w, r, ui.Notice("Nothing selected.", ""))
+		return
+	}
+
+	var chapters, series int
+	for _, raw := range selected {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			continue
+		}
+		n, err := s.App.EnqueueAllPending(r.Context(), id)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if n > 0 {
+			series++
+			chapters += n
+		}
+	}
+	slog.Info("queued chapters for several series", "series", series, "chapters", chapters)
+	if chapters == 0 {
+		// "Queued 0 chapters from 0 series" is a non-answer: it reports the
+		// arithmetic instead of saying nothing needed doing.
+		s.render(w, r, ui.Notice("Nothing to fetch — those are already downloaded.", ""))
+		return
+	}
+	s.render(w, r, ui.Notice(fmt.Sprintf("Queued %s from %s.",
+		ui.Count(chapters, "chapter", "chapters"), ui.Count(series, "series", "series")), ""))
+}
+
 // handleSubscribe turns automatic checking for one series on or off.
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

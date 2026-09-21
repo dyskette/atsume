@@ -446,3 +446,4 @@ li.more { justify-content: center; border-style: dashed; }
    usually failing for a reason only that page can fix. */
 .rows.library .muted a.site { color: var(--muted); text-decoration: none; }
 .rows.library .muted a.site:hover { color: var(--accent); text-decoration: underline; }
+.rows.library .pick { align-self: center; }
