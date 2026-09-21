@@ -357,9 +357,17 @@ func (s *Server) handlePreviewCover(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// handleTestLogin signs in with the stored credentials and says what happened.
+// handleTestLogin signs in and says what happened.
+//
+// It tests what is in the form rather than what is in the database, so a
+// password can be checked before it is committed to either.
 func (s *Server) handleTestLogin(w http.ResponseWriter, r *http.Request) {
-	ok, detail := s.App.TestLogin(r.Context(), r.PathValue("name"))
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ok, detail := s.App.TestLogin(r.Context(), r.PathValue("name"),
+		r.PostForm.Get("__username"), r.PostForm.Get("__password"))
 	s.render(w, r, ui.LoginResult(ok, detail))
 }
 

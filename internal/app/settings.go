@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 
 	"github.com/dyskette/atsume/internal/scraper"
 	"github.com/dyskette/atsume/internal/store"
@@ -124,16 +125,30 @@ func (a *App) openModuleRaw(ctx context.Context, name string) (*scraper.Runner, 
 // interface: the only way to find out used to be re-checking a series and
 // seeing whether chapters appeared. The module already records a verdict —
 // its account status — and nothing was reading it.
-func (a *App) TestLogin(ctx context.Context, moduleKey string) (ok bool, detail string) {
-	if !a.Sealer.Enabled() {
-		return false, "No secret key is configured, so no credentials are stored."
-	}
-	creds, err := a.Store.Credentials(ctx, a.Sealer, moduleKey)
-	if err != nil {
-		return false, err.Error()
-	}
-	if creds == nil {
-		return false, "No username and password are saved for this site yet."
+// The username and password are whatever is in the form, so a login can be
+// tried before it is stored. Telling someone to save a password in order to
+// find out whether it is right has the order backwards, and leaves a wrong
+// one sitting in the database when it is not.
+func (a *App) TestLogin(ctx context.Context, moduleKey, username, password string) (ok bool, detail string) {
+	// A blank field falls back to what is stored, so the button still tests
+	// the saved login when nothing has been typed.
+	if username == "" || password == "" {
+		if !a.Sealer.Enabled() {
+			return false, "No secret key is configured, so no login can be stored or tested."
+		}
+		creds, err := a.Store.Credentials(ctx, a.Sealer, moduleKey)
+		if err != nil {
+			return false, err.Error()
+		}
+		if creds == nil {
+			return false, "Type a username and password to test them, or save them first."
+		}
+		if username == "" {
+			username = creds.Username
+		}
+		if password == "" {
+			password = creds.Password
+		}
 	}
 
 	// Opened raw so a failing login cannot stop the page that fixes it from
@@ -147,16 +162,25 @@ func (a *App) TestLogin(ctx context.Context, moduleKey string) (ok bool, detail 
 	if !r.HasHandler("OnLogin") {
 		return false, "This site does not take a login."
 	}
-	r.SetAccount(creds.Username, creds.Password)
+	name := r.Module().Name
+	r.SetAccount(username, password)
 
+	// The module's own words are written for whoever wrote the module. What
+	// the reader needs is which of the two things went wrong, because the
+	// answers are different: fix the password, or stop trying.
 	signedIn, err := r.Login()
 	switch {
+	case err != nil && strings.Contains(err.Error(), "rejected the credentials"):
+		return false, name + " refused the sign-in. Check the username and password; " +
+			"if they are right on the site itself, it may be asking for something " +
+			"atsume cannot answer, such as a captcha or a second factor."
 	case err != nil:
-		return false, err.Error()
+		return false, "The sign-in could not be completed: " + err.Error()
 	case !signedIn:
-		return false, "The site refused the credentials."
+		return false, name + " did not accept the sign-in, without saying why. " +
+			"Signing in on the site itself will usually show what it wants."
 	default:
-		return true, "Signed in as " + creds.Username + "."
+		return true, "Signed in to " + name + " as " + username + "."
 	}
 }
 

@@ -677,31 +677,39 @@ func TestRecheckSite(t *testing.T) {
 	}
 }
 
-// TestTestLoginWithoutCredentials covers the answers the button gives when
-// there is nothing to test, which are the common cases.
-func TestTestLoginWithoutCredentials(t *testing.T) {
+// TestTestLoginAnswers covers what the button says in each case it can reach
+// without a site that actually authenticates.
+func TestTestLoginAnswers(t *testing.T) {
 	var chapters atomic.Int32
 	chapters.Store(1)
 	srv := growingSite(t, &chapters)
 
 	// No key configured at all.
 	a, _, ctx := newTestApp(t, srv.URL, &config.Config{})
-	if ok, detail := a.TestLogin(ctx, "TestMadara"); ok || !strings.Contains(detail, "secret key") {
+	if ok, detail := a.TestLogin(ctx, "TestMadara", "", ""); ok || !strings.Contains(detail, "secret key") {
 		t.Errorf("got (%v, %q), want a note about the missing key", ok, detail)
 	}
 
-	// Key configured, nothing saved.
+	// Key configured, nothing saved and nothing typed.
 	b, _, bctx := newTestApp(t, srv.URL, &config.Config{SecretKey: "k"})
-	if ok, detail := b.TestLogin(bctx, "TestMadara"); ok || !strings.Contains(detail, "No username") {
-		t.Errorf("got (%v, %q), want a note that nothing is saved", ok, detail)
+	if ok, detail := b.TestLogin(bctx, "TestMadara", "", ""); ok || !strings.Contains(detail, "Type a username") {
+		t.Errorf("got (%v, %q), want an invitation to type something", ok, detail)
 	}
 
-	// Saved, but the module takes no login.
+	// Typed but not saved: the test must reach the module rather than stop at
+	// the empty database, because being told to save first in order to find
+	// out whether a password works has the order backwards.
+	ok, detail := b.TestLogin(bctx, "TestMadara", "reader", "pw")
+	if ok || !strings.Contains(detail, "does not take a login") {
+		t.Errorf("got (%v, %q), want the module's own verdict", ok, detail)
+	}
+
+	// Saved, and still reaching the module.
 	if err := b.SaveModuleSettings(bctx, "TestMadara", nil, "reader", "pw", true); err != nil {
 		t.Fatal(err)
 	}
-	if ok, detail := b.TestLogin(bctx, "TestMadara"); ok || !strings.Contains(detail, "does not take a login") {
-		t.Errorf("got (%v, %q), want a note that the site takes no login", ok, detail)
+	if ok, detail := b.TestLogin(bctx, "TestMadara", "", ""); ok || !strings.Contains(detail, "does not take a login") {
+		t.Errorf("got (%v, %q), want the module's own verdict", ok, detail)
 	}
 }
 

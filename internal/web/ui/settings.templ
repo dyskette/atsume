@@ -75,13 +75,16 @@ templ ModuleSettings(s *app.ModuleSettings, saved bool) {
 					</li>
 				</ul>
 				<p class="muted">
-					Leave the password blank to keep the stored one. Clear both fields to
-					remove the login.
+					Test checks the fields as typed. Leave the password blank to keep
+					the stored one; clear both fields to remove the login.
 				</p>
 				<div class="actions">
+					<!-- Sends the fields as typed, so a password is tested before
+					     it is saved rather than after. -->
 					<button
 						type="button"
 						hx-post={ fmt.Sprintf("/modules/%s/test-login", s.Module) }
+						hx-include="[name='__username'], [name='__password']"
 						hx-target="#login-result"
 						hx-swap="innerHTML"
 					>Test login</button>
