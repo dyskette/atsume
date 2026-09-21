@@ -4,6 +4,7 @@ package download
 import (
 	"archive/zip"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,9 @@ type Chapter struct {
 	Name   string
 	Number string // normalised chapter number, e.g. "001"
 	Volume string // optional
+	// URL is where the chapter was read from, recorded in the archive's
+	// metadata so a file on disk can be traced back to its source.
+	URL string
 }
 
 // Filename renders the Komga-compatible name for a chapter. Komga parses
@@ -59,12 +63,17 @@ func Sanitize(s string) string {
 	return s
 }
 
-// WriteCBZ writes pages into a CBZ at path.
+// WriteCBZ writes pages into a CBZ at path, with the metadata a library
+// server reads.
 //
 // It writes to a temporary file in the destination directory and renames on
 // success, so an interrupted download never leaves a half-written archive for
 // Komga's scanner to pick up.
-func WriteCBZ(path string, pages []Page) (err error) {
+//
+// The metadata may be nil, which writes a bare archive. A failure to render
+// it is not a failure to write the chapter: the pages are the point, and a
+// library that can be corrected by hand beats a download that did not happen.
+func WriteCBZ(path string, pages []Page, info *ComicInfo) (err error) {
 	if len(pages) == 0 {
 		return fmt.Errorf("no pages to write to %s", path)
 	}
@@ -84,6 +93,25 @@ func WriteCBZ(path string, pages []Page) (err error) {
 	}()
 
 	zw := zip.NewWriter(tmp)
+	if info != nil {
+		// First in the archive, because a reader looking for it should not
+		// have to walk past a hundred images to find it. It is the one entry
+		// worth compressing.
+		if body, err := info.Marshal(); err != nil {
+			slog.Warn("could not render metadata", "path", path, "err", err)
+		} else {
+			w, err := zw.CreateHeader(&zip.FileHeader{
+				Name:   comicInfoName,
+				Method: zip.Deflate,
+			})
+			if err != nil {
+				return err
+			}
+			if _, err := w.Write(body); err != nil {
+				return err
+			}
+		}
+	}
 	for i, p := range pages {
 		ext := p.Ext
 		if ext == "" {

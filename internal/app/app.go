@@ -347,6 +347,34 @@ func (a *App) postProcessImage(r *scraper.Runner, page download.Page, index int)
 	return page, nil
 }
 
+// comicInfo describes a chapter for whatever reads the library directory.
+//
+// A file name cannot carry a title: the characters a filesystem forbids are
+// stripped, so "1/2 Prince" becomes the folder "12 Prince" and a library
+// server reading only the folder shows a different work. This says what the
+// series actually is, in the site's own words.
+func (a *App) comicInfo(ctx context.Context, series store.Series, target download.Chapter, root string, pages int) *download.ComicInfo {
+	meta := download.SeriesMeta{
+		Title:   series.Title,
+		Summary: series.Summary,
+		Authors: series.Authors,
+		Artists: series.Artists,
+		Genres:  series.Genres,
+		Status:  series.Status,
+		// Stored relative, as the site listed it. A note pointing at
+		// "/manga/x/" is no use to whoever finds the file.
+		URL:  scraper.MaybeFillHost(root, series.URL),
+		Site: series.ModuleName,
+	}
+	// The chapter count is only worth stating for a finished work, and only
+	// if it is known; a running total tells a reader their library is
+	// incomplete when it is merely ongoing.
+	if chapters, err := a.Store.ListChapters(ctx, series.ID); err == nil {
+		meta.Chapters = len(chapters)
+	}
+	return download.BuildComicInfo(meta, target, pages)
+}
+
 // DownloadPayload identifies a chapter to download.
 type DownloadPayload struct {
 	ChapterID int64 `json:"chapter_id"`
@@ -434,9 +462,10 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 
 	target := download.Chapter{
 		Series: series.Title, Name: ch.Name, Number: ch.Number, Volume: ch.Volume,
+		URL: scraper.MaybeFillHost(r.Module().RootURL, ch.URL),
 	}
 	path := target.Path(a.Cfg.LibraryDir)
-	if err := download.WriteCBZ(path, pages); err != nil {
+	if err := download.WriteCBZ(path, pages, a.comicInfo(ctx, series, target, r.Module().RootURL, len(pages))); err != nil {
 		return fail(err)
 	}
 

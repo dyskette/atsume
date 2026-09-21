@@ -69,7 +69,7 @@ func TestWriteCBZ(t *testing.T) {
 		{Data: []byte("first"), Ext: ".jpg"},
 		{Data: []byte("second"), Ext: ".png"},
 	}
-	if err := WriteCBZ(path, pages); err != nil {
+	if err := WriteCBZ(path, pages, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := filepath.Base(path); got != "Solo Leveling - c001.cbz" {
@@ -103,7 +103,7 @@ func TestWriteCBZ(t *testing.T) {
 // TestWriteCBZEmpty guards the case that would otherwise publish an empty
 // archive into the library for Komga to index.
 func TestWriteCBZEmpty(t *testing.T) {
-	if err := WriteCBZ(filepath.Join(t.TempDir(), "x.cbz"), nil); err == nil {
+	if err := WriteCBZ(filepath.Join(t.TempDir(), "x.cbz"), nil, nil); err == nil {
 		t.Fatal("expected an error for an empty page list")
 	}
 }

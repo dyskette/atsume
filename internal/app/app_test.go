@@ -440,13 +440,17 @@ end
 		t.Fatal(err)
 	}
 	defer zr.Close()
-	if len(zr.File) != 1 {
+	// The metadata comes first, then the page.
+	if len(zr.File) != 2 {
 		t.Fatalf("archive holds %d entries", len(zr.File))
 	}
-	if name := zr.File[0].Name; name != "0001.png" {
+	if name := zr.File[0].Name; name != "ComicInfo.xml" {
+		t.Errorf("first entry = %q, want the metadata", name)
+	}
+	if name := zr.File[1].Name; name != "0001.png" {
 		t.Errorf("entry name = %q, want 0001.png", name)
 	}
-	rc, err := zr.File[0].Open()
+	rc, err := zr.File[1].Open()
 	if err != nil {
 		t.Fatal(err)
 	}
