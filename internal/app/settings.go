@@ -103,7 +103,7 @@ func (a *App) SaveModuleSettings(ctx context.Context, name string, options map[s
 // reading its declarations needs — applying a broken credential here would stop
 // the operator reaching the page that lets them fix it.
 func (a *App) openModuleRaw(ctx context.Context, name string) (*scraper.Runner, error) {
-	info, ok := a.Registry.Find(name)
+	info, ok := a.Registry.Find(a.ResolveModule(ctx, name))
 	if !ok {
 		return nil, errModuleNotFound(name, a.Registry.Ref())
 	}

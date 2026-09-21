@@ -79,7 +79,7 @@ func (s *Scheduler) sweep(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	for _, series := range due {
-		if err := s.app.EnqueueRefresh(ctx, series.ModuleName, series.URL); err != nil {
+		if err := s.app.EnqueueRefresh(ctx, series.Key(), series.URL); err != nil {
 			return 0, err
 		}
 	}

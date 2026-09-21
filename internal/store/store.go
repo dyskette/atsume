@@ -58,8 +58,12 @@ func (s *Store) Close() error { return s.DB.Close() }
 
 // Series is a tracked title.
 type Series struct {
-	ID         int64
-	ModuleID   string
+	ID       int64
+	ModuleID string
+	// ModuleKey is the module's file name, which is what the registry is
+	// indexed by. ModuleName is the label it declares, which differs for a
+	// quarter of the catalogue and is only ever displayed.
+	ModuleKey  string
 	ModuleName string
 	URL        string
 	Title      string
@@ -100,17 +104,18 @@ const (
 // UpsertSeries inserts or updates a series and returns its id.
 func (s *Store) UpsertSeries(ctx context.Context, v Series) (int64, error) {
 	const q = `
-		INSERT INTO series (module_id, module_name, url, title, cover_url,
+		INSERT INTO series (module_id, module_key, module_name, url, title, cover_url,
 		                    authors, artists, genres, status, summary, subscribed, checked_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (module_id, url) DO UPDATE SET
+			module_key = excluded.module_key,
 			title = excluded.title, cover_url = excluded.cover_url,
 			authors = excluded.authors, artists = excluded.artists,
 			genres = excluded.genres, status = excluded.status,
 			summary = excluded.summary, checked_at = excluded.checked_at
 		RETURNING id`
 	var id int64
-	err := s.DB.QueryRowContext(ctx, q, v.ModuleID, v.ModuleName, v.URL, v.Title,
+	err := s.DB.QueryRowContext(ctx, q, v.ModuleID, v.ModuleKey, v.ModuleName, v.URL, v.Title,
 		v.CoverURL, v.Authors, v.Artists, v.Genres, v.Status, v.Summary,
 		v.Subscribed, time.Now()).Scan(&id)
 	return id, err
@@ -119,7 +124,7 @@ func (s *Store) UpsertSeries(ctx context.Context, v Series) (int64, error) {
 // ListSeries returns every tracked series, newest first.
 func (s *Store) ListSeries(ctx context.Context) ([]Series, error) {
 	const q = `
-		SELECT id, module_id, module_name, url, title, cover_url, authors,
+		SELECT id, module_id, module_key, module_name, url, title, cover_url, authors,
 		       artists, genres, status, summary, subscribed, checked_at
 		FROM series ORDER BY title`
 	rows, err := s.DB.QueryContext(ctx, q)
@@ -131,12 +136,51 @@ func (s *Store) ListSeries(ctx context.Context) ([]Series, error) {
 	var out []Series
 	for rows.Next() {
 		var v Series
-		if err := rows.Scan(&v.ID, &v.ModuleID, &v.ModuleName, &v.URL, &v.Title,
+		if err := rows.Scan(&v.ID, &v.ModuleID, &v.ModuleKey, &v.ModuleName, &v.URL, &v.Title,
 			&v.CoverURL, &v.Authors, &v.Artists, &v.Genres, &v.Status,
 			&v.Summary, &v.Subscribed, &v.CheckedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// QueueStatus is the state of all work, across every series.
+type QueueStatus struct {
+	Downloading int
+	Queued      int
+	Failed      int
+}
+
+// Busy reports whether anything is in flight.
+func (q QueueStatus) Busy() bool { return q.Downloading+q.Queued > 0 }
+
+// Queue summarises outstanding work for the status line.
+func (s *Store) Queue(ctx context.Context) (QueueStatus, error) {
+	const q = `SELECT state, COUNT(*) FROM chapters
+	           WHERE state IN (?, ?, ?) GROUP BY state`
+	rows, err := s.DB.QueryContext(ctx, q, ChapterDownloading, ChapterQueued, ChapterFailed)
+	if err != nil {
+		return QueueStatus{}, err
+	}
+	defer rows.Close()
+
+	var out QueueStatus
+	for rows.Next() {
+		var state string
+		var n int
+		if err := rows.Scan(&state, &n); err != nil {
+			return out, err
+		}
+		switch state {
+		case ChapterDownloading:
+			out.Downloading = n
+		case ChapterQueued:
+			out.Queued = n
+		case ChapterFailed:
+			out.Failed = n
+		}
 	}
 	return out, rows.Err()
 }
@@ -147,8 +191,11 @@ func (s *Store) ListSeries(ctx context.Context) ([]Series, error) {
 // A directory listing uses it to mark what is already in the library; without
 // it the same series can be added twice with no warning.
 func (s *Store) TrackedURLs(ctx context.Context, moduleName string) (map[string]int64, error) {
+	// Matches either form: rows written before the key and the label were told
+	// apart hold the label in module_name.
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT url, id FROM series WHERE module_name = ?`, moduleName)
+		`SELECT url, id FROM series WHERE module_key = ? OR module_name = ?`,
+		moduleName, moduleName)
 	if err != nil {
 		return nil, err
 	}
@@ -216,13 +263,13 @@ func (s *Store) Progress(ctx context.Context) (map[int64]SeriesProgress, error) 
 // GetSeries reads one series by id.
 func (s *Store) GetSeries(ctx context.Context, id int64) (Series, error) {
 	const q = `
-		SELECT id, module_id, module_name, url, title, cover_url, authors,
+		SELECT id, module_id, module_key, module_name, url, title, cover_url, authors,
 		       artists, genres, status, summary, subscribed, checked_at
 		FROM series WHERE id = ?`
 	var v Series
-	err := s.DB.QueryRowContext(ctx, q, id).Scan(&v.ID, &v.ModuleID, &v.ModuleName,
-		&v.URL, &v.Title, &v.CoverURL, &v.Authors, &v.Artists, &v.Genres,
-		&v.Status, &v.Summary, &v.Subscribed, &v.CheckedAt)
+	err := s.DB.QueryRowContext(ctx, q, id).Scan(&v.ID, &v.ModuleID, &v.ModuleKey,
+		&v.ModuleName, &v.URL, &v.Title, &v.CoverURL, &v.Authors, &v.Artists,
+		&v.Genres, &v.Status, &v.Summary, &v.Subscribed, &v.CheckedAt)
 	return v, err
 }
 
@@ -299,7 +346,7 @@ func knownChapterURLs(ctx context.Context, tx *sql.Tx, seriesID int64) (map[stri
 // whichever series happens to sort last.
 func (s *Store) SeriesDueForCheck(ctx context.Context, interval time.Duration, limit int) ([]Series, error) {
 	const q = `
-		SELECT id, module_id, module_name, url, title, cover_url, authors,
+		SELECT id, module_id, module_key, module_name, url, title, cover_url, authors,
 		       artists, genres, status, summary, subscribed, checked_at
 		FROM series
 		WHERE subscribed = 1 AND (checked_at IS NULL OR checked_at < ?)
@@ -314,7 +361,7 @@ func (s *Store) SeriesDueForCheck(ctx context.Context, interval time.Duration, l
 	var out []Series
 	for rows.Next() {
 		var v Series
-		if err := rows.Scan(&v.ID, &v.ModuleID, &v.ModuleName, &v.URL, &v.Title,
+		if err := rows.Scan(&v.ID, &v.ModuleID, &v.ModuleKey, &v.ModuleName, &v.URL, &v.Title,
 			&v.CoverURL, &v.Authors, &v.Artists, &v.Genres, &v.Status,
 			&v.Summary, &v.Subscribed, &v.CheckedAt); err != nil {
 			return nil, err
@@ -485,4 +532,16 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	           ON CONFLICT (key) DO UPDATE SET value = excluded.value`
 	_, err := s.DB.ExecContext(ctx, q, key, value)
 	return err
+}
+
+// Key is the identifier a module is looked up by.
+//
+// Rows written before the key and the declared label were told apart hold the
+// label; falling back to it keeps those resolvable, since the resolver accepts
+// either form.
+func (s Series) Key() string {
+	if s.ModuleKey != "" {
+		return s.ModuleKey
+	}
+	return s.ModuleName
 }

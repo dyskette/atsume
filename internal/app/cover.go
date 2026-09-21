@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -10,6 +12,7 @@ import (
 	_ "image/png"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -41,35 +44,72 @@ func (a *App) Cover(ctx context.Context, seriesID int64) (data []byte, contentTy
 		return b, http.DetectContentType(b), nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, series.CoverURL, nil)
+	data, err = a.fetchCover(ctx, series.Key(), series.CoverURL)
 	if err != nil {
 		return nil, "", err
 	}
+	if err := os.MkdirAll(cacheDir, 0o755); err == nil {
+		_ = os.WriteFile(cached, data, 0o644)
+	}
+	return data, http.DetectContentType(data), nil
+}
+
+// CoverByURL fetches a cover for a series that is not in the library yet,
+// which is the preview's case: there is no row to key a cache on.
+//
+// The URL comes from the module's own output rather than from the reader, and
+// the endpoint sits behind whatever guards the rest of the interface, but the
+// scheme is still checked so a malformed module cannot turn this into a
+// general-purpose fetcher.
+func (a *App) CoverByURL(ctx context.Context, moduleName, coverURL string) (data []byte, contentType string, err error) {
+	u, err := url.Parse(coverURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, "", fmt.Errorf("not a fetchable cover address")
+	}
+
+	sum := sha256.Sum256([]byte(coverURL))
+	cacheDir := filepath.Join(a.Cfg.DataDir, "covers")
+	cached := filepath.Join(cacheDir, "u"+hex.EncodeToString(sum[:])[:20])
+	if b, readErr := os.ReadFile(cached); readErr == nil && len(b) > 0 {
+		return b, http.DetectContentType(b), nil
+	}
+
+	data, err = a.fetchCover(ctx, moduleName, coverURL)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err == nil {
+		_ = os.WriteFile(cached, data, 0o644)
+	}
+	return data, http.DetectContentType(data), nil
+}
+
+// fetchCover retrieves and downscales one cover.
+func (a *App) fetchCover(ctx context.Context, moduleName, coverURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, coverURL, nil)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("User-Agent", scraperUserAgent)
-	if root := a.moduleRootURL(ctx, series.ModuleName); root != "" {
+	if root := a.moduleRootURL(ctx, moduleName); root != "" {
 		req.Header.Set("Referer", root)
 	}
 
 	client := &http.Client{Timeout: 20 * time.Second, Transport: a.Transport}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("cover request returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("cover request returned %d", resp.StatusCode)
 	}
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-
-	data = thumbnail(raw)
-	if err := os.MkdirAll(cacheDir, 0o755); err == nil {
-		_ = os.WriteFile(cached, data, 0o644)
-	}
-	return data, http.DetectContentType(data), nil
+	return thumbnail(raw), nil
 }
 
 // coverWidth is what a cover is cached at.

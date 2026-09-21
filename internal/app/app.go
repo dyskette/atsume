@@ -74,7 +74,7 @@ func errModuleNotFound(name, ref string) error {
 // state because the module API is built on globals and a state is not safe for
 // concurrent use.
 func (a *App) openModule(ctx context.Context, name string) (*scraper.Runner, error) {
-	info, ok := a.Registry.Find(name)
+	info, ok := a.Registry.Find(a.ResolveModule(ctx, name))
 	if !ok {
 		return nil, errModuleNotFound(name, a.Registry.Ref())
 	}
@@ -169,7 +169,9 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 	mod := r.Module()
 
 	id, err := a.Store.UpsertSeries(ctx, store.Series{
-		ModuleID:   mod.ID,
+		ModuleID: mod.ID,
+		// The key is what the registry indexes by; the name is only displayed.
+		ModuleKey:  a.ResolveModule(ctx, p.Module),
 		ModuleName: mod.Name,
 		URL:        p.URL,
 		Title:      info.Title,
@@ -393,7 +395,7 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 		State: store.ChapterDownloading,
 	})
 
-	r, err := a.openModule(ctx, series.ModuleName)
+	r, err := a.openModule(ctx, series.Key())
 	if err != nil {
 		return fail(err)
 	}
@@ -430,4 +432,19 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 		State: store.ChapterDone, Done: len(pages), Total: len(pages),
 	})
 	return nil
+}
+
+// Preview fetches a series' details without storing anything.
+//
+// A directory listing carries only names and links, so there is no way to tell
+// two similarly titled series apart from it. This is the one request that
+// answers "is this the one I mean", made deliberately for a single series
+// rather than for every row of an index.
+func (a *App) Preview(ctx context.Context, module, seriesURL string) (*scraper.MangaInfo, error) {
+	r, err := a.openModule(ctx, module)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return r.GetInfo(seriesURL)
 }

@@ -10,6 +10,7 @@ import (
 	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -475,5 +476,108 @@ func TestCoverThumbnail(t *testing.T) {
 	// Undecodable input must not fail the request.
 	if got := thumbnail([]byte("not an image")); string(got) != "not an image" {
 		t.Errorf("undecodable input should be returned as-is")
+	}
+}
+
+// TestModuleKeyDiffersFromDeclaredName covers the identifier a series is
+// stored against.
+//
+// A module is found by its file name, but 145 of 597 declare a different Name
+// in Init(). Storing the label and looking modules up by it broke every
+// refresh, download and settings lookup for those sites the moment a series
+// was tracked — and only after tracking, so nothing before this caught it.
+func TestModuleKeyDiffersFromDeclaredName(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(2)
+	srv := growingSite(t, &chapters)
+
+	// A checkout whose file name and declared name disagree, as a quarter of
+	// the real catalogue does.
+	upstream := upstreamLua(t)
+	checkout := t.TempDir()
+	luaDir := filepath.Join(checkout, "lua")
+	if err := os.MkdirAll(filepath.Join(luaDir, "modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, shared := range []string{"templates", "utils"} {
+		if err := os.Symlink(filepath.Join(upstream, shared), filepath.Join(luaDir, shared)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := fmt.Sprintf(`
+function Init()
+	local m = NewWebsiteModule()
+	m.ID              = '99999999999999999999999999999999'
+	m.Name            = 'Spaced Name'
+	m.RootURL         = '%s'
+	m.OnGetInfo       = 'GetInfo'
+	m.OnGetPageNumber = 'GetPageNumber'
+end
+
+local Template = require 'templates.Madara'
+function GetInfo()       Template.GetInfo()       return no_error end
+function GetPageNumber() return Template.GetPageNumber() end
+`, srv.URL)
+	if err := os.WriteFile(filepath.Join(luaDir, "modules", "SpacedName.lua"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	cfg := &config.Config{
+		DataDir: dir, LibraryDir: filepath.Join(dir, "library"),
+		Workers: 1, HostConcurrency: 4, HostRPS: 1000, CheckBatch: 10,
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	reg := scraper.NewRegistry(filepath.Join(dir, "modules"), "")
+	if err := reg.Use(checkout, "test"); err != nil {
+		t.Fatal(err)
+	}
+	a := New(cfg, st, reg)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { a.Pool.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	// Tracked by file name, as the site listing does.
+	if err := a.EnqueueRefresh(ctx, "SpacedName", srv.URL+"/manga/grow/"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		s, _ := st.ListSeries(ctx)
+		return len(s) == 1
+	}, "series to be stored")
+
+	all, _ := st.ListSeries(ctx)
+	series := all[0]
+	if series.ModuleName != "Spaced Name" {
+		t.Errorf("display name = %q, want the declared one", series.ModuleName)
+	}
+	if series.ModuleKey != "SpacedName" {
+		t.Errorf("key = %q, want the file name", series.ModuleKey)
+	}
+
+	// The second refresh is what used to fail: it goes through whatever the
+	// row stored, not through what the browse page passed.
+	if err := a.EnqueueRefresh(ctx, series.Key(), series.URL); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		stats, _ := a.Queue.Stats(ctx)
+		return stats["done"] == 2
+	}, "the second refresh to succeed")
+	if stats, _ := a.Queue.Stats(ctx); stats["failed"] != 0 {
+		t.Errorf("a refresh failed: %+v", stats)
+	}
+
+	// And a label-only lookup still resolves, for rows written before the two
+	// were told apart.
+	if got := a.ResolveModule(ctx, "Spaced Name"); got != "SpacedName" {
+		t.Errorf("ResolveModule(label) = %q, want the file name", got)
 	}
 }

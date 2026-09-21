@@ -11,11 +11,21 @@ import (
 
 // ModuleEntry is a site as the chooser lists it.
 type ModuleEntry struct {
+	// Name is the module's file name, which is its identifier.
 	Name string
+	// Display is the name the module declares in Init(). It differs from the
+	// file name for a quarter of the catalogue, so the two are kept apart:
+	// this one is only ever shown, never looked up by.
+	Display string
 	// Category is what the module declares — "English", "Webcomics",
 	// "English-Scanlation", "Raw". It is the only structure available for a
 	// list of several hundred sites, and it was previously discarded.
 	Category string
+	// NeedsLogin reports that the module implements OnLogin. A site that
+	// gates its chapter list behind an account returns a page that parses
+	// perfectly and lists nothing, so knowing this is the difference between
+	// "no chapters found" and "this site needs an account".
+	NeedsLogin bool
 }
 
 // Catalogue is the site list, grouped.
@@ -31,6 +41,37 @@ type catalogueCache struct {
 	mu      sync.Mutex
 	ref     string
 	entries []ModuleEntry
+}
+
+// SiteInfo returns what is known about one site without loading it.
+//
+// It accepts either the file name or the declared label, so a series stored
+// before the two were told apart still resolves.
+func (a *App) SiteInfo(ctx context.Context, name string) (ModuleEntry, bool) {
+	entries := a.ModuleCatalogue(ctx).Entries
+	for _, e := range entries {
+		if strings.EqualFold(e.Name, name) {
+			return e, true
+		}
+	}
+	for _, e := range entries {
+		if e.Display != "" && strings.EqualFold(e.Display, name) {
+			return e, true
+		}
+	}
+	return ModuleEntry{}, false
+}
+
+// ResolveModule maps whatever a caller has — a file name or a declared label —
+// onto the file name the registry indexes by.
+func (a *App) ResolveModule(ctx context.Context, name string) string {
+	if _, ok := a.Registry.Find(name); ok {
+		return name
+	}
+	if e, ok := a.SiteInfo(ctx, name); ok {
+		return e.Name
+	}
+	return name
 }
 
 // ModuleCatalogue lists every site with its declared category.
@@ -56,6 +97,8 @@ func (a *App) ModuleCatalogue(ctx context.Context) Catalogue {
 		// a site they know is missing.
 		if r, err := a.openModuleRaw(ctx, m.Name); err == nil {
 			entry.Category = strings.TrimSpace(r.Module().Category)
+			entry.Display = strings.TrimSpace(r.Module().Name)
+			entry.NeedsLogin = r.HasHandler("OnLogin")
 			r.Close()
 		}
 		entries = append(entries, entry)
