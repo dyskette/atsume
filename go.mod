@@ -6,6 +6,7 @@ require (
 	github.com/a-h/templ v0.3.906
 	github.com/antchfx/htmlquery v1.3.6
 	github.com/antchfx/xpath v1.3.8
+	github.com/bodgit/sevenzip v1.6.5
 	github.com/dop251/goja v0.0.0-20260917113740-793a2a65c13b
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/yuin/gopher-lua v1.1.2
@@ -19,7 +20,6 @@ require (
 	github.com/a-h/parse v0.0.0-20250122154542-74294addb73e // indirect
 	github.com/andybalholm/brotli v1.2.3 // indirect
 	github.com/bodgit/plumbing v1.3.0 // indirect
-	github.com/bodgit/sevenzip v1.6.5 // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cli/browser v1.3.0 // indirect
@@ -56,6 +56,6 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 )
 
-replace github.com/yuin/gopher-lua => github.com/dyskette/gopher-lua v1.1.2-atsume
+replace github.com/yuin/gopher-lua => github.com/dyskette/gopher-lua v1.1.3-atsume002
 
 tool github.com/a-h/templ/cmd/templ
