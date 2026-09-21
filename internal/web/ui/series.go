@@ -139,8 +139,5 @@ func humanDuration(d time.Duration) string {
 }
 
 func plural(n int, unit string) string {
-	if n == 1 {
-		return "1 " + unit
-	}
-	return fmt.Sprintf("%d %ss", n, unit)
+	return Count(n, unit, unit+"s")
 }
