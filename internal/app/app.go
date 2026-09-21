@@ -259,6 +259,13 @@ func (a *App) fetchPages(ctx context.Context, r *scraper.Runner, ch store.Chapte
 			return nil, ctx.Err()
 		}
 
+		// A module may hand back a page address that is not absolute: a bare
+		// path, or a network-path reference like //cdn.example/p.jpg, which
+		// is a perfectly ordinary URL that Go's client refuses because it
+		// carries no scheme. Resolving against the site's own address is
+		// what the browser these pages were written for would do.
+		u = scraper.MaybeFillHost(r.Module().RootURL, u)
+
 		headers, err := r.BeforeDownloadImage(u)
 		if err != nil {
 			return nil, fmt.Errorf("page %d of %d: %w", i+1, len(urls), err)
