@@ -59,6 +59,14 @@ func (e ModuleEntry) Available() bool { return e.Err == "" }
 // HasMirrors reports whether there is a choice of address to make.
 func (e ModuleEntry) HasMirrors() bool { return len(e.Mirrors) > 1 }
 
+// Root is the site's own address, or empty when the module would not load.
+func (e ModuleEntry) Root() string {
+	if len(e.Mirrors) == 0 {
+		return ""
+	}
+	return e.Mirrors[0]
+}
+
 // Catalogue is the site list.
 type Catalogue struct {
 	Entries []ModuleEntry
@@ -232,4 +240,31 @@ func (a *App) RepairModuleKeys(ctx context.Context) error {
 		slog.Info("repaired series module keys", "fixed", fixed, "unresolved", unknown)
 	}
 	return nil
+}
+
+// SiteLink turns a link as a module stored it into one that opens the site.
+//
+// Modules strip the host from the links they hand back — FMD2 does it
+// deliberately — so a stored link is usually a bare path. Rendering one as an
+// href resolves it against atsume's own address instead, which is how "open
+// on site" came to point at atsume.
+//
+// The site's address comes from the catalogue rather than from loading the
+// module, so this costs nothing on a page that is only rendering a link.
+func (a *App) SiteLink(ctx context.Context, site, link string) string {
+	if link == "" {
+		return ""
+	}
+	e, ok := a.SiteInfo(ctx, site)
+	if !ok {
+		return link
+	}
+	root := e.Root()
+	if chosen := a.mirrorFor(ctx, e); chosen != "" {
+		root = chosen
+	}
+	if root == "" {
+		return link
+	}
+	return scraper.MaybeFillHost(root, link)
 }

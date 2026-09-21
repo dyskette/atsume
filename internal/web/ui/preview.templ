@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"net/url"
 
 	"github.com/dyskette/atsume/internal/scraper"
 )
@@ -11,6 +10,10 @@ import (
 type PreviewView struct {
 	Module    string
 	SeriesURL string
+	// SiteURL is the same link resolved against the site, which is what
+	// "open on site" has to use: a module stores links with the host
+	// stripped, so the raw one resolves against atsume instead.
+	SiteURL string
 	Info      *scraper.MangaInfo
 	// Chapters is how many the site lists, which is the number that tells a
 	// reader whether following this will eventually mean a large backlog.
@@ -21,7 +24,7 @@ type PreviewView struct {
 // sites use refuse a request whose Referer is not their own.
 func (v PreviewView) CoverURL() string {
 	return fmt.Sprintf("/modules/%s/preview-cover?url=%s",
-		v.Module, url.QueryEscape(v.Info.CoverLink))
+		v.Module, escapeQueryValue(v.Info.CoverLink))
 }
 
 // Preview shows a series before it is followed.
@@ -45,7 +48,7 @@ templ Preview(v PreviewView) {
 						{ " · " }{ v.Info.Authors }
 					}
 					{ " · " }
-					<a href={ templ.SafeURL(v.SeriesURL) } target="_blank" rel="noreferrer noopener">Open on site</a>
+					<a href={ templ.SafeURL(v.SiteURL) } target="_blank" rel="noreferrer noopener">Open on site</a>
 				</p>
 				<p class="have">
 					if v.Chapters > 0 {

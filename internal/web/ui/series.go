@@ -52,6 +52,10 @@ type SeriesView struct {
 	Counts   ChapterCounts
 	// Destination is the directory chapters are written to.
 	Destination string
+	// SiteURL is the series' address on the site it came from. The stored
+	// link has its host stripped, so rendering that directly pointed "open
+	// on site" back at atsume.
+	SiteURL string
 	// CheckInterval is how often a followed series is re-checked. Zero means
 	// automatic checking is switched off entirely.
 	CheckInterval time.Duration

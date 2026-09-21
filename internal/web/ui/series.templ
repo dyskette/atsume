@@ -28,7 +28,7 @@ templ SeriesPage(v SeriesView) {
 						{ " · " }{ v.Series.Authors }
 					}
 					{ " · " }
-					<a href={ templ.SafeURL(v.Series.URL) } target="_blank" rel="noreferrer noopener">Open on site</a>
+					<a href={ templ.SafeURL(v.SiteURL) } target="_blank" rel="noreferrer noopener">Open on site</a>
 					{ " · " }
 					<a href={ templ.SafeURL(v.SettingsURL()) }>Site settings</a>
 				</p>

@@ -266,6 +266,7 @@ func (s *Server) seriesView(ctx context.Context, series store.Series, chapters [
 		Destination:   s.App.SeriesDestination(series.Title),
 		CheckInterval: s.App.Cfg.CheckInterval,
 		Missing:       s.App.MissingFiles(chapters),
+		SiteURL:       s.App.SiteLink(ctx, series.Key(), series.URL),
 	}
 	if info, ok := s.App.SiteInfo(ctx, series.Key()); ok {
 		v.SiteNeedsLogin = info.NeedsLogin
@@ -425,6 +426,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, ui.Preview(ui.PreviewView{
 		Module:    module,
 		SeriesURL: seriesURL,
+		SiteURL:   s.App.SiteLink(r.Context(), module, seriesURL),
 		Info:      info,
 		Chapters:  info.ChapterLinks.Count(),
 	}))

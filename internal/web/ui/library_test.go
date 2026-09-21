@@ -313,3 +313,26 @@ func TestLibraryWaiting(t *testing.T) {
 		t.Error("a row with a backlog offers to fetch it")
 	}
 }
+
+// TestEscapeQueryValue covers the readability of the addresses a reader sees.
+//
+// RFC 3986 allows "/" and ":" in a query, and escaping them turns
+// ?url=/title/da0ccc81 into ?url=%2Ftitle%2Fda0ccc81 for no benefit. What
+// genuinely has to be escaped still is, or a link with an ampersand in it
+// would split into two parameters.
+func TestEscapeQueryValue(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/title/da0ccc81-68ef-4b0b-8023-52f60046d714", "/title/da0ccc81-68ef-4b0b-8023-52f60046d714"},
+		{"https://mangatoon.mobi/en/x", "https://mangatoon.mobi/en/x"},
+		// These would otherwise change what the query means.
+		{"/a?b=1&c=2", "/a%3Fb%3D1%26c%3D2"},
+		{"/a#b", "/a%23b"},
+		{"/a b", "/a+b"},
+		{"/100%", "/100%25"},
+	}
+	for _, c := range cases {
+		if got := escapeQueryValue(c.in); got != c.want {
+			t.Errorf("escapeQueryValue(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

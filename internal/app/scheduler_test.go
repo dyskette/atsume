@@ -1772,3 +1772,33 @@ func sectionedCheckoutWithID(t *testing.T, rootURL, id string) string {
 	}
 	return checkout
 }
+
+// TestSiteLinkResolvesAgainstTheSite covers "open on site", which pointed at
+// atsume.
+//
+// Modules hand back links with the host stripped — FMD2 removes it
+// deliberately — so rendering a stored link as an href resolved it against
+// whatever origin the page was served from.
+func TestSiteLinkResolvesAgainstTheSite(t *testing.T) {
+	srv := sectionedSite(t)
+	a, _, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	// The shape four fifths of stored links have.
+	if got, want := a.SiteLink(ctx, "Sectioned", "/manga/one/"), srv.URL+"/manga/one/"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	// A module that stores absolute links is left alone.
+	const absolute = "https://elsewhere.example/manga/two/"
+	if got := a.SiteLink(ctx, "Sectioned", absolute); got != absolute {
+		t.Errorf("got %q, want it untouched", got)
+	}
+	// Nothing in, nothing out: a series with no address gets no link rather
+	// than a link to the site's front page.
+	if got := a.SiteLink(ctx, "Sectioned", ""); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+	// A site that cannot be resolved leaves the link as it found it.
+	if got := a.SiteLink(ctx, "Nowhere", "/manga/one/"); got != "/manga/one/" {
+		t.Errorf("got %q", got)
+	}
+}

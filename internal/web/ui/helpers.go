@@ -35,7 +35,7 @@ func pageURL(module string, page int) string {
 
 // previewURL is a look at a series before committing to it.
 func previewURL(module, link string) string {
-	return SiteURL(module, "/preview?url="+url.QueryEscape(link))
+	return SiteURL(module, "/preview?url="+escapeQueryValue(link))
 }
 
 // stateLabel renders a chapter's state for display.
@@ -143,6 +143,26 @@ func areOrIs(n int) string {
 
 // queryEscape makes a search term safe in a URL.
 func queryEscape(s string) string { return url.QueryEscape(s) }
+
+// escapeQueryValue escapes a value for a query string without mangling the
+// characters a query is allowed to contain.
+//
+// RFC 3986 defines a query as pchar / "/" / "?", so a slash and a colon need
+// no escaping there. url.QueryEscape escapes them anyway, which turns a
+// perfectly readable address into
+//
+//	?url=%2Ftitle%2Fda0ccc81-68ef-4b0b-8023-52f60046d714
+//
+// The alternative — putting the path in the URL itself — reads better still
+// for the four fifths of links that are plain paths, and needs a second URL
+// shape for the rest. One shape that handles every link is worth more than
+// the last of the tidiness.
+func escapeQueryValue(s string) string {
+	e := url.QueryEscape(s)
+	e = strings.ReplaceAll(e, "%2F", "/")
+	e = strings.ReplaceAll(e, "%3A", ":")
+	return e
+}
 
 // titleLabel is what a catalogue row is called.
 //
