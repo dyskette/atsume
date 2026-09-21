@@ -17,17 +17,24 @@ templ Layout(title string) {
 		</head>
 		<body hx-ext="sse" sse-connect="/events">
 			<header>
-				<a href="/" class="brand">集め<span>atsume</span></a>
-				<nav>
-					<a href="/">Library</a>
-					<a href="/modules">Sites</a>
-				</nav>
+				<div class="bar">
+					<a href="/" class="brand">集め<span>atsume</span></a>
+					<nav>
+						<a href="/">Library</a>
+						<a href="/modules">Sites</a>
+					</nav>
+				</div>
 			</header>
 			<main>
-				{ children... }
+				<div class="bar">
+					{ children... }
+				</div>
 			</main>
 			<footer>
-				<span id="queue-status" sse-swap="queue">idle</span>
+				<div class="bar">
+					<span class="muted">Chapters land in your library directory.</span>
+					<span id="queue-status" sse-swap="queue">idle</span>
+				</div>
 			</footer>
 		</body>
 	</html>

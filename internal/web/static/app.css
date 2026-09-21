@@ -1,6 +1,7 @@
 :root {
 	--bg: #14161a;
 	--panel: #1c1f26;
+	--panel-hi: #232730;
 	--line: #2a2f39;
 	--text: #e6e8ec;
 	--muted: #949cab;
@@ -8,64 +9,173 @@
 	--ok: #79c66c;
 	--warn: #e0af68;
 	--err: #f07178;
+	/* One column width for the header, the content and the footer. Letting the
+	   header run full width while the content was centred was what made the
+	   page look misaligned. */
+	--page: 60rem;
+	--gutter: 1.5rem;
 }
 
 * { box-sizing: border-box; }
 
+html { height: 100%; }
+
 body {
 	margin: 0;
+	min-height: 100%;
+	/* Column layout so the footer sits at the bottom of the viewport instead of
+	   floating directly under a short page. */
+	display: flex;
+	flex-direction: column;
 	background: var(--bg);
 	color: var(--text);
-	font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+	font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* The shared column. */
+.bar {
+	width: 100%;
+	max-width: var(--page);
+	margin: 0 auto;
+	padding: 0 var(--gutter);
 }
 
 header {
-	display: flex;
-	align-items: center;
-	gap: 2rem;
-	padding: 0.9rem 1.5rem;
 	border-bottom: 1px solid var(--line);
 	background: var(--panel);
 }
+header .bar {
+	display: flex;
+	align-items: center;
+	gap: 2rem;
+	padding-top: 0.85rem;
+	padding-bottom: 0.85rem;
+}
 
-.brand { font-size: 1.15rem; font-weight: 600; text-decoration: none; color: var(--text); }
-.brand span { margin-left: 0.5rem; font-size: 0.85rem; color: var(--muted); font-weight: 400; }
+.brand {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 0.55rem;
+	font-size: 1.1rem;
+	font-weight: 600;
+	text-decoration: none;
+	color: var(--text);
+}
+.brand span { font-size: 0.85rem; color: var(--muted); font-weight: 400; }
 
 nav { display: flex; gap: 1.1rem; }
 nav a { color: var(--muted); text-decoration: none; }
 nav a:hover { color: var(--text); }
 
-main { max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
-h1 { font-size: 1.4rem; margin: 0 0 0.3rem; }
-.muted { color: var(--muted); font-size: 0.9rem; margin: 0.2rem 0; }
+main { flex: 1; padding: 2rem 0 3rem; }
+
+h1 { font-size: 1.45rem; margin: 0 0 0.2rem; }
+h2 { font-size: 1.05rem; margin: 1.6rem 0 0.5rem; font-weight: 600; }
+.muted { color: var(--muted); font-size: 0.9rem; margin: 0.15rem 0; }
 .summary { color: var(--muted); max-width: 46rem; }
-.empty { color: var(--muted); padding: 1.5rem 0; }
+.saved { color: var(--ok); }
+code {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 0.88em;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	padding: 0.05rem 0.3rem;
+}
+
+.head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 1rem;
+	margin-bottom: 0.6rem;
+}
+.head a { color: var(--accent); text-decoration: none; }
+
+/* Empty states carry the page when there is nothing else on it, so they get
+   real presence rather than one grey sentence adrift in the dark. */
+.empty {
+	margin: 2rem 0;
+	padding: 2.5rem var(--gutter);
+	border: 1px dashed var(--line);
+	border-radius: 10px;
+	text-align: center;
+	color: var(--muted);
+}
+.empty strong { display: block; color: var(--text); font-size: 1.05rem; margin-bottom: 0.4rem; font-weight: 600; }
+.empty a { color: var(--accent); }
+
+/* A failure is routine here — a site moved, a module broke — so it is reported
+   in place, with a way onward, rather than as a bare error page. */
+.failure {
+	margin: 2rem 0;
+	padding: 1.5rem;
+	border: 1px solid var(--err);
+	border-left-width: 3px;
+	border-radius: 10px;
+	background: var(--panel);
+}
+.failure strong { display: block; color: var(--err); margin-bottom: 0.5rem; }
+.failure pre {
+	margin: 0.75rem 0 0;
+	padding: 0.75rem;
+	overflow-x: auto;
+	border-radius: 6px;
+	background: var(--bg);
+	border: 1px solid var(--line);
+	color: var(--muted);
+	font-size: 0.85rem;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.failure ul { color: var(--muted); margin: 0.6rem 0 0; padding-left: 1.1rem; }
+.failure li { margin: 0.2rem 0; }
 
 .search input {
 	width: 100%;
 	margin: 1rem 0;
 	padding: 0.55rem 0.75rem;
-	border-radius: 6px;
+	border-radius: 8px;
 	border: 1px solid var(--line);
 	background: var(--panel);
 	color: var(--text);
 }
 
-.grid { list-style: none; padding: 0; display: grid; gap: 0.4rem; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); }
-.grid a { color: var(--accent); text-decoration: none; }
+.grid {
+	list-style: none;
+	padding: 0;
+	margin: 1rem 0;
+	display: grid;
+	gap: 0.4rem;
+	grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+}
+.grid li { margin: 0; }
+.grid a {
+	display: block;
+	padding: 0.5rem 0.7rem;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: var(--accent);
+	text-decoration: none;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.grid a:hover { background: var(--panel-hi); }
 
 .rows { list-style: none; padding: 0; margin: 1rem 0; }
 .rows li {
 	display: flex;
 	align-items: center;
 	gap: 0.75rem;
-	padding: 0.6rem 0.75rem;
+	padding: 0.6rem 0.8rem;
 	border: 1px solid var(--line);
-	border-radius: 6px;
+	border-radius: 8px;
 	margin-bottom: 0.35rem;
 	background: var(--panel);
 }
-.rows .title { flex: 1; color: var(--text); text-decoration: none; }
+.rows .title { flex: 1; color: var(--text); text-decoration: none; min-width: 0; }
 a.title:hover { color: var(--accent); }
 
 .badge {
@@ -83,32 +193,110 @@ a.title:hover { color: var(--accent); }
 
 button {
 	font: inherit;
-	padding: 0.35rem 0.8rem;
-	border-radius: 6px;
+	padding: 0.35rem 0.85rem;
+	border-radius: 8px;
 	border: 1px solid var(--line);
 	background: transparent;
 	color: var(--text);
 	cursor: pointer;
+	white-space: nowrap;
 }
 button:hover { border-color: var(--accent); color: var(--accent); }
 button.primary { border-color: var(--accent); color: var(--accent); }
 
-.actions { display: flex; gap: 0.6rem; margin: 1rem 0; }
-.pager { display: flex; gap: 1rem; margin-top: 1rem; }
+input[type=text], input[type=password], input[type=number], select {
+	padding: 0.35rem 0.5rem;
+	border-radius: 6px;
+	border: 1px solid var(--line);
+	background: var(--bg);
+	color: var(--text);
+	min-width: 14rem;
+}
+
+.actions { display: flex; gap: 0.6rem; margin: 1.2rem 0; flex-wrap: wrap; }
+.pager { display: flex; gap: 1rem; margin-top: 1.5rem; }
 .pager a { color: var(--accent); text-decoration: none; }
 
 footer {
 	border-top: 1px solid var(--line);
-	padding: 0.6rem 1.5rem;
+	background: var(--panel);
 	color: var(--muted);
 	font-size: 0.85rem;
 }
+footer .bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	padding-top: 0.7rem;
+	padding-bottom: 0.7rem;
+}
 
-.head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+@media (max-width: 40rem) {
+	header .bar { flex-wrap: wrap; gap: 0.75rem; }
+	.rows li { flex-wrap: wrap; }
+}
 
-.saved { color: var(--ok); }
-h2 { font-size: 1.05rem; margin: 1.4rem 0 0.4rem; }
-input[type=text], input[type=password], input[type=number], select {
-	padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--line);
-	background: var(--bg); color: var(--text); min-width: 14rem;
+/* ── Series page ─────────────────────────────────────────────────────────
+   Cover, identity and state first; the description is a disclosure at the
+   bottom rather than the largest thing above the fold. */
+.series-head {
+	display: flex;
+	gap: 1.5rem;
+	align-items: flex-start;
+	margin-bottom: 2rem;
+}
+.series-meta { flex: 1; min-width: 0; }
+.series-meta h1 { margin-bottom: 0.3rem; }
+
+.cover {
+	width: 11rem;
+	flex: none;
+	aspect-ratio: 2 / 3;
+	object-fit: cover;
+	border-radius: 10px;
+	border: 1px solid var(--line);
+	background: var(--panel);
+}
+
+/* What the reader has, in their terms — the answer the page exists to give. */
+.have {
+	margin: 0.6rem 0 0;
+	font-size: 0.95rem;
+	color: var(--text);
+}
+
+.dest { margin-top: 0.9rem; font-size: 0.82rem; }
+.dest code { color: var(--muted); }
+
+/* Following is a state with one available change, not a button among actions. */
+.follow {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	flex-wrap: wrap;
+	margin-top: 1rem;
+	padding: 0.7rem 0.9rem;
+	border: 1px solid var(--line);
+	border-left: 3px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+.follow.on { border-left-color: var(--ok); }
+
+.description { margin-top: 2.5rem; }
+.description summary {
+	cursor: pointer;
+	color: var(--muted);
+	padding: 0.4rem 0;
+}
+.description summary:hover { color: var(--text); }
+.description .summary { margin-top: 0.5rem; }
+
+@media (max-width: 40rem) {
+	.series-head { flex-direction: column; }
+	.cover { width: 8rem; }
 }

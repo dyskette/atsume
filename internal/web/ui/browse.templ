@@ -12,10 +12,11 @@ templ Browse(module string, page int, entries []scraper.Entry) {
 		</div>
 		<p class="muted">Directory page { page + 1 }</p>
 		if len(entries) == 0 {
-			<p class="empty">
-				This module returned nothing for page { page + 1 }. It may paginate
-				differently, or the site may be unreachable.
-			</p>
+			<div class="empty">
+				<strong>Nothing on this page</strong>
+				The module returned no titles for page { page + 1 }. It may paginate
+				differently, or the site may have nothing more to list.
+			</div>
 		}
 		<ul class="rows">
 			for _, e := range entries {

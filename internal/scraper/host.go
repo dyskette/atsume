@@ -303,7 +303,8 @@ func (r *Runner) GetNameAndLink(page int) ([]Entry, error) {
 		return nil, err
 	}
 	if code := int(lua.LVAsNumber(v)); code == netProblem {
-		return nil, fmt.Errorf("%s: network problem listing page %d", r.mod.Name, page)
+		return nil, fmt.Errorf("%s: network problem listing page %d from %s (last status %d)",
+			r.mod.Name, page+1, r.mod.RootURL, r.http.ResultCode)
 	}
 
 	links, names := r.links.All(), r.names.All()
@@ -348,9 +349,11 @@ func (r *Runner) GetInfo(mangaURL string) (*MangaInfo, error) {
 	}
 	switch int(lua.LVAsNumber(v)) {
 	case netProblem:
-		return nil, fmt.Errorf("%s: network problem fetching %s", r.mod.Name, mangaURL)
+		return nil, fmt.Errorf("%s: network problem fetching %s (last status %d)",
+			r.mod.Name, mangaURL, r.http.ResultCode)
 	case informationNotFound:
-		return nil, fmt.Errorf("%s: no information at %s", r.mod.Name, mangaURL)
+		return nil, fmt.Errorf("%s: no series information at %s; the page may have moved",
+			r.mod.Name, mangaURL)
 	}
 	return r.mangaInfo, nil
 }
@@ -367,7 +370,8 @@ func (r *Runner) GetPageNumber(chapterURL string) ([]string, error) {
 		return nil, err
 	}
 	if !lua.LVAsBool(v) {
-		return nil, fmt.Errorf("%s: could not read pages for %s", r.mod.Name, chapterURL)
+		return nil, fmt.Errorf("%s: could not read pages for %s (last status %d)",
+			r.mod.Name, chapterURL, r.http.ResultCode)
 	}
 	return r.task.PageLinks.All(), nil
 }

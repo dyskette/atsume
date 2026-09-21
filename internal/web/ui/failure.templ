@@ -1,0 +1,34 @@
+package ui
+
+// Failure reports a problem in place, with the context needed to act on it.
+//
+// Scraping failures are routine rather than exceptional — a site moves, blocks
+// a request, or goes down — so they are presented as an expected outcome with
+// a way onward, not as a bare error page.
+templ Failure(summary string, detail string, hints []string) {
+	<div class="failure">
+		<strong>{ summary }</strong>
+		if len(hints) > 0 {
+			<ul>
+				for _, h := range hints {
+					<li>{ h }</li>
+				}
+			</ul>
+		}
+		if detail != "" {
+			<pre>{ detail }</pre>
+		}
+	</div>
+}
+
+// FailurePage is Failure with the usual chrome around it, so a failed page load
+// still has navigation rather than dropping the reader onto bare text.
+templ FailurePage(title string, summary string, detail string, hints []string) {
+	@Layout(title) {
+		<div class="head">
+			<h1>{ title }</h1>
+			<a href="/">Back to library</a>
+		</div>
+		@Failure(summary, detail, hints)
+	}
+}
