@@ -64,6 +64,7 @@ func New(cfg *config.Config, st *store.Store, reg *scraper.Registry) *App {
 		Handlers: map[string]jobs.Handler{
 			jobs.KindRefreshSeries:   a.refreshSeries,
 			jobs.KindDownloadChapter: a.downloadChapter,
+			jobs.KindIndexSite:       a.indexSite,
 		},
 	}
 	a.Scheduler = NewScheduler(a)

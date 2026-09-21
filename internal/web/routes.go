@@ -21,6 +21,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /modules/{name}/settings", s.handleModuleSettings)
 	mux.HandleFunc("POST /modules/{name}/settings", s.handleSaveModuleSettings)
 
+	mux.HandleFunc("POST /modules/{name}/index", s.handleIndexSite)
 	mux.HandleFunc("POST /modules/{name}/follow", s.handleFollowMany)
 	mux.HandleFunc("POST /modules/{name}/test-login", s.handleTestLogin)
 	mux.HandleFunc("POST /modules/{name}/recheck", s.handleRecheck)

@@ -486,3 +486,16 @@ li.section-note {
 	color: var(--muted);
 	font-size: 0.82rem;
 }
+
+/* Where a site's list came from and when. A date on its own is trivia; next
+   to the action that changes it, it is a decision. */
+p.catalogue {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	flex-wrap: wrap;
+	margin: 0.8rem 0 0.2rem;
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+p.catalogue.working { color: var(--text); }

@@ -1401,3 +1401,184 @@ func TestBrowseWalksEverySection(t *testing.T) {
 		t.Errorf("past the end: %d entries, more=%v", len(res.Entries), res.More)
 	}
 }
+
+// TestSiteCatalogueIsKept covers the complaint this exists for.
+//
+// A site's title list was fetched and thrown away on every visit. For a
+// module that pages the site internally — MangaToon takes three minutes to
+// hand back 2,677 titles — that meant three minutes of someone else's
+// bandwidth per look, and a reader who could not leave the page.
+func TestSiteCatalogueIsKept(t *testing.T) {
+	var reads atomic.Int32
+	srv := countingSite(t, &reads)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	// Nothing is known until it is read, and that is distinguishable from a
+	// site read and found empty.
+	info, err := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Exists {
+		t.Fatal("a site nobody has read should not claim a catalogue")
+	}
+
+	if err := a.EnqueueIndex(ctx, "Sectioned"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+		return info.Complete
+	}, "the catalogue to be read")
+
+	info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Titles != 4 {
+		t.Errorf("stored %d titles, want every one across the sections", info.Titles)
+	}
+	if info.BuiltAt.IsZero() {
+		t.Error("a stored list has to say when it was read")
+	}
+	after := reads.Load()
+	if after == 0 {
+		t.Fatal("the site was never asked")
+	}
+
+	// Looking again costs the site nothing. That is the whole point.
+	titles, found, err := st.SearchSiteTitles(ctx, "Sectioned", "", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != 4 || len(titles) != 4 {
+		t.Fatalf("found=%d returned=%d", found, len(titles))
+	}
+	if reads.Load() != after {
+		t.Errorf("reading the stored list went back to the site")
+	}
+
+	// Order is the site's own, which usually means something.
+	if titles[0].Name != "Beta One" || titles[3].Name != "Gamma One" {
+		t.Errorf("order = %q … %q", titles[0].Name, titles[3].Name)
+	}
+
+	// Search runs over the whole catalogue, not over what a browser happens
+	// to have loaded.
+	titles, found, err = st.SearchSiteTitles(ctx, "Sectioned", "gamma", 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != 1 || titles[0].Name != "Gamma One" {
+		t.Errorf("search found %d: %+v", found, titles)
+	}
+
+	// A term with wildcards in it is a term, not a pattern.
+	if _, found, _ = st.SearchSiteTitles(ctx, "Sectioned", "%", 0, 50); found != 0 {
+		t.Errorf("a literal %% matched %d titles", found)
+	}
+
+	// Reading again replaces rather than accumulates, so a title the site
+	// has dropped does not live forever.
+	if err := a.EnqueueIndex(ctx, "Sectioned"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		stats, _ := a.Queue.Stats(ctx)
+		return stats["pending"] == 0 && stats["running"] == 0
+	}, "the second read")
+	info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Titles != 4 {
+		t.Errorf("after a second read the catalogue holds %d titles", info.Titles)
+	}
+}
+
+// countingSite is the sectioned test site with a request counter, so a test
+// can tell whether looking at a catalogue went back to the network.
+func countingSite(t *testing.T, reads *atomic.Int32) *httptest.Server {
+	t.Helper()
+	inner := sectionedSite(t)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reads.Add(1)
+		res, err := http.Get(inner.URL + r.URL.RequestURI())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		w.Header().Set("Content-Type", res.Header.Get("Content-Type"))
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(proxy.Close)
+	return proxy
+}
+
+// TestIndexStopsWhenNothingIsNew covers a module that ignores the page it is
+// asked for.
+//
+// MangaToon's GetNameAndLink walks the site's own "Next Page" links
+// internally and hands back the whole catalogue whatever page it is given,
+// so every position returns the same 2,677 titles. A read that stopped only
+// when a position came back empty would never stop — and each position
+// costs three minutes of the site's bandwidth.
+func TestIndexStopsWhenNothingIsNew(t *testing.T) {
+	var calls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/all", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, `<html><body><ul class="manga-list">
+			<li><a href="/manga/one/">One</a></li>
+			<li><a href="/manga/two/">Two</a></li>
+		</ul></body></html>`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	upstream := upstreamLua(t)
+	checkout := t.TempDir()
+	luaDir := filepath.Join(checkout, "lua")
+	if err := os.MkdirAll(filepath.Join(luaDir, "modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, shared := range []string{"templates", "utils"} {
+		if err := os.Symlink(filepath.Join(upstream, shared), filepath.Join(luaDir, shared)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The page it is given is ignored, exactly as upstream's does.
+	src := fmt.Sprintf(`
+function Init()
+	local m = NewWebsiteModule()
+	m.ID               = 'whole'
+	m.Name             = 'Whole'
+	m.RootURL          = '%s'
+	m.OnGetNameAndLink = 'GetNameAndLink'
+end
+
+function GetNameAndLink()
+	if not HTTP.GET(MODULE.RootURL .. '/all') then return net_problem end
+	CreateTXQuery(HTTP.Document).XPathHREFAll('//ul[@class="manga-list"]/li/a', LINKS, NAMES)
+	return no_error
+end
+`, srv.URL)
+	if err := os.WriteFile(filepath.Join(luaDir, "modules", "Whole.lua"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a, st, ctx := newCheckoutApp(t, checkout)
+	if err := a.EnqueueIndex(ctx, "Whole"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		info, _ := st.SiteCatalogueInfo(ctx, "Whole")
+		return info.Complete
+	}, "the read to finish rather than loop forever")
+
+	info, _ := st.SiteCatalogueInfo(ctx, "Whole")
+	if info.Titles != 2 {
+		t.Errorf("stored %d titles, want 2 without duplicates", info.Titles)
+	}
+	// Two requests: the one that returned the list, and the one that proved
+	// there was nothing after it.
+	if n := calls.Load(); n > 3 {
+		t.Errorf("asked the site %d times for a catalogue it hands over whole", n)
+	}
+}

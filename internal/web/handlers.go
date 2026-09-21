@@ -55,40 +55,80 @@ func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, ui.Sites(v))
 }
 
-// handleBrowse renders the page without touching the site.
+// browseRows is how many titles one screenful holds. A catalogue can run to
+// thousands, and shipping all of them so a script can hide most is how a
+// page becomes unusable on the device most likely to be reading it.
+const browseRows = 120
+
+// handleBrowse renders the page from what is stored, which is instant.
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, ui.Browse(ui.BrowseView{
-		Module: r.PathValue("name"),
-		At:     browsePos(r),
-	}))
+	v, err := s.browseView(r)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	// A site nobody has read yet is read now: the reader opened it to see
+	// titles, and asking them to press a second button to get what they
+	// came for is a toll, not a choice.
+	if v.Empty() {
+		if err := s.App.EnqueueIndex(r.Context(), v.Module); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		v.Indexing = true
+	}
+	s.render(w, r, ui.Browse(v))
 }
 
-// handleBrowseList fetches the index, which is what can be slow.
+// handleBrowseList renders a slice of the stored catalogue.
 func (s *Server) handleBrowseList(w http.ResponseWriter, r *http.Request) {
-	module := r.PathValue("name")
-
-	res, err := s.App.Browse(r.Context(), module, browsePos(r))
+	v, err := s.browseView(r)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	entries := res.Entries
-	tracked, err := s.App.Store.TrackedURLs(r.Context(), module)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	v := ui.BrowseView{
-		Module: module, Entries: entries, Tracked: tracked,
-		At: res.At, Next: res.Next, More: res.More, Sections: res.Sections,
-	}
-	// "Load more" appends rows to the list already on screen rather than
-	// replacing it, so a filter keeps applying across everything loaded.
+	// "Load more" appends to the list already on screen rather than
+	// replacing it; a search replaces it.
 	if r.URL.Query().Get("rows") != "" {
 		s.render(w, r, ui.BrowseRows(v))
 		return
 	}
 	s.render(w, r, ui.BrowseList(v))
+}
+
+// handleIndexSite reads a site's catalogue again.
+func (s *Server) handleIndexSite(w http.ResponseWriter, r *http.Request) {
+	module := r.PathValue("name")
+	if err := s.App.EnqueueIndex(r.Context(), module); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// browseView assembles a site's page from what is stored.
+func (s *Server) browseView(r *http.Request) (ui.BrowseView, error) {
+	module := s.App.ResolveModule(r.Context(), r.PathValue("name"))
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+
+	v := ui.BrowseView{Module: module, Query: query, Offset: offset, Limit: browseRows}
+	var err error
+	if v.Catalogue, err = s.App.Store.SiteCatalogueInfo(r.Context(), module); err != nil {
+		return v, err
+	}
+	v.Indexing = s.App.Indexing(r.Context(), module)
+	if v.Titles, v.Found, err = s.App.Store.SearchSiteTitles(
+		r.Context(), module, query, offset, browseRows); err != nil {
+		return v, err
+	}
+	if v.Tracked, err = s.App.Store.TrackedURLs(r.Context(), module); err != nil {
+		return v, err
+	}
+	return v, nil
 }
 
 // handleFollowMany follows several titles at once.
@@ -133,15 +173,6 @@ func (s *Server) handleFollowMany(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, ui.Notice(
 		fmt.Sprintf("Following %d more — %s.", followed, detail),
 		"/"))
-}
-
-// browsePos reads where in a site's directory the reader is.
-func browsePos(r *http.Request) app.BrowsePos {
-	dir, _ := strconv.Atoi(r.URL.Query().Get("dir"))
-	if dir < 0 {
-		dir = 0
-	}
-	return app.BrowsePos{Dir: dir, Page: queryPage(r)}
 }
 
 func queryPage(r *http.Request) int {

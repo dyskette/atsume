@@ -141,6 +141,25 @@ func areOrIs(n int) string {
 	return "are"
 }
 
+// queryEscape makes a search term safe in a URL.
+func queryEscape(s string) string { return url.QueryEscape(s) }
+
+// titleLabel is what a catalogue row is called.
+//
+// A module can return a link with no name — the site moved the title into an
+// attribute, or the markup changed under a module nobody has updated. The
+// row still has to be readable and clickable, so it falls back to the
+// address rather than rendering as a blank strip with a Follow button.
+func titleLabel(t store.SiteTitle) string {
+	if name := strings.TrimSpace(t.Name); name != "" {
+		return name
+	}
+	if t.URL != "" {
+		return t.URL
+	}
+	return "Untitled"
+}
+
 // entryLabel is what a directory row is called.
 //
 // A module can return a link with no name — the site moved the title into an

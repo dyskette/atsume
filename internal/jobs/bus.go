@@ -16,6 +16,9 @@ type Event struct {
 	Message   string
 	Done      int
 	Total     int
+	// Site names the site an event is about, for events that are about a
+	// site rather than a series.
+	Site string
 }
 
 // Bus fans events out to every connected subscriber.

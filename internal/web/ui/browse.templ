@@ -3,128 +3,178 @@ package ui
 import (
 	"fmt"
 
-	"github.com/dyskette/atsume/internal/app"
-	"github.com/dyskette/atsume/internal/scraper"
+	"github.com/dyskette/atsume/internal/store"
 )
 
-// BrowseView is one page of a site's directory.
+// BrowseView is a site's catalogue as the page shows it.
+//
+// The list is read once and kept. It used to be fetched on every visit and
+// thrown away: MangaToon's module pages the site internally and takes three
+// minutes to hand back 2,677 titles, so looking twice cost six minutes of
+// someone else's bandwidth and a reader who could not leave the page.
 type BrowseView struct {
-	Module  string
-	Entries []scraper.Entry
-	// At is where these entries came from and Next where to continue. A site
-	// split into sections — an alphabet, or ongoing and finished — is walked
-	// through rather than offered as a choice, because a module says how many
-	// sections it has and never what they are called.
-	At       app.BrowsePos
-	Next     app.BrowsePos
-	More     bool
-	Sections int
-	// Tracked maps an entry URL to the series already following it.
+	Module string
+	// Catalogue is what is stored, including when it was read. Whether a
+	// cached list is current is the one question it has to answer.
+	Catalogue store.SiteCatalogue
+	// Indexing is true while a read is running, which is when the page has
+	// something to say other than what it holds.
+	Indexing bool
+
+	Titles []store.SiteTitle
+	// Found is how many match the query, which is not how many are shown.
+	Found  int
+	Query  string
+	Offset int
+	Limit  int
+
+	// Tracked maps a title's URL to the series already following it.
 	Tracked map[string]int64
 }
 
-// ListURL is where the index for this position is fetched from.
+// ListURL is where the rows for the current query are fetched from.
 func (v BrowseView) ListURL() string {
-	return SiteURL(v.Module, fmt.Sprintf("/list?dir=%d&page=%d", v.At.Dir, v.At.Page))
+	return SiteURL(v.Module, fmt.Sprintf("/list?q=%s&offset=%d", queryEscape(v.Query), v.Offset))
 }
 
-// MoreURL fetches the next chunk as rows to append to what is on screen.
+// MoreURL fetches the next run of rows to append to what is on screen.
 func (v BrowseView) MoreURL() string {
-	return SiteURL(v.Module, fmt.Sprintf("/list?dir=%d&page=%d&rows=1", v.Next.Dir, v.Next.Page))
+	return SiteURL(v.Module, fmt.Sprintf("/list?q=%s&offset=%d&rows=1",
+		queryEscape(v.Query), v.Offset+v.Limit))
 }
 
-// SectionStart reports whether these rows open a section of the site the
-// reader has not seen yet, which is worth saying when they crossed into it
-// by pressing "load more".
-func (v BrowseView) SectionStart() bool {
-	return v.Sections > 1 && v.At.Page == 0 && len(v.Entries) > 0
-}
+// More reports whether anything is left beyond the rows on screen.
+func (v BrowseView) More() bool { return v.Offset+len(v.Titles) < v.Found }
 
-// SectionLabel names where the rows below came from, as far as a module lets
-// anyone name it.
-func (v BrowseView) SectionLabel() string {
-	return fmt.Sprintf("Section %d of %d", v.At.Dir+1, v.Sections)
-}
+// Empty reports that there is no catalogue at all yet, which is a different
+// thing from a catalogue with nothing in it.
+func (v BrowseView) Empty() bool { return !v.Catalogue.Exists && !v.Indexing }
 
-// Browse is the shell of a site's directory page.
-//
-// The index is fetched separately, after the page has rendered. Fetching it
-// first meant a site that does not answer held the whole page — including the
-// link to its settings, which is what a reader whose site is broken most
-// wants.
+// Browse is a site's page. The catalogue it holds renders at once; a read in
+// progress reports itself as it goes.
 templ Browse(v BrowseView) {
 	@Layout(v.Module) {
 		<div class="head">
 			<h1>{ v.Module }</h1>
-			<a href={ templ.SafeURL("/modules/" + v.Module + "/settings") }>Site settings</a>
+			<a href={ templ.SafeURL(SiteURL(v.Module, "/settings")) }>Site settings</a>
 		</div>
 		<p class="muted">
 			Following a title downloads new chapters from then on, not the back
 			catalogue.
 		</p>
-		<div class="filter">
+		<div id="catalogue-status" sse-swap={ "site-" + v.Module } hx-swap="innerHTML">
+			@CatalogueStatus(v)
+		</div>
+		<form
+			class="filter"
+			hx-get={ SiteURL(v.Module, "/list") }
+			hx-target="#site-index"
+			hx-swap="innerHTML"
+			hx-trigger="submit, input from:find input delay:250ms"
+		>
 			<input
-				id="site-filter"
 				type="search"
-				placeholder="Filter the titles loaded below…"
+				name="q"
+				value={ v.Query }
+				placeholder="Search this site's catalogue…"
 				autocomplete="off"
 			/>
-			<span id="filter-note" class="muted"></span>
-		</div>
+		</form>
 		<!-- The batch form lives outside the list so appended rows can join it
 		     by id; a form element cannot wrap list items that arrive later. -->
 		<form
 			id="follow-many"
 			class="batch"
-			hx-post={ fmt.Sprintf("/modules/%s/follow", v.Module) }
+			hx-post={ SiteURL(v.Module, "/follow") }
 			hx-swap="none"
 		>
 			<button type="submit">Follow selected</button>
 			<span class="muted">Tick several titles to follow them in one go.</span>
 		</form>
-		<div
-			id="site-index"
-			hx-get={ v.ListURL() }
-			hx-trigger="load"
-			hx-swap="innerHTML"
-		>
-			<div class="loading">
-				<span class="dot working"></span>
-				{ fmt.Sprintf("Fetching the index from %s. This waits on their server.", v.Module) }
-			</div>
+		<div id="site-index">
+			@BrowseList(v)
 		</div>
 		<script src="/static/site-filter.js"></script>
 	}
 }
 
-// BrowseList is the index itself, swapped in once the site answers.
+// CatalogueStatus says where the list came from and when, and offers the one
+// action that changes the answer.
+//
+// A date on its own is trivia. Next to a way to act on it, it is a decision:
+// this is five months old, do I care. FMD2 has never told anyone how old its
+// prebuilt databases are, and people have been asking since 2021.
+templ CatalogueStatus(v BrowseView) {
+	<p class={ "catalogue", templ.KV("working", v.Indexing) }>
+		switch {
+			case v.Indexing:
+				<span class="dot working"></span>
+				if v.Catalogue.Note != "" {
+					{ v.Catalogue.Note }
+				} else if v.Catalogue.Titles > 0 {
+					<!-- Counted from what is already stored, so a reader who
+					     reloads mid-read sees progress rather than the same
+					     sentence they left. -->
+					{ fmt.Sprintf("Reading %s's catalogue — %s so far. You can leave this page; it carries on.",
+						v.Module, Count(v.Catalogue.Titles, "title", "titles")) }
+				} else {
+					{ fmt.Sprintf("Reading %s's catalogue. You can leave this page; it carries on.", v.Module) }
+				}
+			case !v.Catalogue.Exists:
+				{ fmt.Sprintf("%s has not been read yet.", v.Module) }
+				<form hx-post={ SiteURL(v.Module, "/index") } hx-swap="none">
+					<button type="submit" class="primary">Read the catalogue</button>
+				</form>
+			default:
+				{ Count(v.Catalogue.Titles, "title", "titles") }
+				{ " · read " + ago(v.Catalogue.BuiltAt) }
+				if !v.Catalogue.Complete {
+					<span class="badge failed" title={ v.Catalogue.Note }>partial</span>
+				}
+				<form hx-post={ SiteURL(v.Module, "/index") } hx-swap="none">
+					<button type="submit">Read again</button>
+				</form>
+		}
+	</p>
+}
+
+// BrowseList is the catalogue itself.
 templ BrowseList(v BrowseView) {
-	if len(v.Entries) == 0 {
+	if v.Empty() {
 		<div class="empty">
-			<strong>Nothing here</strong>
-			if v.More {
-				The site listed no titles at this point. Load more to carry on
-				through the rest of it.
-			} else {
-				That is everything this site lists.
-			}
+			<strong>Nothing read yet</strong>
+			<p>
+				atsume has not read this site's list of titles. Reading it takes
+				as long as the site takes to answer — a few seconds for most, a
+				few minutes for the largest — and then it is kept, so this is a
+				one-off rather than a wait on every visit.
+			</p>
 		</div>
+	} else if v.Found == 0 && v.Query != "" {
+		<div class="empty">
+			<strong>No match</strong>
+			{ fmt.Sprintf("Nothing in the %s read from this site matches that.", Count(v.Catalogue.Titles, "title", "titles")) }
+		</div>
+	} else if v.Found == 0 {
+		<div class="empty">
+			<strong>Nothing listed</strong>
+			The read finished and the site listed no titles.
+		</div>
+	} else if v.Query != "" {
+		<p class="muted">{ fmt.Sprintf("%s match.", Count(v.Found, "title", "titles")) }</p>
 	}
 	<ul class="rows" id="site-rows">
 		@BrowseRows(v)
 	</ul>
 }
 
-// BrowseRows is the appendable part: the entries plus the control that fetches
-// the page after them.
+// BrowseRows is the appendable part: the titles plus the control that fetches
+// the ones after them.
 templ BrowseRows(v BrowseView) {
-	if v.SectionStart() {
-		<li class="section-note">{ v.SectionLabel() }</li>
+	for i, t := range v.Titles {
+		@BrowseRow(v, v.Offset+i, t)
 	}
-	for i, e := range v.Entries {
-		@BrowseRow(v, i, e)
-	}
-	if v.More {
+	if v.More() {
 		<li class="more">
 			<button
 				type="button"
@@ -136,28 +186,28 @@ templ BrowseRows(v BrowseView) {
 	}
 }
 
-// BrowseRow is one entry. The title is the link, because in a catalogue you
+// BrowseRow is one title. The title is the link, because in a catalogue you
 // open the thing by clicking the thing; a separate "Preview" beside "Follow"
 // presented navigation and commitment as siblings.
-templ BrowseRow(v BrowseView, i int, e scraper.Entry) {
-	{{ key := fmt.Sprintf("%d-%d-%d", v.At.Dir, v.At.Page, i) }}
-	{{ label := entryLabel(e) }}
+templ BrowseRow(v BrowseView, i int, t store.SiteTitle) {
+	{{ key := fmt.Sprintf("%d", i) }}
+	{{ label := titleLabel(t) }}
 	<li class="site-row" data-title={ label }>
-		if _, ok := v.Tracked[e.Link]; !ok {
+		if _, ok := v.Tracked[t.URL]; !ok {
 			<input class="pick" type="checkbox" name="sel" value={ key } form="follow-many" aria-label={ "Select " + label }/>
-			<input type="hidden" name={ "u" + key } value={ e.Link } form="follow-many"/>
+			<input type="hidden" name={ "u" + key } value={ t.URL } form="follow-many"/>
 			<input type="hidden" name={ "t" + key } value={ label } form="follow-many"/>
 		} else {
 			<span class="pick"></span>
 		}
-		<a class="title" href={ templ.SafeURL(previewURL(v.Module, e.Link)) }>{ label }</a>
-		if id, ok := v.Tracked[e.Link]; ok {
+		<a class="title" href={ templ.SafeURL(previewURL(v.Module, t.URL)) }>{ label }</a>
+		if id, ok := v.Tracked[t.URL]; ok {
 			<span class="badge done">following</span>
 			<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
 		} else {
 			<form hx-post="/series" hx-swap="outerHTML" hx-target="closest li">
 				<input type="hidden" name="module" value={ v.Module }/>
-				<input type="hidden" name="url" value={ e.Link }/>
+				<input type="hidden" name="url" value={ t.URL }/>
 				<input type="hidden" name="name" value={ label }/>
 				<input type="hidden" name="context" value="row"/>
 				<button type="submit">Follow</button>
@@ -166,8 +216,8 @@ templ BrowseRow(v BrowseView, i int, e scraper.Entry) {
 	</li>
 }
 
-// Followed replaces a directory row once the series has been followed. It
-// stays where it was: the reader is mid-scan of an index, and following one
+// Followed replaces a catalogue row once the series has been followed. It
+// stays where it was: the reader is mid-scan of a list, and following one
 // title is no reason to move them.
 templ Followed(name string, id int64) {
 	<li class="site-row followed" data-title={ name }>

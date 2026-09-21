@@ -11,6 +11,7 @@ import (
 const (
 	KindRefreshSeries   = "refresh_series"
 	KindDownloadChapter = "download_chapter"
+	KindIndexSite       = "index_site"
 )
 
 // Job is one unit of queued work.
@@ -87,6 +88,27 @@ func (q *Queue) Fail(ctx context.Context, j *Job, cause error) error {
 		`UPDATE jobs SET state = 'pending', error = ?, run_after = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		cause.Error(), time.Now().Add(delay), j.ID)
 	return err
+}
+
+// PendingOfKind returns the payloads of jobs of one kind that have not
+// finished, so a caller can avoid queueing the same work twice.
+func (q *Queue) PendingOfKind(ctx context.Context, kind string) ([]json.RawMessage, error) {
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT payload FROM jobs WHERE kind = ? AND state IN ('pending','running')`, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []json.RawMessage
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		out = append(out, json.RawMessage(raw))
+	}
+	return out, rows.Err()
 }
 
 // Stats counts jobs by state, for the dashboard and /healthz.
