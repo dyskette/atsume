@@ -98,12 +98,37 @@ func (s *Server) handleBrowseList(w http.ResponseWriter, r *http.Request) {
 
 // handleIndexSite reads a site's catalogue again.
 func (s *Server) handleIndexSite(w http.ResponseWriter, r *http.Request) {
-	module := r.PathValue("name")
-	if err := s.App.EnqueueIndex(r.Context(), module); err != nil {
+	if err := s.App.EnqueueIndex(r.Context(), r.PathValue("name")); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	s.catalogueStatus(w, r, false)
+}
+
+// handleRereadSite asks before spending minutes of a site's bandwidth.
+func (s *Server) handleRereadSite(w http.ResponseWriter, r *http.Request) {
+	v, err := s.browseView(r)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.ConfirmReread(v))
+}
+
+// handleCatalogueStatus re-renders the line that says where the list came
+// from, which is also how the confirmation is dismissed.
+func (s *Server) handleCatalogueStatus(w http.ResponseWriter, r *http.Request) {
+	s.catalogueStatus(w, r, false)
+}
+
+func (s *Server) catalogueStatus(w http.ResponseWriter, r *http.Request, indexing bool) {
+	v, err := s.browseView(r)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	v.Indexing = v.Indexing || indexing
+	s.render(w, r, ui.CatalogueStatus(v))
 }
 
 // browseView assembles a site's page from what is stored.

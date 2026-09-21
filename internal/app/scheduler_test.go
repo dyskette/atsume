@@ -1582,3 +1582,61 @@ end
 		t.Errorf("asked the site %d times for a catalogue it hands over whole", n)
 	}
 }
+
+// TestRereadKeepsTheListUsable covers pressing "read again" on a site whose
+// read takes minutes.
+//
+// The old list used to be deleted before the new read started, so a reader
+// who pressed it lost their catalogue for the duration — and a read that
+// failed halfway left the site emptier than before they pressed.
+func TestRereadKeepsTheListUsable(t *testing.T) {
+	srv := sectionedSite(t)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	if err := a.EnqueueIndex(ctx, "Sectioned"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+		return info.Complete
+	}, "the first read")
+
+	// A read that begins does not empty what is there.
+	read, err := st.BeginSiteCatalogue(ctx, "Sectioned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Titles != 4 {
+		t.Errorf("starting a read left %d titles; the list must stay usable", info.Titles)
+	}
+
+	// A read that fails partway keeps everything, including what it never
+	// reached. A site having a bad minute must not cost a catalogue.
+	if err := st.AddSiteTitles(ctx, "Sectioned", read,
+		[]store.SiteTitle{{URL: "/manga/beta-one/", Name: "Beta One", Seq: 0}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishSiteCatalogue(ctx, "Sectioned", false, "gave up", read); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ = st.SiteCatalogueInfo(ctx, "Sectioned"); info.Titles != 4 {
+		t.Errorf("a failed read left %d of 4 titles", info.Titles)
+	}
+	if info.Complete {
+		t.Error("a failed read should not claim to be complete")
+	}
+
+	// A read that finishes drops what the site no longer lists.
+	read, _ = st.BeginSiteCatalogue(ctx, "Sectioned")
+	if err := st.AddSiteTitles(ctx, "Sectioned", read,
+		[]store.SiteTitle{{URL: "/manga/beta-one/", Name: "Beta One", Seq: 0}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishSiteCatalogue(ctx, "Sectioned", true, "1 title", read); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ = st.SiteCatalogueInfo(ctx, "Sectioned"); info.Titles != 1 {
+		t.Errorf("a completed read left %d titles, want only the one it saw", info.Titles)
+	}
+}

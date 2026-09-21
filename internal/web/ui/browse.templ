@@ -131,16 +131,25 @@ templ CatalogueStatus(v BrowseView) {
 				if !v.Catalogue.Complete {
 					<span class="badge failed" title={ v.Catalogue.Note }>partial</span>
 				}
-				<form hx-post={ SiteURL(v.Module, "/index") } hx-swap="none">
-					<button type="submit">Read again</button>
-				</form>
+				<button
+					type="button"
+					class="link"
+					hx-get={ SiteURL(v.Module, "/reread") }
+					hx-target="#catalogue-status"
+					hx-swap="innerHTML"
+				>Read again</button>
 		}
 	</p>
 }
 
 // BrowseList is the catalogue itself.
 templ BrowseList(v BrowseView) {
-	if v.Empty() {
+	if v.Found == 0 && v.Indexing {
+		<div class="empty">
+			<strong>Nothing yet</strong>
+			Titles appear here as they are read. Nothing is lost if you leave.
+		</div>
+	} else if v.Empty() {
 		<div class="empty">
 			<strong>Nothing read yet</strong>
 			<p>
@@ -166,6 +175,18 @@ templ BrowseList(v BrowseView) {
 	<ul class="rows" id="site-rows">
 		@BrowseRows(v)
 	</ul>
+	if v.Indexing {
+		<!-- While a read runs the list catches up with it, so the wait is
+		     until the first titles arrive rather than until the read proves
+		     it has finished. It disarms itself: the reply that comes back
+		     after the read ends carries no trigger. -->
+		<div
+			hx-get={ v.ListURL() }
+			hx-trigger="load delay:5s"
+			hx-target="#site-index"
+			hx-swap="innerHTML"
+		></div>
+	}
 }
 
 // BrowseRows is the appendable part: the titles plus the control that fetches
@@ -226,4 +247,34 @@ templ Followed(name string, id int64) {
 		<span class="badge done">following</span>
 		<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
 	</li>
+}
+
+// ConfirmReread says what reading a site again will cost before it is done.
+//
+// On a large site this is minutes of someone else's bandwidth, and a button
+// that starts it with no warning is one a reader is right to be afraid of.
+templ ConfirmReread(v BrowseView) {
+	<div class="confirm">
+		<p><strong>{ fmt.Sprintf("Read %s's catalogue again?", v.Module) }</strong></p>
+		<p class="muted">
+			atsume asks the site for its whole list of titles, one request a
+			second.
+			if v.Catalogue.Note != "" {
+				{ " Last time: " + v.Catalogue.Note + "." }
+			}
+			{ fmt.Sprintf(" The %s already here stay usable while it runs, and are replaced only when it finishes.",
+				Count(v.Catalogue.Titles, "title", "titles")) }
+		</p>
+		<div class="actions">
+			<form hx-post={ SiteURL(v.Module, "/index") } hx-target="#catalogue-status" hx-swap="innerHTML">
+				<button type="submit" class="primary">Read it again</button>
+			</form>
+			<button
+				type="button"
+				hx-get={ SiteURL(v.Module, "/status") }
+				hx-target="#catalogue-status"
+				hx-swap="innerHTML"
+			>Cancel</button>
+		</div>
+	</div>
 }

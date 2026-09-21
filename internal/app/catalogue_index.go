@@ -71,8 +71,9 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 		return err
 	}
 
-	started := time.Now()
-	if err := a.Store.BeginSiteCatalogue(ctx, p.Site); err != nil {
+	startedAt := time.Now()
+	read, err := a.Store.BeginSiteCatalogue(ctx, p.Site)
+	if err != nil {
 		return err
 	}
 	a.publishIndex(p.Site, "working", "Reading the catalogue…", 0)
@@ -92,13 +93,13 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := a.Store.AddSiteTitles(ctx, p.Site, batch); err != nil {
+		if err := a.Store.AddSiteTitles(ctx, p.Site, read, batch); err != nil {
 			return err
 		}
 		batch = batch[:0]
 		a.publishIndex(p.Site, "working",
 			fmt.Sprintf("Reading the catalogue — %s so far, %s elapsed",
-				plural(seq, "title"), humanElapsed(time.Since(started))), seq)
+				plural(seq, "title"), humanElapsed(time.Since(startedAt))), seq)
 		return nil
 	}
 
@@ -108,7 +109,7 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 			// Whatever was read stays: a partial catalogue a reader can
 			// search beats nothing, as long as it says it is partial.
 			_ = flush()
-			_ = a.Store.FinishSiteCatalogue(ctx, p.Site, false, err.Error())
+			_ = a.Store.FinishSiteCatalogue(ctx, p.Site, false, err.Error(), read)
 			a.publishIndex(p.Site, "failed", err.Error(), seq)
 			return err
 		}
@@ -138,11 +139,11 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 		return err
 	}
 
-	note := fmt.Sprintf("%s in %s", plural(seq, "title"), humanElapsed(time.Since(started)))
-	if err := a.Store.FinishSiteCatalogue(ctx, p.Site, true, note); err != nil {
+	note := fmt.Sprintf("%s in %s", plural(seq, "title"), humanElapsed(time.Since(startedAt)))
+	if err := a.Store.FinishSiteCatalogue(ctx, p.Site, true, note, read); err != nil {
 		return err
 	}
-	slog.Info("site catalogue read", "site", p.Site, "titles", seq, "took", time.Since(started))
+	slog.Info("site catalogue read", "site", p.Site, "titles", seq, "took", time.Since(startedAt))
 	a.publishIndex(p.Site, "done", note, seq)
 	return nil
 }

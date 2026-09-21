@@ -29,38 +29,43 @@ type SiteCatalogue struct {
 	Exists bool
 }
 
-// BeginSiteCatalogue starts a fresh read of a site, discarding what was
-// there.
+// BeginSiteCatalogue records that a read has started, returning the moment
+// it did.
 //
-// The old list goes at the start rather than being merged: a title the site
-// has dropped should disappear, and reconciling two lists would keep it
-// forever.
-func (s *Store) BeginSiteCatalogue(ctx context.Context, site string) error {
+// What is already stored stays. Deleting first meant that pressing "read
+// again" on a large site left the reader with no list for the minutes it
+// took, and that a read which failed halfway left the site emptier than
+// before they pressed it. Titles the site has dropped are removed at the
+// end instead, and only by a read that got all the way through.
+func (s *Store) BeginSiteCatalogue(ctx context.Context, site string) (int64, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM site_title WHERE site = ?`, site); err != nil {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO site_catalogue (site, built_at, complete, note)
-		VALUES (?, CURRENT_TIMESTAMP, 0, '')
+		INSERT INTO site_catalogue (site, built_at, complete, note, read_seq)
+		VALUES (?, CURRENT_TIMESTAMP, 0, '', 1)
 		ON CONFLICT (site) DO UPDATE SET
-			built_at = CURRENT_TIMESTAMP, complete = 0, note = ''`, site); err != nil {
-		return err
+			complete = 0, note = '', read_seq = read_seq + 1`, site); err != nil {
+		return 0, err
 	}
-	return tx.Commit()
+	var seq int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT read_seq FROM site_catalogue WHERE site = ?`, site).Scan(&seq); err != nil {
+		return 0, err
+	}
+	return seq, tx.Commit()
 }
 
-// AddSiteTitles appends what one read of the site turned up.
+// AddSiteTitles appends what one read of the site turned up, stamping each
+// with the read that saw it.
 //
 // Titles arrive while the read is still running, so a reader watching a slow
 // site sees it fill rather than staring at a spinner. A URL already recorded
 // is left alone: sites repeat entries across their own pages.
-func (s *Store) AddSiteTitles(ctx context.Context, site string, titles []SiteTitle) error {
+func (s *Store) AddSiteTitles(ctx context.Context, site string, read int64, titles []SiteTitle) error {
 	if len(titles) == 0 {
 		return nil
 	}
@@ -70,9 +75,14 @@ func (s *Store) AddSiteTitles(ctx context.Context, site string, titles []SiteTit
 	}
 	defer tx.Rollback()
 
+	// A title already stored is refreshed rather than skipped: its name may
+	// have changed, and seen_at is what marks it as still listed.
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO site_title (site, url, name, seq) VALUES (?, ?, ?, ?)
-		ON CONFLICT (site, url) DO NOTHING`)
+		INSERT INTO site_title (site, url, name, seq, seen_at, seen_read)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+		ON CONFLICT (site, url) DO UPDATE SET
+			name = excluded.name, seq = excluded.seq,
+			seen_at = CURRENT_TIMESTAMP, seen_read = excluded.seen_read`)
 	if err != nil {
 		return err
 	}
@@ -82,7 +92,7 @@ func (s *Store) AddSiteTitles(ctx context.Context, site string, titles []SiteTit
 		if t.URL == "" {
 			continue
 		}
-		if _, err := stmt.ExecContext(ctx, site, t.URL, CleanTitle(t.Name), t.Seq); err != nil {
+		if _, err := stmt.ExecContext(ctx, site, t.URL, CleanTitle(t.Name), t.Seq, read); err != nil {
 			return err
 		}
 	}
@@ -94,12 +104,29 @@ func (s *Store) AddSiteTitles(ctx context.Context, site string, titles []SiteTit
 // The timestamp is stamped here rather than at the start: "read 20 minutes
 // ago" should mean the list is twenty minutes old, and a read of a large
 // site takes minutes of that by itself.
-func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, complete bool, note string) error {
-	_, err := s.DB.ExecContext(ctx, `
+func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, complete bool, note string, read int64) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Only a read that finished may decide a title has gone. One that failed
+	// partway simply did not get there, and treating that as a deletion
+	// would empty a catalogue because a site had a bad minute.
+	if complete {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM site_title WHERE site = ? AND seen_read <> ?`, site, read); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE site_catalogue
 		SET complete = ?, note = ?, built_at = CURRENT_TIMESTAMP
-		WHERE site = ?`, complete, note, site)
-	return err
+		WHERE site = ?`, complete, note, site); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SiteCatalogueInfo reports what is stored for a site.
