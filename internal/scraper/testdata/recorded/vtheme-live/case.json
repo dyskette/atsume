@@ -1,0 +1,6 @@
+{
+  "module": "AzoraManga",
+  "series_url": "https://azorafly.com/series/i-thought-it-was-a-romance-fantasy-but-it's-a-horror-game",
+  "note": "VTheme backs 10 modules. Recorded because the series reported no chapters in the library.",
+  "expect_no_chapters": "The site itself returns an empty chapter list: the API reports isNovel true, seriesType NOVEL and _count.chapters 0. Nothing is published for it, so atsume is correct and there is no parsing bug here."
+}

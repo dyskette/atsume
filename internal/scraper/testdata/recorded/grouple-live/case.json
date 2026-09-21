@@ -1,0 +1,6 @@
+{
+  "module": "AllHentai",
+  "series_url": "https://20.allhen.online/sparivanie",
+  "note": "GroupLe backs 8 modules and had no other coverage.",
+  "expect_no_chapters": "AllHentai gates its chapter list behind an account: the page parses fine and contains no <table> and no chapter links at all. The module declares OnLogin and AccountSupport, so this is what a missing credential looks like from the outside."
+}

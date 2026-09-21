@@ -18,6 +18,10 @@ type recordedCase struct {
 	ChapterURL string `json:"chapter_url"`
 	// Note explains why this site was chosen.
 	Note string `json:"note,omitempty"`
+	// ExpectNoChapters records a site that correctly lists none, with the
+	// reason. Without it the harness would report a verified, explained state
+	// as a failure, and the explanation would live nowhere.
+	ExpectNoChapters string `json:"expect_no_chapters,omitempty"`
 }
 
 // TestRecorded replays real traffic against real upstream modules.
@@ -104,7 +108,15 @@ func TestRecorded(t *testing.T) {
 			if got.Info.Title == "" {
 				t.Error("title is empty")
 			}
-			if len(got.Info.ChapterLinks) == 0 {
+			switch {
+			case c.ExpectNoChapters != "":
+				// Pinning the absence: if chapters ever appear, the recorded
+				// explanation has gone stale and needs revisiting.
+				if len(got.Info.ChapterLinks) > 0 {
+					t.Errorf("expected no chapters (%s) but found %d",
+						c.ExpectNoChapters, len(got.Info.ChapterLinks))
+				}
+			case len(got.Info.ChapterLinks) == 0:
 				t.Error("no chapters were extracted")
 			}
 			if c.ChapterURL != "" && len(got.Pages) == 0 {
