@@ -140,3 +140,19 @@ func areOrIs(n int) string {
 	}
 	return "are"
 }
+
+// entryLabel is what a directory row is called.
+//
+// A module can return a link with no name — the site moved the title into an
+// attribute, or the markup changed under a module nobody has updated. The
+// row still has to be readable and clickable, so it falls back to the
+// address rather than rendering as a blank strip with a Follow button.
+func entryLabel(e scraper.Entry) string {
+	if name := strings.TrimSpace(e.Name); name != "" {
+		return name
+	}
+	if e.Link != "" {
+		return e.Link
+	}
+	return "Untitled"
+}

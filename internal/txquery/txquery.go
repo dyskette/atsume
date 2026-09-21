@@ -375,6 +375,17 @@ func hrefAll(nodes []*Node, useTitle bool) (links, names []string) {
 				name = title
 			}
 		}
+		// An anchor with no text of its own — one wrapping only a cover
+		// image, say — falls back to its title, which is where the name
+		// then is. Upstream takes the empty string, so those sites list
+		// rows with nothing written on them; FanFox is one, and its module
+		// has no way to know the markup moved the title into an attribute.
+		//
+		// This can only replace nothing with something, so no site that
+		// works today changes.
+		if name == "" {
+			name = strings.TrimSpace(n.Attribute("title"))
+		}
 		names = append(names, name)
 	}
 	return

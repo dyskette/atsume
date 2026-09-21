@@ -114,15 +114,16 @@ templ BrowseRows(v BrowseView) {
 // presented navigation and commitment as siblings.
 templ BrowseRow(v BrowseView, i int, e scraper.Entry) {
 	{{ key := fmt.Sprintf("%d-%d", v.Page, i) }}
-	<li class="site-row" data-title={ e.Name }>
+	{{ label := entryLabel(e) }}
+	<li class="site-row" data-title={ label }>
 		if _, ok := v.Tracked[e.Link]; !ok {
-			<input class="pick" type="checkbox" name="sel" value={ key } form="follow-many" aria-label={ "Select " + e.Name }/>
+			<input class="pick" type="checkbox" name="sel" value={ key } form="follow-many" aria-label={ "Select " + label }/>
 			<input type="hidden" name={ "u" + key } value={ e.Link } form="follow-many"/>
-			<input type="hidden" name={ "t" + key } value={ e.Name } form="follow-many"/>
+			<input type="hidden" name={ "t" + key } value={ label } form="follow-many"/>
 		} else {
 			<span class="pick"></span>
 		}
-		<a class="title" href={ templ.SafeURL(previewURL(v.Module, e.Link)) }>{ e.Name }</a>
+		<a class="title" href={ templ.SafeURL(previewURL(v.Module, e.Link)) }>{ label }</a>
 		if id, ok := v.Tracked[e.Link]; ok {
 			<span class="badge done">following</span>
 			<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
@@ -130,7 +131,7 @@ templ BrowseRow(v BrowseView, i int, e scraper.Entry) {
 			<form hx-post="/series" hx-swap="outerHTML" hx-target="closest li">
 				<input type="hidden" name="module" value={ v.Module }/>
 				<input type="hidden" name="url" value={ e.Link }/>
-				<input type="hidden" name="name" value={ e.Name }/>
+				<input type="hidden" name="name" value={ label }/>
 				<input type="hidden" name="context" value="row"/>
 				<button type="submit">Follow</button>
 			</form>

@@ -290,3 +290,38 @@ func TestJSONOfDocumentStillWorks(t *testing.T) {
 		}
 	}
 }
+
+// TestHREFAllFallsBackToTitle covers a directory whose anchors wrap an image.
+//
+// FanFox lists each title as an anchor around a cover, with the name only in
+// the title attribute, and its module asks for the text. Upstream takes the
+// empty string, so every row comes back nameless.
+func TestHREFAllFallsBackToTitle(t *testing.T) {
+	const page = `<ul class="manga-list">
+		<li><a href="/a/" title="From the attribute"><img src="cover.jpg"></a></li>
+		<li><a href="/b/" title="Ignored">Written in the anchor</a></li>
+		<li><a href="/c/"><img src="cover.jpg"></a></li>
+	</ul>`
+
+	q, err := ParseString(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	links, names := q.XPathHREFAll(`//ul[contains(@class, "manga-list")]/li/a`)
+
+	wantLinks := []string{"/a/", "/b/", "/c/"}
+	// Text wins wherever there is text: the fallback only ever replaces
+	// nothing, so no site that works today changes.
+	wantNames := []string{"From the attribute", "Written in the anchor", ""}
+	if len(links) != 3 || len(names) != 3 {
+		t.Fatalf("got %d links and %d names, want 3 of each", len(links), len(names))
+	}
+	for i := range wantLinks {
+		if links[i] != wantLinks[i] {
+			t.Errorf("link %d = %q, want %q", i, links[i], wantLinks[i])
+		}
+		if names[i] != wantNames[i] {
+			t.Errorf("name %d = %q, want %q", i, names[i], wantNames[i])
+		}
+	}
+}
