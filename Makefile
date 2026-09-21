@@ -1,13 +1,14 @@
 BIN := bin/atsume
-TEMPL := $(shell go env GOPATH)/bin/templ
+# Run the generator through the tool directive in go.mod, so its version is
+# pinned with every other dependency. A templ on PATH drifts from the runtime
+# the module compiles against, and the mismatch only shows up as undefined
+# symbols in the generated code.
+TEMPL := go tool templ
 
-.PHONY: help dev generate build test check corpus clean tools
+.PHONY: help dev generate build test check corpus clean
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
-
-tools: ## install the code generators
-	go install github.com/a-h/templ/cmd/templ@v0.3.906
 
 generate: ## regenerate templ components
 	$(TEMPL) generate
