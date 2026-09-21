@@ -3,6 +3,7 @@ package scraper
 import (
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/dyskette/atsume/internal/txquery"
 	lua "github.com/yuin/gopher-lua"
@@ -377,6 +378,10 @@ func MangaInfoStatusIfPos(s, ongoing, completed, hiatus, dropped string) string 
 }
 
 // registerBuiltins installs the free functions and constants modules expect.
+// maxSleep caps what a module can ask to wait for. The longest deliberate
+// pause upstream uses is a few seconds.
+const maxSleep = 30 * time.Second
+
 func registerBuiltins(L *lua.LState) {
 	L.SetGlobal("no_error", lua.LNumber(noError))
 	L.SetGlobal("net_problem", lua.LNumber(netProblem))
@@ -386,6 +391,36 @@ func registerBuiltins(L *lua.LState) {
 	L.SetGlobal("asValid", lua.LNumber(asValid))
 	L.SetGlobal("asInvalid", lua.LNumber(asInvalid))
 
+	// sleep(milliseconds) is an upstream global. Twelve modules use it, and
+	// they are not being polite: a site that drip-feeds images over repeated
+	// requests gives back only a couple per request without a pause between
+	// them, so skipping the wait loses pages.
+	//
+	// It honours the scrape's context, so cancelling a download does not have
+	// to wait out a module's idea of a reasonable delay, and it is capped
+	// because a module asking to sleep for an hour has gone wrong.
+	L.SetGlobal("sleep", L.NewFunction(func(L *lua.LState) int {
+		d := time.Duration(L.CheckInt64(1)) * time.Millisecond
+		if d <= 0 {
+			return 0
+		}
+		if d > maxSleep {
+			d = maxSleep
+		}
+		ctx := L.Context()
+		if ctx == nil {
+			time.Sleep(d)
+			return 0
+		}
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			L.RaiseError("sleep: %v", ctx.Err())
+		}
+		return 0
+	}))
 	L.SetGlobal("CreateTXQuery", L.NewFunction(func(L *lua.LState) int {
 		// The argument is usually HTTP.Document, which is userdata, not a string.
 		q, err := txquery.ParseString(argText(L, 1))

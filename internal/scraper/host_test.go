@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // luaDir returns the FMD2 lua tree, skipping the test when none is available.
@@ -625,3 +626,92 @@ function GetInfo() return no_error end
 		t.Errorf("root = %q, want a fallback to the first mirror", got)
 	}
 }
+
+// TestSleep covers the upstream global twelve modules call.
+//
+// A site that drip-feeds images over repeated requests returns only a couple
+// per request without a pause between them, so a missing sleep does not just
+// error — where it is caught, it loses pages.
+func TestSleep(t *testing.T) {
+	const src = `
+function Init()
+	local m = NewWebsiteModule()
+	m.ID              = '1'
+	m.Name            = 'Sleepy'
+	m.RootURL         = 'https://example.invalid'
+	m.OnGetPageNumber = 'GetPageNumber'
+end
+
+function GetPageNumber()
+	sleep(20)
+	sleep(0)
+	sleep(-5)
+	return true
+end
+`
+	path := filepath.Join(t.TempDir(), "Sleepy.lua")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &Host{LuaDir: luaDir(t)}
+	r, err := h.Open(context.Background(), path, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	start := time.Now()
+	if _, err := r.call("OnGetPageNumber"); err != nil {
+		t.Fatalf("sleep is a global upstream provides: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
+		t.Errorf("returned after %v, want it to have waited", elapsed)
+	}
+}
+
+// TestSleepHonoursCancellation covers the reason a scrape can be stopped.
+//
+// A cancelled download must not have to wait out a module's idea of a
+// reasonable delay before it notices.
+func TestSleepHonoursCancellation(t *testing.T) {
+	const src = `
+function Init()
+	local m = NewWebsiteModule()
+	m.ID              = '1'
+	m.Name            = 'Sleepy'
+	m.RootURL         = 'https://example.invalid'
+	m.OnGetPageNumber = 'GetPageNumber'
+end
+
+function GetPageNumber()
+	sleep(30000)
+	return true
+end
+`
+	path := filepath.Join(t.TempDir(), "Sleepy.lua")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h := &Host{LuaDir: luaDir(t)}
+	r, err := h.Open(ctx, path, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	if _, err = r.call("OnGetPageNumber"); err == nil {
+		t.Error("a cancelled sleep should report why it stopped")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("waited %v for a cancellation", elapsed)
+	}
+}
+
