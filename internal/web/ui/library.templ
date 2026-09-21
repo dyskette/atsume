@@ -32,14 +32,21 @@ templ Library(v LibraryView) {
 				</p>
 				<p><a class="cta" href="/modules">Browse sites</a></p>
 			</div>
-		} else if n := v.NeedsAttention(); n > 0 {
-			<p class="attention">{ fmt.Sprintf("%d series need attention.", n) }</p>
 		}
-		<ul class="rows library">
-			for _, row := range v.Rows {
-				@LibraryItem(row)
+		for _, section := range v.Sections() {
+			<div class="section-head">
+				<h2>{ section.Title }</h2>
+				<span class="count">{ Count(len(section.Rows), "series", "series") }</span>
+			</div>
+			if section.Blurb != "" {
+				<p class="muted">{ section.Blurb }</p>
 			}
-		</ul>
+			<ul class="rows library">
+				for _, row := range section.Rows {
+					@LibraryItem(row)
+				}
+			</ul>
+		}
 	}
 }
 

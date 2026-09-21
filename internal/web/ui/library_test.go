@@ -29,14 +29,29 @@ func TestLibraryRowState(t *testing.T) {
 			label: "up to date", kind: "done",
 		},
 		{
-			name:  "work in progress wins over everything",
+			// A download finishes on its own; a failure waits for the reader.
+			// Reporting the download first hid the row that needed them.
+			name:  "a failure outranks work in progress",
 			row:   LibraryRow{Progress: store.SeriesProgress{Total: 40, Done: 10, Active: 2, Waiting: 28, Failed: 1}},
+			label: "1 chapter failed", kind: "failed",
+		},
+		{
+			name:  "work in progress otherwise wins",
+			row:   LibraryRow{Progress: store.SeriesProgress{Total: 40, Done: 10, Active: 2, Waiting: 28}},
 			label: "2 downloading", kind: "downloading",
 		},
 		{
 			name:  "failures outrank merely waiting",
 			row:   LibraryRow{Progress: store.SeriesProgress{Total: 40, Done: 38, Waiting: 2, Failed: 2}},
-			label: "2 failed", kind: "failed",
+			label: "2 chapters failed", kind: "failed",
+		},
+		{
+			// The distinction the whole change exists for: a chapter that came
+			// out reads differently from a back catalogue that was always
+			// there, even though both are "not downloaded".
+			name:  "a new chapter is not a backlog",
+			row:   LibraryRow{Progress: store.SeriesProgress{Total: 40, Done: 39, Waiting: 1, New: 1}},
+			label: "1 new chapter", kind: "new",
 		},
 		{
 			name:  "waiting",
@@ -82,14 +97,70 @@ func TestLibraryRowDetail(t *testing.T) {
 	}
 }
 
-func TestNeedsAttention(t *testing.T) {
-	v := LibraryView{Rows: []LibraryRow{
-		{Progress: store.SeriesProgress{Total: 1, Done: 1}},
-		{Progress: store.SeriesProgress{Total: 2, Done: 1, Failed: 1, Waiting: 1}},
-		{Series: store.Series{CheckedAt: sql.NullTime{Time: time.Now(), Valid: true}}},
-	}}
-	if got := v.NeedsAttention(); got != 2 {
-		t.Errorf("NeedsAttention() = %d, want 2", got)
+// TestSections covers the grouping that lets the page answer "is there
+// anything new" without the reader scanning every row for it.
+func TestSections(t *testing.T) {
+	checked := sql.NullTime{Time: time.Now(), Valid: true}
+	rows := []LibraryRow{
+		{Series: store.Series{Title: "Calm"}, Progress: store.SeriesProgress{Total: 1, Done: 1}},
+		{Series: store.Series{Title: "Broken"}, Progress: store.SeriesProgress{Total: 2, Done: 1, Failed: 1, Waiting: 1}},
+		{Series: store.Series{Title: "Empty", CheckedAt: checked}},
+		{Series: store.Series{Title: "Arrived"}, Progress: store.SeriesProgress{Total: 3, Done: 2, Waiting: 1, New: 1}},
+		{Series: store.Series{Title: "Backlog"}, Progress: store.SeriesProgress{Total: 30, Waiting: 30}},
+	}
+
+	got := LibraryView{Rows: rows}.Sections()
+	if len(got) != 3 {
+		t.Fatalf("got %d sections, want 3", len(got))
+	}
+	// Order is the order of the reader's questions: what is wrong, what is
+	// new, then the collection.
+	if got[0].Title != "Needs attention" || len(got[0].Rows) != 2 {
+		t.Errorf("first section = %q with %d rows", got[0].Title, len(got[0].Rows))
+	}
+	if got[1].Title != "New chapters" || len(got[1].Rows) != 1 {
+		t.Errorf("second section = %q with %d rows", got[1].Title, len(got[1].Rows))
+	}
+	if got[1].Rows[0].Series.Title != "Arrived" {
+		t.Errorf("new section holds %q", got[1].Rows[0].Series.Title)
+	}
+	// A backlog is not news, however large it is.
+	if got[2].Title != "Everything else" || len(got[2].Rows) != 2 {
+		t.Errorf("third section = %q with %d rows", got[2].Title, len(got[2].Rows))
+	}
+
+	// Rows arrive alphabetically and must stay that way inside a section, so
+	// a series is where the reader last saw it.
+	if got[0].Rows[0].Series.Title != "Broken" || got[0].Rows[1].Series.Title != "Empty" {
+		t.Errorf("attention section reordered: %q, %q",
+			got[0].Rows[0].Series.Title, got[0].Rows[1].Series.Title)
+	}
+
+	// With nothing wrong and nothing new there is one group, and calling it
+	// "Everything else" would be answering a question nobody asked.
+	only := LibraryView{Rows: rows[:1]}.Sections()
+	if len(only) != 1 || only[0].Title != "Library" {
+		t.Errorf("single section = %+v", only)
+	}
+}
+
+// TestDetailShowsArrival covers the evidence for a "new" claim.
+func TestDetailShowsArrival(t *testing.T) {
+	r := LibraryRow{
+		Series: store.Series{ModuleName: "Madara", Subscribed: true},
+		Progress: store.SeriesProgress{
+			Total: 3, Done: 2, Waiting: 1, New: 1,
+			NewestArrival: sql.NullTime{Time: time.Now().Add(-3 * time.Hour), Valid: true},
+		},
+	}
+	if got := r.Detail(); !strings.Contains(got, "arrived 3h ago") {
+		t.Errorf("got %q, want it to say when the chapter arrived", got)
+	}
+
+	// A backlog has no arrival worth reporting: it was there all along.
+	r.Progress.New = 0
+	if got := r.Detail(); strings.Contains(got, "arrived") {
+		t.Errorf("got %q, want no arrival for a backlog", got)
 	}
 }
 

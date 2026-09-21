@@ -328,6 +328,8 @@ footer .bar {
 .grow .muted { font-size: 0.82rem; }
 
 .badge.waiting { color: var(--accent); border-color: var(--accent); }
+/* News reads as news. A backlog keeps the quieter accent. */
+.badge.new { color: var(--bg); background: var(--ok); border-color: var(--ok); }
 
 .attention {
 	margin: 1rem 0 0;
@@ -422,3 +424,16 @@ li.more { justify-content: center; border-style: dashed; }
 	font-size: 0.9rem;
 }
 .notice a { color: var(--accent); margin-left: auto; }
+
+/* ── Library sections ────────────────────────────────────────────────── */
+/* One alphabetical list could not say what was new, so the page is grouped
+   by the reader's question instead of by the first letter of a title. */
+.section-head {
+	display: flex;
+	align-items: baseline;
+	gap: 0.6rem;
+	margin: 1.8rem 0 0.2rem;
+}
+.section-head h2 { font-size: 1rem; margin: 0; }
+.section-head .count { color: var(--muted); font-size: 0.82rem; }
+.section-head + .muted { margin-bottom: 0.4rem; }
