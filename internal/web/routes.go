@@ -20,6 +20,7 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("POST /series", s.handleTrackSeries)
 	mux.HandleFunc("GET /series/{id}", s.handleSeries)
+	mux.HandleFunc("GET /series/{id}/cover", s.handleCover)
 	mux.HandleFunc("POST /series/{id}/refresh", s.handleRefreshSeries)
 	mux.HandleFunc("POST /series/{id}/download", s.handleDownloadSeries)
 

@@ -18,9 +18,11 @@ templ Library(series []store.Series) {
 			}
 		</div>
 		if len(series) == 0 {
-			<p class="empty">
-				Nothing tracked yet. Pick a <a href="/modules">site</a> and track a title.
-			</p>
+			<div class="empty">
+				<strong>Nothing tracked yet</strong>
+				Pick a <a href="/modules">site</a>, find a title, and track it. New
+				chapters are checked for automatically from then on.
+			</div>
 		}
 		<ul class="rows">
 			for _, s := range series {
@@ -32,42 +34,6 @@ templ Library(series []store.Series) {
 					}
 					<span class="muted">{ lastChecked(s) }</span>
 				</li>
-			}
-		</ul>
-	}
-}
-
-// SeriesPage lists a series' chapters and their download state.
-templ SeriesPage(s store.Series, chapters []store.Chapter) {
-	@Layout(s.Title) {
-		<h1>{ s.Title }</h1>
-		<p class="muted">
-			{ s.ModuleName }
-			if s.Authors != "" {
-				{ " · " }{ s.Authors }
-			}
-			if s.Status != "" {
-				{ " · " }{ s.Status }
-			}
-		</p>
-		if s.Genres != "" {
-			<p class="muted">{ s.Genres }</p>
-		}
-		if s.Summary != "" {
-			<p class="summary">{ s.Summary }</p>
-		}
-		<div class="actions">
-			@SubscribeButton(s)
-			<form hx-post={ fmt.Sprintf("/series/%d/refresh", s.ID) } hx-swap="none">
-				<button type="submit">Refresh chapters</button>
-			</form>
-			<form hx-post={ fmt.Sprintf("/series/%d/download", s.ID) } hx-swap="none">
-				<button type="submit" class="primary">Download all pending</button>
-			</form>
-		</div>
-		<ul class="rows chapters">
-			for _, c := range chapters {
-				@ChapterRow(c)
 			}
 		</ul>
 	}
@@ -109,20 +75,3 @@ templ ChapterProgressRow(c store.Chapter, done int, total int) {
 	</li>
 }
 
-// SubscribeButton toggles automatic checking for a series. It swaps itself, so
-// the label always reflects the stored state.
-templ SubscribeButton(s store.Series) {
-	<form
-		id={ fmt.Sprintf("subscribe-%d", s.ID) }
-		hx-post={ fmt.Sprintf("/series/%d/subscribe", s.ID) }
-		hx-swap="outerHTML"
-	>
-		if s.Subscribed {
-			<input type="hidden" name="on" value="0"/>
-			<button type="submit" class="primary">Checking for new chapters</button>
-		} else {
-			<input type="hidden" name="on" value="1"/>
-			<button type="submit">Not being checked</button>
-		}
-	</form>
-}

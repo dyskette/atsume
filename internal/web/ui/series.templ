@@ -1,0 +1,115 @@
+package ui
+
+import "fmt"
+
+// SeriesPage answers, in order: what is this, what do I have, what can I do,
+// and then the chapters. The description comes last, behind a disclosure — it
+// is the largest thing on the page and the least actionable, and letting it
+// lead pushed everything that mattered below the fold.
+templ SeriesPage(v SeriesView) {
+	@Layout(v.Series.Title) {
+		<div class="series-head">
+			if v.Series.CoverURL != "" {
+				<img
+					class="cover"
+					src={ fmt.Sprintf("/series/%d/cover", v.Series.ID) }
+					alt={ "Cover of " + v.Series.Title }
+					loading="lazy"
+				/>
+			}
+			<div class="series-meta">
+				<h1>{ v.Series.Title }</h1>
+				<p class="muted">
+					{ v.Series.ModuleName }
+					if v.Series.Status != "" {
+						{ " · " }{ v.Series.Status }
+					}
+					if v.Series.Authors != "" {
+						{ " · " }{ v.Series.Authors }
+					}
+					{ " · " }
+					<a href={ templ.SafeURL(v.Series.URL) } target="_blank" rel="noreferrer noopener">Open on site</a>
+				</p>
+				if v.HaveLine() != "" {
+					<p class="have">{ v.HaveLine() }</p>
+				}
+				<div class="actions">
+					if v.Counts.Waiting() > 0 {
+						<form hx-post={ fmt.Sprintf("/series/%d/download", v.Series.ID) } hx-swap="none">
+							<button type="submit" class="primary">
+								{ fmt.Sprintf("Download %d chapter(s)", v.Counts.Waiting()) }
+							</button>
+						</form>
+					}
+					<form hx-post={ fmt.Sprintf("/series/%d/refresh", v.Series.ID) } hx-swap="none">
+						<button type="submit">Check for new chapters</button>
+					</form>
+				</div>
+				@FollowControl(v)
+				<p class="muted dest">
+					Chapters are written to <code>{ v.Destination }</code>
+				</p>
+			</div>
+		</div>
+
+		<div class="head">
+			<h2>
+				if v.Counts.Total > 0 {
+					{ fmt.Sprintf("Chapters (%d)", v.Counts.Total) }
+				} else {
+					Chapters
+				}
+			</h2>
+		</div>
+		if v.Counts.Total == 0 {
+			@chaptersEmpty(v)
+		}
+		<ul class="rows chapters">
+			for _, c := range v.Chapters {
+				@ChapterRow(c)
+			}
+		</ul>
+
+		if v.Series.Summary != "" {
+			<details class="description">
+				<summary>Description</summary>
+				<p class="summary">{ v.Series.Summary }</p>
+				if v.Series.Genres != "" {
+					<p class="muted">{ v.Series.Genres }</p>
+				}
+			</details>
+		}
+	}
+}
+
+// chaptersEmpty distinguishes "never checked" from "checked and found none",
+// because the two call for completely different actions.
+templ chaptersEmpty(v SeriesView) {
+	{{ headline, detail := v.ChaptersEmptyReason() }}
+	<div class="empty">
+		<strong>{ headline }</strong>
+		{ detail }
+	</div>
+}
+
+// FollowControl states the standing arrangement and offers the one change to
+// it. It is deliberately not a button among the actions: following is a state,
+// not something you do, and mixing the two made the label read as a progress
+// report.
+templ FollowControl(v SeriesView) {
+	<div
+		id={ fmt.Sprintf("follow-%d", v.Series.ID) }
+		class={ "follow", templ.KV("on", v.Series.Subscribed) }
+	>
+		<span>{ v.FollowLine() }</span>
+		<form hx-post={ fmt.Sprintf("/series/%d/subscribe", v.Series.ID) } hx-swap="outerHTML" hx-target={ fmt.Sprintf("#follow-%d", v.Series.ID) }>
+			if v.Series.Subscribed {
+				<input type="hidden" name="on" value="0"/>
+				<button type="submit">Stop following</button>
+			} else {
+				<input type="hidden" name="on" value="1"/>
+				<button type="submit" class="primary">Follow</button>
+			}
+		</form>
+	</div>
+}

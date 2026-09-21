@@ -1,10 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -430,5 +433,47 @@ func TestNotifyOnNewChapters(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no notification was sent for a new chapter")
+	}
+}
+
+// TestCoverThumbnail covers the resize: sites publish covers at full page
+// size, and a library grid would otherwise pull tens of megabytes.
+func TestCoverThumbnail(t *testing.T) {
+	big := image.NewRGBA(image.Rect(0, 0, 1200, 1800))
+	for i := range big.Pix {
+		big.Pix[i] = uint8(i % 251)
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, big, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := thumbnail(buf.Bytes())
+	if len(out) >= buf.Len() {
+		t.Errorf("thumbnail is %d bytes, original %d — it should be smaller", len(out), buf.Len())
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Width != coverWidth {
+		t.Errorf("width = %d, want %d", cfg.Width, coverWidth)
+	}
+	// Aspect ratio must survive, or every cover in the grid is distorted.
+	if got, want := float64(cfg.Height)/float64(cfg.Width), 1800.0/1200.0; got < want-0.02 || got > want+0.02 {
+		t.Errorf("aspect ratio = %.3f, want %.3f", got, want)
+	}
+
+	// An image already small enough is passed through untouched.
+	small := image.NewRGBA(image.Rect(0, 0, 200, 300))
+	var sbuf bytes.Buffer
+	_ = jpeg.Encode(&sbuf, small, nil)
+	if got := thumbnail(sbuf.Bytes()); len(got) != sbuf.Len() {
+		t.Errorf("a small cover should pass through unchanged")
+	}
+
+	// Undecodable input must not fail the request.
+	if got := thumbnail([]byte("not an image")); string(got) != "not an image" {
+		t.Errorf("undecodable input should be returned as-is")
 	}
 }

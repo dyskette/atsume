@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dyskette/atsume/internal/scraper"
+	"github.com/dyskette/atsume/internal/store"
 	"github.com/dyskette/atsume/internal/web/ui"
 )
 
@@ -96,7 +97,38 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.SeriesPage(series, chapters))
+	s.render(w, r, ui.SeriesPage(s.seriesView(series, chapters)))
+}
+
+// seriesView assembles what the series page renders.
+func (s *Server) seriesView(series store.Series, chapters []store.Chapter) ui.SeriesView {
+	return ui.SeriesView{
+		Series:        series,
+		Chapters:      chapters,
+		Counts:        ui.CountChapters(chapters),
+		Destination:   s.App.SeriesDestination(series.Title),
+		CheckInterval: s.App.Cfg.CheckInterval,
+	}
+}
+
+// handleCover serves a series cover through atsume rather than linking it.
+func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	data, contentType, err := s.App.Cover(r.Context(), id)
+	if err != nil {
+		// A missing cover is ordinary — plenty of sites do not publish one, and
+		// some refuse the request. The page renders without it.
+		slog.Debug("cover unavailable", "series", id, "err", err)
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(data)
 }
 
 func (s *Server) handleRefreshSeries(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +255,12 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.SubscribeButton(series))
+	chapters, err := s.App.Store.ListChapters(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.FollowControl(s.seriesView(series, chapters)))
 }
 
 // handleCheckNow asks the scheduler for an immediate sweep.
