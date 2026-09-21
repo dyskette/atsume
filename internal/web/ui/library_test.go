@@ -167,11 +167,11 @@ func TestDetailShowsArrival(t *testing.T) {
 // TestBuildSites covers the grouping that makes several hundred sites usable.
 func TestBuildSites(t *testing.T) {
 	cat := app.Catalogue{Ref: "master", Entries: []app.ModuleEntry{
-		{Name: "Alpha", Category: "English"},
-		{Name: "Beta", Category: "English"},
-		{Name: "Gamma", Category: "English"},
-		{Name: "Delta", Category: "Raw"},
-		{Name: "Epsilon"},
+		{Site: "Alpha", Category: "English"},
+		{Site: "Beta", Category: "English"},
+		{Site: "Gamma", Category: "English"},
+		{Site: "Delta", Category: "Raw"},
+		{Site: "Epsilon"},
 	}}
 
 	v := BuildSites(cat, "")

@@ -82,7 +82,7 @@ end
 	}
 
 	h := &Host{LuaDir: dir, Solver: NewFlaresolverr(solver.URL)}
-	r, err := h.Open(context.Background(), path)
+	r, err := h.Open(context.Background(), path, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ end
 	}
 
 	h := &Host{LuaDir: dir, Solver: NewFlaresolverr(solver.URL)}
-	r, err := h.Open(context.Background(), path)
+	r, err := h.Open(context.Background(), path, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ end
 	}
 
 	h := &Host{LuaDir: dir}
-	r, err := h.Open(context.Background(), path)
+	r, err := h.Open(context.Background(), path, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

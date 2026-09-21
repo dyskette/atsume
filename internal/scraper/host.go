@@ -36,9 +36,12 @@ type Host struct {
 // globals (URL, LINKS, MANGAINFO), so each scrape takes its own Runner. The
 // worker pool owns the concurrency; a Runner is single-threaded by contract.
 type Runner struct {
-	L    *lua.LState
-	mod  *Module
-	http *HTTP
+	L *lua.LState
+	// mod is the website this runner is scraping; sites is everything the
+	// file declared, because one file is not one website.
+	mod   *Module
+	sites []*Module
+	http  *HTTP
 
 	mangaInfo *MangaInfo
 	task      *Task
@@ -77,8 +80,16 @@ func (a *Account) bind(L *lua.LState) lua.LValue {
 	return f.push(L)
 }
 
-// Open loads one module file and prepares a state for it.
-func (h *Host) Open(ctx context.Context, moduleFile string) (*Runner, error) {
+// Open loads a module file and prepares a state for one of the websites it
+// declares.
+//
+// A file is not a website. Twenty-eight of them declare several, either
+// genuinely different sites — E-Hentai and ExHentai share a file and only one
+// of them takes a login — or mirrors of one site under a dozen domains. Site
+// selects by declared name; an empty name takes the first declaration, and
+// rootURL picks between mirrors that share a name. Everything the file
+// declares is kept, so a caller can ask what else is in there.
+func (h *Host) Open(ctx context.Context, moduleFile, site, rootURL string) (*Runner, error) {
 	L := lua.NewState(lua.Options{SkipOpenLibs: false})
 	L.SetContext(ctx)
 
@@ -121,12 +132,21 @@ func (h *Host) Open(ctx context.Context, moduleFile string) (*Runner, error) {
 
 	// Real modules populate the table NewWebsiteModule returns and fall off the
 	// end of Init() without returning it, despite what LUA-REFERENCE.md shows.
-	// Capture the table here so either shape works.
-	var opts []Option
-	var declared *lua.LTable
+	// Capture the tables here so either shape works.
+	//
+	// Each declaration collects its own options. They used to share one slice,
+	// so a file declaring two websites showed both sites' settings on each of
+	// them — the same dropdown, twice.
+	type declaration struct {
+		tbl  *lua.LTable
+		opts []Option
+	}
+	var decls []*declaration
 	L.SetGlobal("NewWebsiteModule", L.NewFunction(func(L *lua.LState) int {
-		declared = newWebsiteModule(L, &opts, r.storage)
-		L.Push(declared)
+		d := &declaration{}
+		d.tbl = newWebsiteModule(L, &d.opts, r.storage)
+		decls = append(decls, d)
+		L.Push(d.tbl)
 		return 1
 	}))
 
@@ -138,22 +158,58 @@ func (h *Host) Open(ctx context.Context, moduleFile string) (*Runner, error) {
 		L.Close()
 		return nil, fmt.Errorf("Init %s: %w", moduleFile, err)
 	}
-	tbl, _ := L.Get(-1).(*lua.LTable)
-	L.Pop(1)
-	if tbl == nil {
-		tbl = declared
+	// A module that returns its table from Init() is the documented shape, and
+	// a handful do; it is the same single declaration either way.
+	if tbl, _ := L.Get(-1).(*lua.LTable); tbl != nil && len(decls) == 0 {
+		decls = append(decls, &declaration{tbl: tbl})
 	}
-	if tbl == nil {
+	L.Pop(1)
+	if len(decls) == 0 {
 		L.Close()
 		return nil, fmt.Errorf("%s: Init never called NewWebsiteModule", moduleFile)
 	}
 
-	r.mod = readModule(tbl, opts, moduleFile)
+	for _, d := range decls {
+		r.sites = append(r.sites, readModule(d.tbl, d.opts, moduleFile))
+	}
+	r.mod = selectSite(r.sites, site, rootURL)
+	if r.mod == nil {
+		L.Close()
+		return nil, fmt.Errorf("%s declares no website named %q", moduleFile, site)
+	}
 	for _, o := range r.mod.Options {
 		r.options[o.Name] = o.Default
 	}
 	L.SetGlobal("MODULE", r.bindModule(L))
 	return r, nil
+}
+
+// selectSite picks the declaration a caller asked for.
+//
+// An empty name takes the first, which is what a file declaring one website
+// means. Mirrors share a name and differ only by address, so rootURL breaks
+// the tie; asking for an address that is no longer declared falls back to the
+// site's first mirror rather than failing, because a mirror disappearing
+// upstream should not take a followed series with it.
+func selectSite(sites []*Module, name, rootURL string) *Module {
+	if name == "" {
+		return sites[0]
+	}
+	var matched []*Module
+	for _, m := range sites {
+		if strings.EqualFold(m.Name, name) {
+			matched = append(matched, m)
+		}
+	}
+	if len(matched) == 0 {
+		return nil
+	}
+	for _, m := range matched {
+		if rootURL != "" && strings.EqualFold(m.RootURL, rootURL) {
+			return m
+		}
+	}
+	return matched[0]
 }
 
 // doModuleFile loads and runs a module file.
@@ -181,6 +237,10 @@ func (r *Runner) Close() { r.L.Close() }
 
 // Module returns the loaded module's metadata.
 func (r *Runner) Module() *Module { return r.mod }
+
+// Sites returns every website the module file declares, in the order it
+// declared them.
+func (r *Runner) Sites() []*Module { return r.sites }
 
 // SetAccount supplies credentials for a module that implements OnLogin.
 func (r *Runner) SetAccount(username, password string) {

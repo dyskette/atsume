@@ -35,7 +35,7 @@ func TestLoadAllModules(t *testing.T) {
 
 	failures := map[string]string{}
 	for _, m := range mods {
-		r, err := h.Open(ctx, m.File)
+		r, err := h.Open(ctx, m.File, "", "")
 		if err != nil {
 			failures[m.Name] = err.Error()
 			continue

@@ -63,6 +63,14 @@ func run() error {
 
 	a := app.New(cfg, st, reg)
 
+	// Series followed before a module file was understood to hold several
+	// sites refer to the file. Resolving that on every lookup works, but
+	// leaving the rows saying one thing and meaning another is how the last
+	// identity bug went unnoticed.
+	if err := a.RepairModuleKeys(ctx); err != nil {
+		slog.Error("could not repair series module keys", "err", err)
+	}
+
 	go a.Pool.Run(ctx)
 	go a.Scheduler.Run(ctx)
 

@@ -12,17 +12,30 @@ import (
 	"github.com/dyskette/atsume/internal/store"
 )
 
+// SiteURL is the address of one site's pages.
+//
+// A site is named by whatever the module declares, and those names contain
+// spaces, brackets and Han characters — "Colorcito Scan (Afiliados)", "包子漫畫
+// (BaozimhOrg)". They are path segments, so they are escaped as such.
+func SiteURL(site string, suffix ...string) string {
+	out := "/modules/" + url.PathEscape(site)
+	for _, s := range suffix {
+		out += s
+	}
+	return out
+}
+
 // pageURL builds a directory URL for a module page.
 func pageURL(module string, page int) string {
 	if page <= 0 {
-		return "/modules/" + module
+		return SiteURL(module)
 	}
-	return fmt.Sprintf("/modules/%s?page=%d", module, page)
+	return SiteURL(module, fmt.Sprintf("?page=%d", page))
 }
 
 // previewURL is a look at a series before committing to it.
 func previewURL(module, link string) string {
-	return "/modules/" + module + "/preview?url=" + url.QueryEscape(link)
+	return SiteURL(module, "/preview?url="+url.QueryEscape(link))
 }
 
 // stateLabel renders a chapter's state for display.

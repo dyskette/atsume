@@ -74,15 +74,15 @@ func errModuleNotFound(name, ref string) error {
 // state because the module API is built on globals and a state is not safe for
 // concurrent use.
 func (a *App) openModule(ctx context.Context, name string) (*scraper.Runner, error) {
-	info, ok := a.Registry.Find(a.ResolveModule(ctx, name))
+	e, ok := a.SiteInfo(ctx, name)
 	if !ok {
 		return nil, errModuleNotFound(name, a.Registry.Ref())
 	}
-	r, err := a.Registry.HostWith(a.Limiter, a.Transport, a.Solver).Open(ctx, info.File)
+	r, err := a.openFileRaw(ctx, e.File, e.Site, "")
 	if err != nil {
 		return nil, err
 	}
-	if opts, err := a.Store.ModuleOptions(ctx, r.Module().Name); err == nil {
+	if opts, err := a.Store.ModuleOptions(ctx, e.Site); err == nil {
 		for k, v := range opts {
 			r.SetOptionString(k, v)
 		}

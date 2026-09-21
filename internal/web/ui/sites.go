@@ -37,7 +37,7 @@ func BuildSites(c app.Catalogue, query string) SitesView {
 	q := strings.ToLower(strings.TrimSpace(query))
 	var matched []app.ModuleEntry
 	for _, e := range c.Entries {
-		if q == "" || strings.Contains(strings.ToLower(e.Name), q) ||
+		if q == "" || strings.Contains(strings.ToLower(e.Site), q) ||
 			strings.Contains(strings.ToLower(e.Category), q) {
 			matched = append(matched, e)
 		}

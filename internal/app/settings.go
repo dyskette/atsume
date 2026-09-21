@@ -37,6 +37,10 @@ type ModuleSettings struct {
 // The options are declared in Init(), so the module has to be opened; there is
 // no manifest to read them from.
 func (a *App) ModuleSettings(ctx context.Context, name string) (*ModuleSettings, error) {
+	// Everything stored is keyed by the site name, so a caller arriving with
+	// a file name — an old series row, a typed URL — is resolved first rather
+	// than quietly reading and writing settings under a second key.
+	name = a.ResolveModule(ctx, name)
 	r, err := a.openModuleRaw(ctx, name)
 	if err != nil {
 		return nil, err
@@ -94,6 +98,7 @@ func defaultText(o scraper.Option) string {
 // A blank username and password removes the stored credential rather than
 // writing an empty one.
 func (a *App) SaveModuleSettings(ctx context.Context, name string, options map[string]string, username, password string, updateLogin bool) error {
+	name = a.ResolveModule(ctx, name)
 	for k, v := range options {
 		if err := a.Store.SetModuleOption(ctx, name, k, v); err != nil {
 			return err
@@ -107,15 +112,22 @@ func (a *App) SaveModuleSettings(ctx context.Context, name string, options map[s
 	})
 }
 
-// openModuleRaw opens a module without applying stored settings, which is what
-// reading its declarations needs — applying a broken credential here would stop
-// the operator reaching the page that lets them fix it.
+// openFileRaw opens one module file, selecting the website named by site.
+//
+// It is the one place that turns a file into a running module, and it applies
+// nothing stored: reading a module's declarations must not depend on settings
+// that a reader may be on their way to fix.
+func (a *App) openFileRaw(ctx context.Context, file, site, rootURL string) (*scraper.Runner, error) {
+	return a.Registry.HostWith(a.Limiter, a.Transport, a.Solver).Open(ctx, file, site, rootURL)
+}
+
+// openModuleRaw opens a site by name, without applying stored settings.
 func (a *App) openModuleRaw(ctx context.Context, name string) (*scraper.Runner, error) {
-	info, ok := a.Registry.Find(a.ResolveModule(ctx, name))
+	e, ok := a.SiteInfo(ctx, name)
 	if !ok {
 		return nil, errModuleNotFound(name, a.Registry.Ref())
 	}
-	return a.Registry.HostWith(a.Limiter, a.Transport, a.Solver).Open(ctx, info.File)
+	return a.openFileRaw(ctx, e.File, e.Site, "")
 }
 
 // TestLogin signs in to a site with the stored credentials and reports what
@@ -130,6 +142,7 @@ func (a *App) openModuleRaw(ctx context.Context, name string) (*scraper.Runner, 
 // find out whether it is right has the order backwards, and leaves a wrong
 // one sitting in the database when it is not.
 func (a *App) TestLogin(ctx context.Context, moduleKey, username, password string) (ok bool, detail string) {
+	moduleKey = a.ResolveModule(ctx, moduleKey)
 	// A blank field falls back to what is stored, so the button still tests
 	// the saved login when nothing has been typed.
 	if username == "" || password == "" {
@@ -153,7 +166,7 @@ func (a *App) TestLogin(ctx context.Context, moduleKey, username, password strin
 
 	// Opened raw so a failing login cannot stop the page that fixes it from
 	// loading; the credentials are applied by hand here instead.
-	r, err := a.openModuleRaw(ctx, a.ResolveModule(ctx, moduleKey))
+	r, err := a.openModuleRaw(ctx, moduleKey)
 	if err != nil {
 		return false, err.Error()
 	}

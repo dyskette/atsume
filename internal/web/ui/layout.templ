@@ -92,7 +92,14 @@ templ SiteGroups(v SitesView) {
 		}
 		<ul class="grid">
 			for _, e := range g.Entries {
-				<li><a href={ templ.SafeURL("/modules/" + e.Name) }>{ e.Name }</a></li>
+				<li>
+					<a href={ templ.SafeURL(SiteURL(e.Site)) }>{ e.Site }</a>
+					if e.HasMirrors() {
+						<span class="muted mirrors" title="This site is reachable at several addresses">
+							{ Count(len(e.Mirrors), "address", "addresses") }
+						</span>
+					}
+				</li>
 			}
 		</ul>
 	}

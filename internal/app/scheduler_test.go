@@ -559,8 +559,11 @@ function GetPageNumber() return Template.GetPageNumber() end
 	if series.ModuleName != "Spaced Name" {
 		t.Errorf("display name = %q, want the declared one", series.ModuleName)
 	}
-	if series.ModuleKey != "SpacedName" {
-		t.Errorf("key = %q, want the file name", series.ModuleKey)
+	// A site is keyed by the name it declares, not by the file it happens to
+	// live in: one file can declare several sites, so the file cannot be the
+	// identity.
+	if series.ModuleKey != "Spaced Name" {
+		t.Errorf("key = %q, want the declared site name", series.ModuleKey)
 	}
 
 	// The second refresh is what used to fail: it goes through whatever the
@@ -576,10 +579,13 @@ function GetPageNumber() return Template.GetPageNumber() end
 		t.Errorf("a refresh failed: %+v", stats)
 	}
 
-	// And a label-only lookup still resolves, for rows written before the two
-	// were told apart.
-	if got := a.ResolveModule(ctx, "Spaced Name"); got != "SpacedName" {
-		t.Errorf("ResolveModule(label) = %q, want the file name", got)
+	// Both forms resolve: the declared name, and the file name that rows
+	// written before this still hold.
+	if got := a.ResolveModule(ctx, "Spaced Name"); got != "Spaced Name" {
+		t.Errorf("ResolveModule(name) = %q", got)
+	}
+	if got := a.ResolveModule(ctx, "SpacedName"); got != "Spaced Name" {
+		t.Errorf("ResolveModule(file) = %q, want it to reach the site", got)
 	}
 }
 
@@ -811,5 +817,231 @@ func TestCheckKeepsWhatItCannotFind(t *testing.T) {
 	}
 	if series.Title != "Growing Series" {
 		t.Errorf("title = %q; an empty scrape must not erase it", series.Title)
+	}
+}
+
+// twoSiteCheckout builds a module checkout holding one file that declares two
+// websites and one that declares a site under two addresses — the two shapes
+// the upstream catalogue uses and atsume used to collapse.
+func twoSiteCheckout(t *testing.T, rootURL string) string {
+	t.Helper()
+	upstream := upstreamLua(t)
+	checkout := t.TempDir()
+	luaDir := filepath.Join(checkout, "lua")
+	if err := os.MkdirAll(filepath.Join(luaDir, "modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, shared := range []string{"templates", "utils"} {
+		if err := os.Symlink(filepath.Join(upstream, shared), filepath.Join(luaDir, shared)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pair := fmt.Sprintf(`
+function Init()
+	function AddWebsiteModule(id, name, url)
+		local m = NewWebsiteModule()
+		m.ID              = id
+		m.Name            = name
+		m.RootURL         = url
+		m.Category        = 'English'
+		m.OnGetInfo       = 'GetInfo'
+		m.OnGetPageNumber = 'GetPageNumber'
+		m.AddOptionComboBox('imagesize', 'Image size:', 'Auto\nOriginal', 0)
+		return m
+	end
+	AddWebsiteModule('aaaa', 'Front Door', '%s')
+	local m = AddWebsiteModule('bbbb', 'Side Door', '%s')
+	m.AccountSupport = true
+	m.OnLogin        = 'SideLogin'
+end
+
+function SideLogin() return true end
+
+local Template = require 'templates.Madara'
+function GetInfo()       Template.GetInfo()       return no_error end
+function GetPageNumber() return Template.GetPageNumber() end
+`, rootURL, rootURL)
+	if err := os.WriteFile(filepath.Join(luaDir, "modules", "Doors.lua"), []byte(pair), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mirrored := fmt.Sprintf(`
+function Init()
+	local function AddWebsiteModule(id, url)
+		local m = NewWebsiteModule()
+		m.ID        = id
+		m.Name      = 'Mirrored'
+		m.RootURL   = url
+		m.Category  = 'English'
+		m.OnGetInfo = 'GetInfo'
+	end
+	AddWebsiteModule('cccc', '%s')
+	AddWebsiteModule('dddd', 'https://second.example')
+end
+
+local Template = require 'templates.Madara'
+function GetInfo() Template.GetInfo() return no_error end
+`, rootURL)
+	if err := os.WriteFile(filepath.Join(luaDir, "modules", "Mirrored.lua"), []byte(mirrored), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return checkout
+}
+
+// newCheckoutApp starts an app against a prepared module checkout.
+func newCheckoutApp(t *testing.T, checkout string) (*App, *store.Store, context.Context) {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := &config.Config{
+		DataDir: dir, LibraryDir: filepath.Join(dir, "library"),
+		Workers: 1, HostConcurrency: 4, HostRPS: 1000, CheckBatch: 10,
+		SecretKey: "test-key",
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	reg := scraper.NewRegistry(filepath.Join(dir, "modules"), "")
+	if err := reg.Use(checkout, "test"); err != nil {
+		t.Fatal(err)
+	}
+	a := New(cfg, st, reg)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	done := make(chan struct{})
+	go func() { a.Pool.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	return a, st, ctx
+}
+
+// TestCatalogueListsSitesNotFiles covers the identity the whole interface is
+// keyed by.
+//
+// A file was taken to be a site, so a file declaring two exposed only the
+// last one — sixty-one sites were unreachable, and the twenty-eight that were
+// reachable answered to the wrong name. Mirrors are the opposite case: one
+// site under several addresses, which must not become several entries.
+func TestCatalogueListsSitesNotFiles(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+	a, _, ctx := newCheckoutApp(t, twoSiteCheckout(t, srv.URL))
+
+	cat := a.ModuleCatalogue(ctx)
+	byName := map[string]ModuleEntry{}
+	for _, e := range cat.Entries {
+		byName[e.Site] = e
+	}
+	// Two files, three sites.
+	if len(cat.Entries) != 3 {
+		t.Fatalf("got %d entries, want three sites from two files: %+v", len(cat.Entries), cat.Entries)
+	}
+	for _, want := range []string{"Front Door", "Side Door", "Mirrored"} {
+		if _, ok := byName[want]; !ok {
+			t.Errorf("%q is missing from the catalogue", want)
+		}
+	}
+	// Only the second site in the pair takes a login, and that must not leak
+	// onto the first: it is why a login went to the wrong domain.
+	if byName["Front Door"].NeedsLogin {
+		t.Error("Front Door does not take a login")
+	}
+	if !byName["Side Door"].NeedsLogin {
+		t.Error("Side Door does take a login")
+	}
+	// Mirrors are one entry with several addresses, not several entries.
+	if got := byName["Mirrored"].Mirrors; len(got) != 2 {
+		t.Errorf("Mirrored has %d addresses, want 2", len(got))
+	}
+	if !byName["Mirrored"].HasMirrors() || byName["Front Door"].HasMirrors() {
+		t.Error("only the mirrored site offers a choice of address")
+	}
+}
+
+// TestSitesInOneFileAreConfiguredApart covers the settings each site keeps.
+func TestSitesInOneFileAreConfiguredApart(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+	a, _, ctx := newCheckoutApp(t, twoSiteCheckout(t, srv.URL))
+
+	front, err := a.ModuleSettings(ctx, "Front Door")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Declarations used to share one option slice, so each site showed both
+	// sites' options — the same dropdown, listed twice.
+	if len(front.Options) != 1 {
+		t.Errorf("Front Door shows %d options, want its own one", len(front.Options))
+	}
+	if front.SupportsLogin {
+		t.Error("Front Door takes no login")
+	}
+
+	side, err := a.ModuleSettings(ctx, "Side Door")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !side.SupportsLogin {
+		t.Error("Side Door takes a login")
+	}
+
+	// A setting saved on one site does not appear on the other.
+	if err := a.SaveModuleSettings(ctx, "Front Door", map[string]string{"imagesize": "1"}, "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	front, _ = a.ModuleSettings(ctx, "Front Door")
+	side, _ = a.ModuleSettings(ctx, "Side Door")
+	if front.Values["imagesize"] != "1" {
+		t.Errorf("Front Door kept %q", front.Values["imagesize"])
+	}
+	if side.Values["imagesize"] == "1" {
+		t.Error("the setting leaked onto the other site in the same file")
+	}
+}
+
+// TestRepairModuleKeys covers series followed before a file was understood to
+// hold more than one site.
+func TestRepairModuleKeys(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+	a, st, ctx := newCheckoutApp(t, twoSiteCheckout(t, srv.URL))
+
+	// A row as the old code wrote it: keyed by the file, named for whichever
+	// site happened to be declared last.
+	id, err := st.UpsertSeries(ctx, store.Series{
+		ModuleID: "bbbb", ModuleKey: "Doors", ModuleName: "Side Door",
+		URL: srv.URL + "/manga/grow/", Title: "Old Row", Subscribed: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.RepairModuleKeys(ctx); err != nil {
+		t.Fatal(err)
+	}
+	v, err := st.GetSeries(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The site it actually scraped, not the file, and not the file's first
+	// site — the name it recorded says which one it was.
+	if v.ModuleKey != "Side Door" {
+		t.Errorf("key = %q, want the site it came from", v.ModuleKey)
+	}
+
+	// And the settings page for that site now finds it.
+	s, err := a.ModuleSettings(ctx, "Side Door")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Series) != 1 {
+		t.Errorf("Side Door lists %d series, want the repaired one", len(s.Series))
+	}
+	if s, _ = a.ModuleSettings(ctx, "Front Door"); len(s.Series) != 0 {
+		t.Errorf("Front Door lists %d series, want none", len(s.Series))
 	}
 }

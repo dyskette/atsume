@@ -122,7 +122,7 @@ func TestMadaraEndToEnd(t *testing.T) {
 	srv := madaraSite(t)
 
 	h := &Host{LuaDir: dir}
-	r, err := h.Open(context.Background(), writeModule(t, srv.URL))
+	r, err := h.Open(context.Background(), writeModule(t, srv.URL), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestMadaraChapterProtector(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	h := &Host{LuaDir: dir}
-	r, err := h.Open(context.Background(), writeModule(t, srv.URL))
+	r, err := h.Open(context.Background(), writeModule(t, srv.URL), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ end
 	}
 
 	h := &Host{LuaDir: dir}
-	r, err := h.Open(context.Background(), path)
+	r, err := h.Open(context.Background(), path, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ end
 	}
 
 	h := &Host{LuaDir: dir}
-	r, err := h.Open(context.Background(), path)
+	r, err := h.Open(context.Background(), path, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +460,7 @@ end
 	}
 
 	h := &Host{LuaDir: dir}
-	r, err := h.Open(context.Background(), path)
+	r, err := h.Open(context.Background(), path, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,5 +475,153 @@ end
 	}
 	if len(got) != 1 || got[0] != "session=abc123" {
 		t.Errorf("module read %v, want the server's session cookie", got)
+	}
+}
+
+// writeMultiSiteModule writes a file shaped like the twenty-eight upstream
+// ones that declare more than one website: two distinct sites, each with its
+// own option, and a login on only one of them.
+func writeMultiSiteModule(t *testing.T, dir string) string {
+	t.Helper()
+	const src = `
+function Init()
+	function AddWebsiteModule(id, name, url)
+		local m = NewWebsiteModule()
+		m.ID        = id
+		m.Name      = name
+		m.RootURL   = url
+		m.Category  = 'English'
+		m.OnGetInfo = 'GetInfo'
+		m.AddOptionComboBox('imagesize', 'Image size:', 'Auto\nOriginal', 0)
+		return m
+	end
+	AddWebsiteModule('1111', 'Open Site', 'https://open.example')
+	local m = AddWebsiteModule('2222', 'Gated Site', 'https://gated.example')
+	m.AccountSupport = true
+	m.OnLogin        = 'GatedLogin'
+end
+
+function GatedLogin() return true end
+function GetInfo() return no_error end
+`
+	path := filepath.Join(dir, "TwoSites.lua")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestOneFileDeclaresSeveralSites covers the loader's worst assumption.
+//
+// A file was taken to be a website, so a file declaring several exposed only
+// the last and merged every declaration's options into one list. That put
+// ExHentai's login behind E-Hentai's name and showed the same dropdown twice.
+func TestOneFileDeclaresSeveralSites(t *testing.T) {
+	dir := luaDir(t)
+	path := writeMultiSiteModule(t, t.TempDir())
+	h := &Host{LuaDir: dir}
+
+	// Everything the file declares is available, in declaration order.
+	r, err := h.Open(context.Background(), path, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sites := r.Sites()
+	if len(sites) != 2 {
+		t.Fatalf("got %d sites, want both", len(sites))
+	}
+	if sites[0].Name != "Open Site" || sites[1].Name != "Gated Site" {
+		t.Errorf("sites = %q, %q", sites[0].Name, sites[1].Name)
+	}
+	// An unnamed request takes the first, not the last.
+	if r.Module().Name != "Open Site" {
+		t.Errorf("default site = %q, want the first declared", r.Module().Name)
+	}
+	// Each declaration keeps its own options. They used to share a slice, so
+	// this was two.
+	if n := len(r.Module().Options); n != 1 {
+		t.Errorf("got %d options, want the one this site declares", n)
+	}
+	if r.HasHandler("OnLogin") {
+		t.Error("the login belongs to the other site in this file")
+	}
+	r.Close()
+
+	// The second site is reachable, with its own capabilities.
+	r, err = h.Open(context.Background(), path, "Gated Site", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if r.Module().RootURL != "https://gated.example" {
+		t.Errorf("root = %q", r.Module().RootURL)
+	}
+	if !r.HasHandler("OnLogin") {
+		t.Error("this site does take a login")
+	}
+	if n := len(r.Module().Options); n != 1 {
+		t.Errorf("got %d options, want one", n)
+	}
+
+	// Asking for a site the file does not declare is an error, not a silent
+	// fallback to whichever one happened to be last.
+	if _, err := h.Open(context.Background(), path, "Nowhere", ""); err == nil {
+		t.Error("want an error for an undeclared site")
+	}
+}
+
+// TestMirrorsShareASite covers the other shape: one site declared under
+// several addresses, which is not several sites.
+func TestMirrorsShareASite(t *testing.T) {
+	const src = `
+function Init()
+	local function AddWebsiteModule(id, url)
+		local m = NewWebsiteModule()
+		m.ID        = id
+		m.Name      = 'Many Doors'
+		m.RootURL   = url
+		m.OnGetInfo = 'GetInfo'
+	end
+	AddWebsiteModule('1111', 'https://one.example')
+	AddWebsiteModule('2222', 'https://two.example')
+end
+
+function GetInfo() return no_error end
+`
+	path := filepath.Join(t.TempDir(), "ManyDoors.lua")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := &Host{LuaDir: luaDir(t)}
+
+	// By name alone, the first address.
+	r, err := h.Open(context.Background(), path, "Many Doors", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Module().RootURL; got != "https://one.example" {
+		t.Errorf("root = %q, want the first mirror", got)
+	}
+	r.Close()
+
+	// A chosen address is honoured.
+	r, err = h.Open(context.Background(), path, "Many Doors", "https://two.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Module().RootURL; got != "https://two.example" {
+		t.Errorf("root = %q, want the chosen mirror", got)
+	}
+	r.Close()
+
+	// An address upstream has dropped falls back rather than failing: these
+	// domains disappear constantly, and a followed series must survive it.
+	r, err = h.Open(context.Background(), path, "Many Doors", "https://gone.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if got := r.Module().RootURL; got != "https://one.example" {
+		t.Errorf("root = %q, want a fallback to the first mirror", got)
 	}
 }

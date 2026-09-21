@@ -277,7 +277,7 @@ func TestGolden(t *testing.T) {
 			}
 
 			h := &Host{LuaDir: luaRoot, Transport: transport}
-			r, err := h.Open(context.Background(), modPath)
+			r, err := h.Open(context.Background(), modPath, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}

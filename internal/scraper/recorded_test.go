@@ -75,7 +75,7 @@ func TestRecorded(t *testing.T) {
 			}
 
 			h := &Host{LuaDir: luaRoot, Transport: cassette}
-			r, err := h.Open(context.Background(), modFile)
+			r, err := h.Open(context.Background(), modFile, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}

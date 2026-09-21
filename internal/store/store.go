@@ -141,6 +141,17 @@ func (s *Store) EnsureSeries(ctx context.Context, v Series) (int64, bool, error)
 	return id, false, err
 }
 
+// SetSeriesModule repoints a series at the site it came from, by name.
+//
+// Both columns are written: the key is what everything looks the site up by,
+// and the name is what the reader sees, and they are the same thing now that
+// a site is identified by the name it declares.
+func (s *Store) SetSeriesModule(ctx context.Context, id int64, site string) error {
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE series SET module_key = ?, module_name = ? WHERE id = ?`, site, site, id)
+	return err
+}
+
 // UpsertSeries inserts or updates a series and returns its id.
 func (s *Store) UpsertSeries(ctx context.Context, v Series) (int64, error) {
 	const q = `

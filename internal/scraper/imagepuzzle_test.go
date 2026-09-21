@@ -261,7 +261,7 @@ end
 	}
 
 	h := &Host{LuaDir: dir}
-	r, err := h.Open(context.Background(), path)
+	r, err := h.Open(context.Background(), path, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
