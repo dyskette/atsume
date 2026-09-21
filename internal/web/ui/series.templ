@@ -51,6 +51,9 @@ templ SeriesPage(v SeriesView) {
 				<p class="muted dest">
 					Chapters are written to <code>{ v.Destination }</code>
 				</p>
+				<div id="remove">
+					@RemoveControl(v)
+				</div>
 			</div>
 		</div>
 
@@ -116,5 +119,55 @@ templ FollowControl(v SeriesView) {
 				<button type="submit" class="primary">Follow</button>
 			}
 		</form>
+	</div>
+}
+
+// RemoveControl offers to forget the series. It is deliberately quiet and
+// last: it is the one thing on this page that cannot be undone.
+templ RemoveControl(v SeriesView) {
+	<p class="muted remove">
+		<button
+			type="button"
+			class="link"
+			hx-get={ fmt.Sprintf("/series/%d/remove", v.Series.ID) }
+			hx-target="#remove"
+			hx-swap="innerHTML"
+		>Remove from atsume</button>
+	</p>
+}
+
+// ConfirmRemove states exactly what removing does before it is done.
+//
+// The question a reader actually has is whether their files are about to go,
+// and a browser confirmation box cannot answer it. So the page does, in the
+// place the decision is made.
+templ ConfirmRemove(v SeriesView) {
+	<div class="confirm">
+		<p>
+			<strong>Remove { v.Series.Title } from atsume?</strong>
+		</p>
+		<p class="muted">
+			atsume forgets the series and stops checking it.
+			if v.Counts.Done > 0 {
+				The { Count(v.Counts.Done, "chapter", "chapters") } already
+				downloaded to <code>{ v.Destination }</code> { areOrIs(v.Counts.Done) }
+				left alone — those files belong to whatever reads that folder,
+				and nothing here deletes them.
+			} else {
+				No files have been written for it, so there is nothing on disk
+				either way.
+			}
+		</p>
+		<div class="actions">
+			<form hx-post={ fmt.Sprintf("/series/%d/remove", v.Series.ID) } hx-swap="none">
+				<button type="submit" class="danger">Remove, keep the files</button>
+			</form>
+			<button
+				type="button"
+				hx-get={ fmt.Sprintf("/series/%d/remove?cancel=1", v.Series.ID) }
+				hx-target="#remove"
+				hx-swap="innerHTML"
+			>Cancel</button>
+		</div>
 	</div>
 }

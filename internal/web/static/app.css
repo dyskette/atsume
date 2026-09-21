@@ -447,3 +447,27 @@ li.more { justify-content: center; border-style: dashed; }
 .rows.library .muted a.site { color: var(--muted); text-decoration: none; }
 .rows.library .muted a.site:hover { color: var(--accent); text-decoration: underline; }
 .rows.library .pick { align-self: center; }
+
+/* Removing is the one thing on a series page that cannot be undone, so it is
+   quiet until it is asked for, and explicit once it is. */
+button.link {
+	border: none;
+	background: none;
+	padding: 0;
+	color: var(--muted);
+	text-decoration: underline;
+	font: inherit;
+	cursor: pointer;
+}
+button.link:hover { color: var(--err); }
+button.danger { border-color: var(--err); color: var(--err); }
+button.danger:hover { background: var(--panel-hi); border-color: var(--err); color: var(--err); }
+
+.confirm {
+	margin: 1rem 0;
+	padding: 0.8rem 1rem;
+	border: 1px solid var(--err);
+	border-radius: 8px;
+}
+.confirm p { margin: 0 0 0.5rem; }
+.confirm .actions { margin: 0.6rem 0 0; }

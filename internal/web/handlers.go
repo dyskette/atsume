@@ -437,6 +437,57 @@ func (s *Server) handleDownloadMany(w http.ResponseWriter, r *http.Request) {
 		ui.Count(chapters, "chapter", "chapters"), ui.Count(series, "series", "series")), ""))
 }
 
+// handleRemove shows the confirmation, and handleRemoveSeries does it.
+//
+// The confirmation is a page block rather than a browser dialog because the
+// question a reader has is whether their downloaded files are about to go,
+// and confirm() cannot answer it.
+func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	series, err := s.App.Store.GetSeries(r.Context(), id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	chapters, err := s.App.Store.ListChapters(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	v := s.seriesView(r.Context(), series, chapters)
+	if r.URL.Query().Get("cancel") != "" {
+		s.render(w, r, ui.RemoveControl(v))
+		return
+	}
+	s.render(w, r, ui.ConfirmRemove(v))
+}
+
+// handleRemoveSeries forgets a series, leaving every file it wrote in place.
+func (s *Server) handleRemoveSeries(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	series, err := s.App.Store.GetSeries(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.App.Store.DeleteSeries(r.Context(), id); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	slog.Info("removed series", "id", id, "title", series.Title, "files", "kept")
+	// The page being looked at no longer describes anything.
+	w.Header().Set("HX-Redirect", "/")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleSubscribe turns automatic checking for one series on or off.
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

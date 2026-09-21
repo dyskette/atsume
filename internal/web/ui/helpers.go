@@ -132,3 +132,11 @@ func Count(n int, singular, plural string) string {
 	}
 	return fmt.Sprintf("%d %s", n, plural)
 }
+
+// areOrIs keeps a sentence grammatical whichever number lands in it.
+func areOrIs(n int) string {
+	if n == 1 {
+		return "is"
+	}
+	return "are"
+}

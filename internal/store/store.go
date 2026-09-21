@@ -141,6 +141,44 @@ func (s *Store) EnsureSeries(ctx context.Context, v Series) (int64, bool, error)
 	return id, false, err
 }
 
+// DeleteSeries forgets a series and everything atsume recorded about it.
+//
+// It never touches the files on disk. Those belong to the library server
+// reading the destination directory, and a program that reaches into a media
+// library to delete is one you forgive once. Removing a series here means
+// atsume stops tracking it; what has already been written stays written.
+//
+// Pending jobs for it go too. A queued refresh would otherwise run after the
+// removal and recreate the series from the site, which is the one way a
+// remove could appear not to have worked.
+func (s *Store) DeleteSeries(ctx context.Context, id int64) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Download jobs name a chapter, refresh jobs name the address. Both are
+	// matched against this series before its rows go.
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM jobs
+		WHERE state = 'pending' AND (
+			(kind = 'download_chapter' AND json_extract(payload, '$.chapter_id') IN (
+				SELECT id FROM chapters WHERE series_id = ?))
+			OR (kind = 'refresh_series' AND json_extract(payload, '$.url') = (
+				SELECT url FROM series WHERE id = ?))
+		)`, id, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chapters WHERE series_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM series WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // SetSeriesModule repoints a series at the site it came from, by name.
 //
 // Both columns are written: the key is what everything looks the site up by,

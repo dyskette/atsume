@@ -1079,3 +1079,73 @@ func TestRepairModuleKeys(t *testing.T) {
 		t.Errorf("Front Door lists %d series, want none", len(s.Series))
 	}
 }
+
+// TestRemoveKeepsTheFiles is the test behind the promise the confirmation
+// makes.
+//
+// Removing a series forgets it here and leaves everything already written on
+// disk, because those files belong to whatever reads the destination folder.
+// A program that reaches into a media library to delete is one you forgive
+// once, so this is pinned rather than trusted.
+func TestRemoveKeepsTheFiles(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{})
+
+	id, err := a.Follow(ctx, "TestMadara", srv.URL+"/manga/grow/", "Growing Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return len(chs) == 1
+	}, "the first check")
+	if _, err := a.EnqueueAllPending(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return len(chs) == 1 && chs[0].State == store.ChapterDone
+	}, "the chapter to be written")
+
+	chs, _ := st.ListChapters(ctx, id)
+	written := chs[0].FilePath
+	if written == "" {
+		t.Fatal("no file was recorded for the downloaded chapter")
+	}
+	if _, err := os.Stat(written); err != nil {
+		t.Fatalf("the chapter should be on disk before the test means anything: %v", err)
+	}
+
+	// A refresh is in the queue when the removal happens. Left there it would
+	// run afterwards and recreate the series from the site, which is the one
+	// way a removal could appear not to have worked.
+	if err := a.EnqueueRefresh(ctx, "TestMadara", srv.URL+"/manga/grow/"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteSeries(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(written); err != nil {
+		t.Errorf("removing a series deleted %s: %v", written, err)
+	}
+	if _, err := st.GetSeries(ctx, id); err == nil {
+		t.Error("the series is still recorded")
+	}
+	if chs, _ := st.ListChapters(ctx, id); len(chs) != 0 {
+		t.Errorf("%d chapters outlived the series", len(chs))
+	}
+
+	// Give the pool a chance to pick up anything still queued, then confirm
+	// nothing brought the series back.
+	waitFor(t, ctx, func() bool {
+		stats, _ := a.Queue.Stats(ctx)
+		return stats["pending"] == 0 && stats["running"] == 0
+	}, "the queue to drain")
+	all, _ := st.ListSeries(ctx)
+	if len(all) != 0 {
+		t.Errorf("a queued job resurrected the series: %+v", all)
+	}
+}
