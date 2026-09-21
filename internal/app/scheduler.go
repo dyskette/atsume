@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,6 +20,12 @@ type Scheduler struct {
 
 	// now is overridable so tests need not wait out an interval.
 	tick chan struct{}
+
+	// lastSweep is when a sweep last completed, in Unix seconds. The library
+	// reads it to say whether checking is actually happening: a scheduler
+	// that has stopped looks exactly like one with nothing to do, and the
+	// page would go on quietly claiming everything is up to date.
+	lastSweep atomic.Int64
 }
 
 // NewScheduler builds a scheduler from the app's configuration.
@@ -30,6 +37,22 @@ func NewScheduler(a *App) *Scheduler {
 		tick:     make(chan struct{}, 1),
 	}
 }
+
+// LastSweep reports when a sweep last completed, and whether one ever has in
+// this process.
+func (s *Scheduler) LastSweep() (time.Time, bool) {
+	sec := s.lastSweep.Load()
+	if sec == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(sec, 0), true
+}
+
+// Enabled reports whether automatic checking runs at all.
+func (s *Scheduler) Enabled() bool { return s.interval > 0 }
+
+// Interval is how often a subscribed series is re-checked.
+func (s *Scheduler) Interval() time.Duration { return s.interval }
 
 // CheckNow asks for a sweep without waiting for the next interval.
 func (s *Scheduler) CheckNow() {
@@ -64,8 +87,14 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 		if n, err := s.sweep(ctx); err != nil {
 			slog.Error("chapter check sweep", "err", err)
-		} else if n > 0 {
-			slog.Info("queued chapter checks", "series", n)
+		} else {
+			// Recorded on a sweep that found nothing to do as well: having
+			// run and found nothing due is the healthy case, and it is the
+			// running that the library is asking about.
+			s.lastSweep.Store(time.Now().Unix())
+			if n > 0 {
+				slog.Info("queued chapter checks", "series", n)
+			}
 		}
 
 		timer.Reset(s.interval)

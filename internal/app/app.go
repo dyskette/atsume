@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/dyskette/atsume/internal/config"
 	"github.com/dyskette/atsume/internal/download"
@@ -36,7 +37,13 @@ type App struct {
 	Transport http.RoundTripper
 
 	catalogue catalogueCache
+	// started is when this process came up, which is what tells a scheduler
+	// that has never run apart from one that started a moment ago.
+	started time.Time
 }
+
+// Uptime is how long this process has been running.
+func (a *App) Uptime() time.Duration { return time.Since(a.started) }
 
 // New builds an App from its dependencies.
 func New(cfg *config.Config, st *store.Store, reg *scraper.Registry) *App {
@@ -48,6 +55,7 @@ func New(cfg *config.Config, st *store.Store, reg *scraper.Registry) *App {
 		Bus:      jobs.NewBus(),
 		Registry: reg,
 		Limiter:  scraper.NewHostLimiter(cfg.HostRPS, cfg.HostConcurrency),
+		started:  time.Now(),
 	}
 	a.Pool = &jobs.Pool{
 		Queue:   a.Queue,
