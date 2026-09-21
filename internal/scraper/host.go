@@ -382,7 +382,7 @@ func (r *Runner) GetNameAndLink(page int) ([]Entry, error) {
 	links, names := r.links.All(), r.names.All()
 	out := make([]Entry, 0, len(links))
 	for i, l := range links {
-		e := Entry{Link: l}
+		e := Entry{Link: NormaliseLink(l)}
 		if i < len(names) {
 			e.Name = names[i]
 		}
@@ -427,6 +427,13 @@ func (r *Runner) GetInfo(mangaURL string) (*MangaInfo, error) {
 		return nil, fmt.Errorf("%s: no series information at %s; the page may have moved",
 			r.mod.Name, mangaURL)
 	}
+	// A chapter link is handed straight back to the module later, so it has
+	// to be in the shape the module expects to receive.
+	chapters := r.mangaInfo.ChapterLinks.All()
+	for i, l := range chapters {
+		chapters[i] = NormaliseLink(l)
+	}
+	r.mangaInfo.ChapterLinks.Set(chapters)
 	return r.mangaInfo, nil
 }
 

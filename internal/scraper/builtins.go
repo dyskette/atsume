@@ -319,6 +319,32 @@ func GetBetween(left, right, s string) string {
 	return s[i : i+j]
 }
 
+// NormaliseLink puts a link into the shape FMD2 stores, which is the shape
+// modules are written to expect.
+//
+// Upstream runs every link a module produces through RemoveHostFromURL,
+// whose last act is `if iurl <> ” then ipath := '/' + iurl`. So a module
+// that hands back a bare identifier gets it back with a leading slash, and
+// MangaDex's page fetch — API_URL .. '/at-home/server' .. URL — resolves.
+// Without it the two run together and the request 404s, which surfaced as
+// "module returned no pages" with nothing to say why.
+//
+// Upstream also strips the host. atsume does not: every fetch here goes
+// through MaybeFillHost, which passes an absolute address through unchanged,
+// and only two modules in the catalogue concatenate onto MODULE.RootURL
+// where it would matter. Stripping it would rewrite links already stored
+// against series that are already followed, for no gain.
+func NormaliseLink(link string) string {
+	link = strings.TrimSpace(link)
+	if link == "" {
+		return ""
+	}
+	if strings.HasPrefix(link, "/") || strings.Contains(link, "://") {
+		return link
+	}
+	return "/" + link
+}
+
 // MaybeFillHost prefixes a root URL onto a path that lacks a host.
 func MaybeFillHost(root, u string) string {
 	if u == "" {

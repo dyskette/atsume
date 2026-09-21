@@ -10,9 +10,9 @@
     "status": "completed",
     "summary": "Shinmen Takezo becomes Miyamoto Musashi.",
     "chapter_links": [
-      "vagabond/chapter-1",
-      "vagabond/chapter-2",
-      "vagabond/chapter-3"
+      "/vagabond/chapter-1",
+      "/vagabond/chapter-2",
+      "/vagabond/chapter-3"
     ],
     "chapter_names": [
       "Chapter 1 - The Age of Warring States",
