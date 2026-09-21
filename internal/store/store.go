@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/dyskette/atsume/internal/store/migrations"
@@ -101,6 +102,15 @@ const (
 	ChapterFailed      = "failed"
 )
 
+// CleanTitle collapses the whitespace a scraped title arrives with.
+//
+// A title cut from a page keeps that page's indentation, which is invisible
+// in a flat list and wrong everywhere else: it sorts before every letter, and
+// the library is grouped and sorted.
+func CleanTitle(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // EnsureSeries records a series if it is not already known, returning its id.
 //
 // Following creates the row on the click rather than leaving it to the job
@@ -118,7 +128,7 @@ func (s *Store) EnsureSeries(ctx context.Context, v Series) (int64, bool, error)
 		RETURNING id`
 	var id int64
 	err := s.DB.QueryRowContext(ctx, insert,
-		v.ModuleID, v.ModuleKey, v.ModuleName, v.URL, v.Title).Scan(&id)
+		v.ModuleID, v.ModuleKey, v.ModuleName, v.URL, CleanTitle(v.Title)).Scan(&id)
 	if err == nil {
 		return id, true, nil
 	}
@@ -139,14 +149,18 @@ func (s *Store) UpsertSeries(ctx context.Context, v Series) (int64, error) {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (module_id, url) DO UPDATE SET
 			module_key = excluded.module_key,
-			title = excluded.title, cover_url = excluded.cover_url,
+			-- A check that scraped nothing must not destroy what the listing
+			-- already told us. An empty title leaves a row with nothing to
+			-- click, and an empty cover leaves a hole where the art was.
+			title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE series.title END,
+			cover_url = CASE WHEN excluded.cover_url <> '' THEN excluded.cover_url ELSE series.cover_url END,
 			authors = excluded.authors, artists = excluded.artists,
 			genres = excluded.genres, status = excluded.status,
 			summary = excluded.summary, checked_at = excluded.checked_at
 		RETURNING id`
 	var id int64
-	err := s.DB.QueryRowContext(ctx, q, v.ModuleID, v.ModuleKey, v.ModuleName, v.URL, v.Title,
-		v.CoverURL, v.Authors, v.Artists, v.Genres, v.Status, v.Summary,
+	err := s.DB.QueryRowContext(ctx, q, v.ModuleID, v.ModuleKey, v.ModuleName, v.URL,
+		CleanTitle(v.Title), v.CoverURL, v.Authors, v.Artists, v.Genres, v.Status, v.Summary,
 		v.Subscribed, time.Now()).Scan(&id)
 	return id, err
 }

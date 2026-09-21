@@ -761,3 +761,47 @@ func TestBacklogIsNotNews(t *testing.T) {
 		t.Errorf("waiting = %d, want all four still undownloaded", p.Waiting)
 	}
 }
+
+// TestCheckKeepsWhatItCannotFind covers a check that scrapes less than the
+// listing already knew.
+//
+// A module that returns an empty title used to overwrite the good one, and
+// the library then held a row with nothing to click. A scraped title also
+// carries the indentation of the page it was cut from, which sorted it before
+// every letter in a list that is ordered by title.
+func TestCheckKeepsWhatItCannotFind(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{})
+
+	id, err := a.Follow(ctx, "TestMadara", srv.URL+"/manga/grow/", "\n\t  Growing Series  \n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.GetSeries(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if series.Title != "Growing Series" {
+		t.Errorf("stored title = %q, want it trimmed", series.Title)
+	}
+
+	// The test site reports a title, so the check should adopt it; what it
+	// must never do is replace a title with nothing.
+	if _, err := st.UpsertSeries(ctx, store.Series{
+		ModuleID: series.ModuleID, ModuleKey: series.ModuleKey,
+		ModuleName: series.ModuleName, URL: series.URL,
+		Title: "", CoverURL: "",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	series, err = st.GetSeries(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if series.Title != "Growing Series" {
+		t.Errorf("title = %q; an empty scrape must not erase it", series.Title)
+	}
+}
