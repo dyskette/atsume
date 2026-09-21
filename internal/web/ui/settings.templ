@@ -23,6 +23,10 @@ templ ModuleSettings(s *app.ModuleSettings, saved bool) {
 			hx-target="closest main"
 		>
 			<h2>Options</h2>
+			<p class="muted">
+				A change here takes effect on the next check, not retrospectively.
+				Re-check below once you have saved.
+			</p>
 			if len(s.Options) == 0 {
 				<p class="muted">This module declares no options.</p>
 			}
@@ -63,10 +67,56 @@ templ ModuleSettings(s *app.ModuleSettings, saved bool) {
 					Leave the password blank to keep the stored one. Clear both fields to
 					remove the login.
 				</p>
+				<div class="actions">
+					<button
+						type="button"
+						hx-post={ fmt.Sprintf("/modules/%s/test-login", s.Module) }
+						hx-target="#login-result"
+						hx-swap="innerHTML"
+					>Test login</button>
+					<span id="login-result"></span>
+				</div>
 			}
 
 			<div class="actions"><button type="submit" class="primary">Save</button></div>
 		</form>
+
+		<h2>{ fmt.Sprintf("Series from this site (%d)", len(s.Series)) }</h2>
+		if len(s.Series) == 0 {
+			<p class="muted">Nothing from this site is in your library yet.</p>
+		} else {
+			<p class="muted">
+				A setting only applies from the next check onwards, so re-check after
+				saving to see the difference.
+			</p>
+			<form
+				class="actions"
+				hx-post={ fmt.Sprintf("/modules/%s/recheck", s.Module) }
+				hx-target="#recheck-result"
+				hx-swap="innerHTML"
+			>
+				<button type="submit" class="primary">
+					{ fmt.Sprintf("Re-check %d series", len(s.Series)) }
+				</button>
+				<span id="recheck-result"></span>
+			</form>
+			<ul class="rows">
+				for _, item := range s.Series {
+					<li>
+						<a class="title" href={ templ.SafeURL(fmt.Sprintf("/series/%d", item.ID)) }>{ item.Title }</a>
+					</li>
+				}
+			</ul>
+		}
+	}
+}
+
+// LoginResult reports what a test sign-in did.
+templ LoginResult(ok bool, detail string) {
+	if ok {
+		<span class="badge done">{ detail }</span>
+	} else {
+		<span class="badge failed">{ detail }</span>
 	}
 }
 

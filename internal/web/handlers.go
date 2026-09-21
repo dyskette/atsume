@@ -357,6 +357,22 @@ func (s *Server) handlePreviewCover(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
+// handleTestLogin signs in with the stored credentials and says what happened.
+func (s *Server) handleTestLogin(w http.ResponseWriter, r *http.Request) {
+	ok, detail := s.App.TestLogin(r.Context(), r.PathValue("name"))
+	s.render(w, r, ui.LoginResult(ok, detail))
+}
+
+// handleRecheck queues a fresh check of every series from one site.
+func (s *Server) handleRecheck(w http.ResponseWriter, r *http.Request) {
+	n, err := s.App.RecheckSite(r.Context(), r.PathValue("name"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.Notice("Queued "+ui.Count(n, "re-check", "re-checks")+".", "/"))
+}
+
 // handleSubscribe turns automatic checking for one series on or off.
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
