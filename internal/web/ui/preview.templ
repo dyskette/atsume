@@ -54,18 +54,7 @@ templ Preview(v PreviewView) {
 						No chapters listed
 					}
 				</p>
-				<p class="muted">
-					Not in your library. Following downloads chapters published from
-					that point on; the { fmt.Sprintf("%d", v.Chapters) } already listed
-					stay a separate, deliberate download.
-				</p>
-				<form class="actions" hx-post="/series" hx-swap="outerHTML">
-					<input type="hidden" name="module" value={ v.Module }/>
-					<input type="hidden" name="url" value={ v.SeriesURL }/>
-					<input type="hidden" name="name" value={ v.Info.Title }/>
-					<input type="hidden" name="context" value="page"/>
-					<button type="submit" class="primary">Follow this series</button>
-				</form>
+				@FollowPrompt(v)
 				if v.Info.Genres != "" {
 					<p class="muted">{ v.Info.Genres }</p>
 				}
@@ -78,4 +67,42 @@ templ Preview(v PreviewView) {
 			</details>
 		}
 	}
+}
+
+// FollowPrompt is the offer to follow, with the sentence that explains what
+// following will and will not do.
+//
+// The sentence is inside the swap because it describes the state: leaving it
+// outside meant the page still read "Not in your library" under a series that
+// had just been added to it.
+templ FollowPrompt(v PreviewView) {
+	<div id="follow-state">
+		<p class="muted">
+			Not in your library. Following downloads chapters published from
+			that point on; the { fmt.Sprintf("%d", v.Chapters) } already listed
+			stay a separate, deliberate download.
+		</p>
+		<form class="actions" hx-post="/series" hx-target="#follow-state" hx-swap="outerHTML">
+			<input type="hidden" name="module" value={ v.Module }/>
+			<input type="hidden" name="url" value={ v.SeriesURL }/>
+			<input type="hidden" name="name" value={ v.Info.Title }/>
+			<input type="hidden" name="context" value="page"/>
+			<button type="submit" class="primary">Follow this series</button>
+		</form>
+	</div>
+}
+
+// Followed replaces the offer once the series is in the library, and says what
+// has changed rather than repeating what the button was called.
+templ FollowedPrompt(id int64) {
+	<div id="follow-state">
+		<p class="muted">
+			In your library. New chapters download as they are published; the
+			ones already listed are a separate, deliberate download.
+		</p>
+		<div class="actions">
+			<span class="badge done">following</span>
+			<a class="cta" href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open in library</a>
+		</div>
+	</div>
 }

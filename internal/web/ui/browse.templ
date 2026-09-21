@@ -149,11 +149,3 @@ templ Followed(name string, id int64) {
 		<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
 	</li>
 }
-
-// FollowedAction replaces the button on a series page.
-templ FollowedAction(name string, id int64) {
-	<div class="actions">
-		<span class="badge done">following</span>
-		<a class="cta" href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open in library</a>
-	</div>
-}

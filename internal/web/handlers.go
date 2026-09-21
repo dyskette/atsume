@@ -153,7 +153,7 @@ func (s *Server) handleTrackSeries(w http.ResponseWriter, r *http.Request) {
 
 	// The reply replaces whatever was pressed, in place.
 	if r.FormValue("context") == "page" {
-		s.render(w, r, ui.FollowedAction(name, id))
+		s.render(w, r, ui.FollowedPrompt(id))
 		return
 	}
 	s.render(w, r, ui.Followed(name, id))

@@ -178,6 +178,11 @@ code {
 .rows .title { flex: 1; color: var(--text); text-decoration: none; min-width: 0; }
 a.title:hover { color: var(--accent); }
 
+/* Every link that no rule claims. Without this the browser's own blue lands
+   on a near-black page, which is how "Open on site" became unreadable. */
+a { color: var(--accent); }
+a:visited { color: var(--accent); }
+
 .badge {
 	font-size: 0.78rem;
 	color: var(--muted);
@@ -213,7 +218,7 @@ input[type=text], input[type=password], input[type=number], select {
 	min-width: 14rem;
 }
 
-.actions { display: flex; gap: 0.6rem; margin: 1.2rem 0; flex-wrap: wrap; }
+.actions { display: flex; align-items: center; gap: 0.6rem; margin: 1.2rem 0; flex-wrap: wrap; }
 .pager { display: flex; gap: 1rem; margin-top: 1.5rem; }
 .pager a { color: var(--accent); text-decoration: none; }
 
@@ -338,14 +343,14 @@ footer .bar {
 .empty code { color: var(--text); }
 .cta {
 	display: inline-block;
-	margin-top: 0.4rem;
-	padding: 0.45rem 1rem;
+	padding: 0.35rem 0.85rem;
 	border: 1px solid var(--accent);
 	border-radius: 8px;
 	color: var(--accent);
 	text-decoration: none;
 }
 .cta:hover { background: var(--panel-hi); }
+.empty .cta { margin-top: 0.4rem; }
 
 /* Category headings break several hundred sites into something scannable. */
 h2.category {
