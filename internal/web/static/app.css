@@ -471,3 +471,9 @@ button.danger:hover { background: var(--panel-hi); border-color: var(--err); col
 }
 .confirm p { margin: 0 0 0.5rem; }
 .confirm .actions { margin: 0.6rem 0 0; }
+
+/* A chapter whose file has left. The row is not a failure — the download
+   worked — but the file is not there, and saying "done" would be a lie. */
+.chapter.missing .title { color: var(--muted); }
+.rows.chapters button.link { color: var(--muted); }
+.rows.chapters button.link:hover { color: var(--accent); }

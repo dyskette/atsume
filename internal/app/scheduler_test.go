@@ -1149,3 +1149,67 @@ func TestRemoveKeepsTheFiles(t *testing.T) {
 		t.Errorf("a queued job resurrected the series: %+v", all)
 	}
 }
+
+// TestMissingFileIsNoticedAndRecoverable covers what happens when a file
+// leaves the library without atsume doing it.
+//
+// The directory belongs to whatever reads it — a chapter deleted through
+// Komga, a volume that was not mounted. The row went on saying "done"
+// forever, the library counted a file that was not there, and the interface
+// offered no way to fetch it again.
+func TestMissingFileIsNoticedAndRecoverable(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{})
+
+	id, err := a.Follow(ctx, "TestMadara", srv.URL+"/manga/grow/", "Growing Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return len(chs) == 1
+	}, "the first check")
+	if _, err := a.EnqueueAllPending(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return len(chs) == 1 && chs[0].State == store.ChapterDone
+	}, "the chapter to be written")
+
+	chs, _ := st.ListChapters(ctx, id)
+	written := chs[0].FilePath
+
+	// Nothing is missing while the file is there.
+	if n := len(a.MissingFiles(chs)); n != 0 {
+		t.Fatalf("%d files reported missing before anything was deleted", n)
+	}
+
+	// Somebody deletes it through the library server.
+	if err := os.Remove(written); err != nil {
+		t.Fatal(err)
+	}
+	if missing := a.MissingFiles(chs); !missing[chs[0].ID] {
+		t.Error("a deleted file should be noticed")
+	}
+
+	// "Download everything waiting" has to include it. Skipping exactly the
+	// chapters a reader just deleted is the one thing that action must not
+	// do.
+	n, err := a.EnqueueAllPending(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("queued %d, want the missing chapter", n)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return chs[0].State == store.ChapterDone
+	}, "the chapter to be written again")
+	if _, err := os.Stat(written); err != nil {
+		t.Errorf("the file was not restored: %v", err)
+	}
+}

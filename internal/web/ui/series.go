@@ -60,7 +60,15 @@ type SeriesView struct {
 	// list is worth blaming on a missing account.
 	SiteNeedsLogin     bool
 	SiteHasCredentials bool
+
+	// Missing holds the chapters atsume believes it wrote whose file is no
+	// longer there. The library directory belongs to whatever reads it, and
+	// a file can leave without atsume being told.
+	Missing map[int64]bool
 }
+
+// Gone counts the chapters whose file has disappeared.
+func (v SeriesView) Gone() int { return len(v.Missing) }
 
 // SettingsURL is where this series' site is configured.
 //
@@ -77,7 +85,12 @@ func (v SeriesView) HaveLine() string {
 	if c.Total == 0 {
 		return ""
 	}
-	out := fmt.Sprintf("%d of %d chapters downloaded", c.Done, c.Total)
+	// A chapter whose file has gone is not downloaded, whatever the database
+	// recorded when it was.
+	out := fmt.Sprintf("%d of %d chapters downloaded", c.Done-v.Gone(), c.Total)
+	if n := v.Gone(); n > 0 {
+		out += fmt.Sprintf(" · %s missing from disk", Count(n, "file", "files"))
+	}
 	if n := c.Downloading + c.Queued; n > 0 {
 		out += fmt.Sprintf(" · %d in progress", n)
 	}

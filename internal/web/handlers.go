@@ -192,6 +192,7 @@ func (s *Server) seriesView(ctx context.Context, series store.Series, chapters [
 		Counts:        ui.CountChapters(chapters),
 		Destination:   s.App.SeriesDestination(series.Title),
 		CheckInterval: s.App.Cfg.CheckInterval,
+		Missing:       s.App.MissingFiles(chapters),
 	}
 	if info, ok := s.App.SiteInfo(ctx, series.Key()); ok {
 		v.SiteNeedsLogin = info.NeedsLogin

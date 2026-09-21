@@ -399,6 +399,20 @@ func (a *App) EnqueueAllPending(ctx context.Context, seriesID int64) (int, error
 	if err != nil {
 		return 0, err
 	}
+	// A chapter whose file has gone is outstanding again, whatever the
+	// database says. Leaving it out meant "download everything waiting"
+	// quietly skipped the chapters a reader had just deleted.
+	all, err := a.Store.ListChapters(ctx, seriesID)
+	if err != nil {
+		return 0, err
+	}
+	for id := range a.MissingFiles(all) {
+		for _, c := range all {
+			if c.ID == id {
+				pending = append(pending, c)
+			}
+		}
+	}
 	for _, c := range pending {
 		if err := a.EnqueueDownload(ctx, c.ID); err != nil {
 			return 0, err
@@ -527,4 +541,30 @@ func (a *App) Follow(ctx context.Context, moduleKey, seriesURL, title string) (i
 		return id, err
 	}
 	return id, nil
+}
+
+// MissingFiles reports which chapters atsume believes it downloaded but whose
+// file is no longer on disk.
+//
+// The library directory belongs to whatever reads it, and things happen to it
+// that atsume does not do: a file deleted through Komga, a volume that was
+// not mounted, a tidy-up. Until this, the chapter went on saying "done" and
+// the interface offered nothing, because a downloaded chapter was assumed to
+// stay downloaded.
+func (a *App) MissingFiles(chapters []store.Chapter) map[int64]bool {
+	missing := map[int64]bool{}
+	for _, c := range chapters {
+		if c.State != store.ChapterDone {
+			continue
+		}
+		// A done chapter with no recorded path predates the path being
+		// recorded; there is nothing to check and nothing to claim.
+		if c.FilePath == "" {
+			continue
+		}
+		if _, err := os.Stat(c.FilePath); err != nil {
+			missing[c.ID] = true
+		}
+	}
+	return missing
 }

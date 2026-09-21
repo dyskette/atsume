@@ -71,7 +71,7 @@ templ SeriesPage(v SeriesView) {
 		}
 		<ul class="rows chapters">
 			for _, c := range v.Chapters {
-				@ChapterRow(c)
+				@ChapterRowState(c, v.Missing[c.ID])
 			}
 		</ul>
 

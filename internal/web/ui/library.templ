@@ -118,22 +118,51 @@ templ LibraryItem(r LibraryRow) {
 
 // ChapterRow is swapped in place over SSE as a download progresses. The id is
 // what the stream targets, so it must stay stable across swaps.
+//
+// A row arriving over the stream has just been written, so its file is there
+// by construction; only a page load has reason to check.
 templ ChapterRow(c store.Chapter) {
+	@ChapterRowState(c, false)
+}
+
+// ChapterRowState is one chapter, knowing whether the file it claims to have
+// written is still on disk.
+//
+// A downloaded chapter used to offer nothing at all. There was no way to
+// fetch it again — the only actions were on chapters that had never
+// succeeded — so a file deleted through the library server, or lost with an
+// unmounted volume, could not be recovered through this interface at all.
+templ ChapterRowState(c store.Chapter, missing bool) {
 	<li
 		id={ fmt.Sprintf("chapter-%d", c.ID) }
-		class={ "chapter", c.State }
+		class={ "chapter", c.State, templ.KV("missing", missing) }
 		sse-swap={ fmt.Sprintf("chapter-%d", c.ID) }
 		hx-swap="outerHTML"
 	>
 		<span class="title">{ c.Name }</span>
-		<span class={ "badge", c.State }>{ stateLabel(c) }</span>
+		if missing {
+			<span class="badge failed" title={ c.FilePath }>file is gone</span>
+		} else {
+			<span class={ "badge", c.State }>{ stateLabel(c) }</span>
+		}
 		if c.Error != "" {
 			<span class="error" title={ c.Error }>{ truncate(c.Error, 80) }</span>
 		}
-		if c.State == store.ChapterPending || c.State == store.ChapterFailed {
-			<form hx-post={ fmt.Sprintf("/chapters/%d/download", c.ID) } hx-swap="outerHTML" hx-target="closest li">
-				<button type="submit">Download</button>
-			</form>
+		switch {
+			case missing:
+				<form hx-post={ fmt.Sprintf("/chapters/%d/download", c.ID) } hx-swap="outerHTML" hx-target="closest li">
+					<button type="submit" class="primary">Download</button>
+				</form>
+			case c.State == store.ChapterPending || c.State == store.ChapterFailed:
+				<form hx-post={ fmt.Sprintf("/chapters/%d/download", c.ID) } hx-swap="outerHTML" hx-target="closest li">
+					<button type="submit">Download</button>
+				</form>
+			case c.State == store.ChapterDone:
+				<!-- Quiet, because fetching something you already have is
+				     rarely what you meant to click. -->
+				<form hx-post={ fmt.Sprintf("/chapters/%d/download", c.ID) } hx-swap="outerHTML" hx-target="closest li">
+					<button type="submit" class="link">Download again</button>
+				</form>
 		}
 	</li>
 }
