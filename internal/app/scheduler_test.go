@@ -581,3 +581,71 @@ function GetPageNumber() return Template.GetPageNumber() end
 		t.Errorf("ResolveModule(label) = %q, want the file name", got)
 	}
 }
+
+// TestFollowIsImmediate covers the fix for the interface's worst falsehood.
+//
+// Following used to only enqueue a job, so the series existed nowhere until
+// that job ran — and the click navigated to the library to show a result that
+// was not there yet, which taught the reader to press refresh.
+func TestFollowIsImmediate(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(2)
+	srv := growingSite(t, &chapters)
+
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{})
+
+	id, err := a.Follow(ctx, "TestMadara", srv.URL+"/manga/grow/", "Growing Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id == 0 {
+		t.Fatal("Follow returned no id")
+	}
+
+	// Present before any job has had a chance to run.
+	series, err := st.GetSeries(ctx, id)
+	if err != nil {
+		t.Fatalf("the series should exist the moment it is followed: %v", err)
+	}
+	if series.Title != "Growing Series" {
+		t.Errorf("title = %q; the listing's title is used until the check fills it in", series.Title)
+	}
+	if series.ModuleKey != "TestMadara" {
+		t.Errorf("key = %q", series.ModuleKey)
+	}
+	if !series.Subscribed {
+		t.Error("following should subscribe")
+	}
+	// Not yet checked — saying otherwise would misreport the row and mislead
+	// the scheduler about what is due.
+	if series.CheckedAt.Valid {
+		t.Error("a freshly followed series has not been checked")
+	}
+
+	// The queued check then fills in the details, without duplicating the row.
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		return len(chs) == 2
+	}, "the queued check to fill in chapters")
+
+	all, _ := st.ListSeries(ctx)
+	if len(all) != 1 {
+		t.Fatalf("got %d series, want 1 — the check must update the row, not add one", len(all))
+	}
+	if !all[0].CheckedAt.Valid {
+		t.Error("the completed check should stamp checked_at")
+	}
+
+	// Following the same series again is idempotent.
+	again, err := a.Follow(ctx, "TestMadara", srv.URL+"/manga/grow/", "Growing Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != id {
+		t.Errorf("second follow returned id %d, want %d", again, id)
+	}
+	all, _ = st.ListSeries(ctx)
+	if len(all) != 1 {
+		t.Errorf("following twice created %d rows", len(all))
+	}
+}

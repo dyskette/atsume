@@ -101,6 +101,36 @@ const (
 	ChapterFailed      = "failed"
 )
 
+// EnsureSeries records a series if it is not already known, returning its id.
+//
+// Following creates the row on the click rather than leaving it to the job
+// that fetches the details. Without it there is a window where a series has
+// been followed and exists nowhere in the interface, which is how the library
+// came to need a manual refresh to show what had just been added.
+//
+// Existing rows are left alone: the listing knows only a title, and it must
+// not overwrite what a completed check has already found.
+func (s *Store) EnsureSeries(ctx context.Context, v Series) (int64, bool, error) {
+	const insert = `
+		INSERT INTO series (module_id, module_key, module_name, url, title, subscribed)
+		VALUES (?, ?, ?, ?, ?, 1)
+		ON CONFLICT (module_id, url) DO NOTHING
+		RETURNING id`
+	var id int64
+	err := s.DB.QueryRowContext(ctx, insert,
+		v.ModuleID, v.ModuleKey, v.ModuleName, v.URL, v.Title).Scan(&id)
+	if err == nil {
+		return id, true, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, false, err
+	}
+
+	err = s.DB.QueryRowContext(ctx,
+		`SELECT id FROM series WHERE module_id = ? AND url = ?`, v.ModuleID, v.URL).Scan(&id)
+	return id, false, err
+}
+
 // UpsertSeries inserts or updates a series and returns its id.
 func (s *Store) UpsertSeries(ctx context.Context, v Series) (int64, error) {
 	const q = `

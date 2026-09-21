@@ -448,3 +448,36 @@ func (a *App) Preview(ctx context.Context, module, seriesURL string) (*scraper.M
 	defer r.Close()
 	return r.GetInfo(seriesURL)
 }
+
+// Follow records a series and queues the fetch of its details.
+//
+// The row is written here, not by the job, so that a series exists in the
+// library the instant it is followed. Opening the module costs a millisecond
+// and runs no requests — Init() only declares — and it also means an unknown
+// site fails on the click rather than silently later.
+func (a *App) Follow(ctx context.Context, moduleKey, seriesURL, title string) (int64, error) {
+	key := a.ResolveModule(ctx, moduleKey)
+	r, err := a.openModuleRaw(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+	mod := r.Module()
+	moduleID, moduleName := mod.ID, mod.Name
+	r.Close()
+
+	if title == "" {
+		title = seriesURL
+	}
+	id, _, err := a.Store.EnsureSeries(ctx, store.Series{
+		ModuleID: moduleID, ModuleKey: key, ModuleName: moduleName,
+		URL: seriesURL, Title: title,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	if err := a.EnqueueRefresh(ctx, key, seriesURL); err != nil {
+		return id, err
+	}
+	return id, nil
+}
