@@ -39,7 +39,7 @@ templ SeriesPage(v SeriesView) {
 					if v.Counts.Waiting() > 0 {
 						<form hx-post={ fmt.Sprintf("/series/%d/download", v.Series.ID) } hx-swap="none">
 							<button type="submit" class="primary">
-								{ fmt.Sprintf("Download %d chapter(s)", v.Counts.Waiting()) }
+								{ "Download " + Count(v.Counts.Waiting(), "chapter", "chapters") }
 							</button>
 						</form>
 					}

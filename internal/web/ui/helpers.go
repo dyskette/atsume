@@ -110,3 +110,12 @@ func Progress(done, total int) string {
 	}
 	return fmt.Sprintf("%d/%d pages", done, total)
 }
+
+// Count renders a number with its noun, pluralised. Writing "1 chapter(s)"
+// makes the reader do the work the interface should have done.
+func Count(n int, singular, plural string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, singular)
+	}
+	return fmt.Sprintf("%d %s", n, plural)
+}
