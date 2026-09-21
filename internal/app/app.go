@@ -134,13 +134,77 @@ func (a *App) applyCredentials(ctx context.Context, r *scraper.Runner) error {
 }
 
 // Browse lists one page of a site's directory.
-func (a *App) Browse(ctx context.Context, module string, page int) ([]scraper.Entry, error) {
+// BrowsePos is a place in a site's directory: which section, and which page
+// of it.
+//
+// A site is not always one list. Thirty-one modules split their directory
+// into sections — an alphabet with a page per letter, or ongoing, finished
+// and one-shots — and atsume only ever read the first, so ComicExtra showed
+// nothing at all because its first section is "others".
+type BrowsePos struct {
+	Dir  int
+	Page int
+}
+
+// BrowseResult is one screenful of a site's directory.
+type BrowseResult struct {
+	Entries []scraper.Entry
+	// At is where these entries came from, which is not always where they
+	// were asked for: an exhausted section rolls on to the next.
+	At BrowsePos
+	// Next is where to continue, and More whether there is anywhere to go.
+	Next BrowsePos
+	More bool
+	// Sections is how many the site is split into, so the reader can be told
+	// when they cross from one into another.
+	Sections int
+}
+
+// maxBrowseRollovers bounds how many empty sections one request will skip.
+//
+// Rolling on is a request to the site each time, and a site with an
+// alphabetical directory can have twenty-seven of them. Stopping after a few
+// keeps one click from becoming a burst.
+const maxBrowseRollovers = 4
+
+// Browse reads one page of a site's directory, walking into the next section
+// when the current one is finished.
+//
+// The sections are concatenated rather than offered as a choice, because a
+// module declares only how many there are and never what they are called.
+// "Section 3 of 27" is not a thing anyone wants to pick; they want the
+// titles.
+func (a *App) Browse(ctx context.Context, module string, at BrowsePos) (BrowseResult, error) {
 	r, err := a.openModule(ctx, module)
 	if err != nil {
-		return nil, err
+		return BrowseResult{}, err
 	}
 	defer r.Close()
-	return r.GetNameAndLink(page)
+
+	total := r.TotalDirectories()
+	out := BrowseResult{At: at, Next: at, Sections: total}
+	if at.Dir < 0 {
+		at.Dir = 0
+	}
+	for attempt := 0; attempt < maxBrowseRollovers && at.Dir < total; attempt++ {
+		r.SetDirectoryIndex(at.Dir)
+		entries, err := r.GetNameAndLink(at.Page)
+		if err != nil {
+			return out, err
+		}
+		if len(entries) > 0 {
+			out.Entries = entries
+			out.At = at
+			out.Next = BrowsePos{Dir: at.Dir, Page: at.Page + 1}
+			out.More = true
+			return out, nil
+		}
+		// Nothing here. The section is finished, or was always empty.
+		at = BrowsePos{Dir: at.Dir + 1}
+	}
+	out.At, out.Next = at, at
+	out.More = at.Dir < total
+	return out, nil
 }
 
 // RefreshPayload identifies a series to refresh.

@@ -59,25 +59,29 @@ func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, ui.Browse(ui.BrowseView{
 		Module: r.PathValue("name"),
-		Page:   queryPage(r),
+		At:     browsePos(r),
 	}))
 }
 
 // handleBrowseList fetches the index, which is what can be slow.
 func (s *Server) handleBrowseList(w http.ResponseWriter, r *http.Request) {
-	module, page := r.PathValue("name"), queryPage(r)
+	module := r.PathValue("name")
 
-	entries, err := s.App.Browse(r.Context(), module, page)
+	res, err := s.App.Browse(r.Context(), module, browsePos(r))
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	entries := res.Entries
 	tracked, err := s.App.Store.TrackedURLs(r.Context(), module)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	v := ui.BrowseView{Module: module, Page: page, Entries: entries, Tracked: tracked}
+	v := ui.BrowseView{
+		Module: module, Entries: entries, Tracked: tracked,
+		At: res.At, Next: res.Next, More: res.More, Sections: res.Sections,
+	}
 	// "Load more" appends rows to the list already on screen rather than
 	// replacing it, so a filter keeps applying across everything loaded.
 	if r.URL.Query().Get("rows") != "" {
@@ -129,6 +133,15 @@ func (s *Server) handleFollowMany(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, ui.Notice(
 		fmt.Sprintf("Following %d more — %s.", followed, detail),
 		"/"))
+}
+
+// browsePos reads where in a site's directory the reader is.
+func browsePos(r *http.Request) app.BrowsePos {
+	dir, _ := strconv.Atoi(r.URL.Query().Get("dir"))
+	if dir < 0 {
+		dir = 0
+	}
+	return app.BrowsePos{Dir: dir, Page: queryPage(r)}
 }
 
 func queryPage(r *http.Request) int {

@@ -477,3 +477,12 @@ button.danger:hover { background: var(--panel-hi); border-color: var(--err); col
 .chapter.missing .title { color: var(--muted); }
 .rows.chapters button.link { color: var(--muted); }
 .rows.chapters button.link:hover { color: var(--accent); }
+
+/* Where one part of a site's directory ends and the next begins. A module
+   says how many sections it has and never what they are called. */
+li.section-note {
+	justify-content: center;
+	border-style: dashed;
+	color: var(--muted);
+	font-size: 0.82rem;
+}

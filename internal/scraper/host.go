@@ -249,8 +249,20 @@ func (r *Runner) SetAccount(username, password string) {
 	r.account.Password = password
 }
 
-// SetDirectoryIndex selects which listing a multi-category module walks.
+// SetDirectoryIndex selects which listing a multi-section module walks.
 func (r *Runner) SetDirectoryIndex(i int) { r.directoryIndex = i }
+
+// TotalDirectories is how many separate listings the site is split into.
+//
+// A module declares this when its directory is not one list: an alphabet,
+// where each letter is its own index, or a handful of sections such as
+// ongoing, finished and one-shots. Most declare nothing, which means one.
+func (r *Runner) TotalDirectories() int {
+	if r.mod == nil || r.mod.TotalDirectory < 1 {
+		return 1
+	}
+	return r.mod.TotalDirectory
+}
 
 // SetOption overrides a module-declared setting before a handler runs.
 func (r *Runner) SetOption(name string, v lua.LValue) { r.options[name] = v }

@@ -154,12 +154,16 @@ func TestFullSlice(t *testing.T) {
 	go a.Pool.Run(ctx)
 
 	t.Run("Browse", func(t *testing.T) {
-		entries, err := a.Browse(ctx, "TestMadara", 0)
+		res, err := a.Browse(ctx, "TestMadara", BrowsePos{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(entries) != 1 || entries[0].Name != "Solo Leveling" {
-			t.Fatalf("browse returned %+v", entries)
+		if len(res.Entries) != 1 || res.Entries[0].Name != "Solo Leveling" {
+			t.Fatalf("browse returned %+v", res.Entries)
+		}
+		// One section, so continuing stays in it.
+		if res.Sections != 1 || res.Next != (BrowsePos{Page: 1}) {
+			t.Errorf("sections=%d next=%+v", res.Sections, res.Next)
 		}
 	})
 

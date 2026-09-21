@@ -3,26 +3,47 @@ package ui
 import (
 	"fmt"
 
+	"github.com/dyskette/atsume/internal/app"
 	"github.com/dyskette/atsume/internal/scraper"
 )
 
 // BrowseView is one page of a site's directory.
 type BrowseView struct {
 	Module  string
-	Page    int
 	Entries []scraper.Entry
+	// At is where these entries came from and Next where to continue. A site
+	// split into sections — an alphabet, or ongoing and finished — is walked
+	// through rather than offered as a choice, because a module says how many
+	// sections it has and never what they are called.
+	At       app.BrowsePos
+	Next     app.BrowsePos
+	More     bool
+	Sections int
 	// Tracked maps an entry URL to the series already following it.
 	Tracked map[string]int64
 }
 
-// ListURL is where the index for this page is fetched from.
+// ListURL is where the index for this position is fetched from.
 func (v BrowseView) ListURL() string {
-	return fmt.Sprintf("/modules/%s/list?page=%d", v.Module, v.Page)
+	return SiteURL(v.Module, fmt.Sprintf("/list?dir=%d&page=%d", v.At.Dir, v.At.Page))
 }
 
-// MoreURL fetches the next page as rows to append to the one on screen.
+// MoreURL fetches the next chunk as rows to append to what is on screen.
 func (v BrowseView) MoreURL() string {
-	return fmt.Sprintf("/modules/%s/list?page=%d&rows=1", v.Module, v.Page+1)
+	return SiteURL(v.Module, fmt.Sprintf("/list?dir=%d&page=%d&rows=1", v.Next.Dir, v.Next.Page))
+}
+
+// SectionStart reports whether these rows open a section of the site the
+// reader has not seen yet, which is worth saying when they crossed into it
+// by pressing "load more".
+func (v BrowseView) SectionStart() bool {
+	return v.Sections > 1 && v.At.Page == 0 && len(v.Entries) > 0
+}
+
+// SectionLabel names where the rows below came from, as far as a module lets
+// anyone name it.
+func (v BrowseView) SectionLabel() string {
+	return fmt.Sprintf("Section %d of %d", v.At.Dir+1, v.Sections)
 }
 
 // Browse is the shell of a site's directory page.
@@ -80,8 +101,13 @@ templ Browse(v BrowseView) {
 templ BrowseList(v BrowseView) {
 	if len(v.Entries) == 0 {
 		<div class="empty">
-			<strong>Nothing on this page</strong>
-			{ fmt.Sprintf("The module returned no titles for page %d. It may paginate differently, or the site may have nothing more to list.", v.Page+1) }
+			<strong>Nothing here</strong>
+			if v.More {
+				The site listed no titles at this point. Load more to carry on
+				through the rest of it.
+			} else {
+				That is everything this site lists.
+			}
 		</div>
 	}
 	<ul class="rows" id="site-rows">
@@ -92,19 +118,20 @@ templ BrowseList(v BrowseView) {
 // BrowseRows is the appendable part: the entries plus the control that fetches
 // the page after them.
 templ BrowseRows(v BrowseView) {
+	if v.SectionStart() {
+		<li class="section-note">{ v.SectionLabel() }</li>
+	}
 	for i, e := range v.Entries {
 		@BrowseRow(v, i, e)
 	}
-	if len(v.Entries) > 0 {
+	if v.More {
 		<li class="more">
 			<button
 				type="button"
 				hx-get={ v.MoreURL() }
 				hx-target="closest li"
 				hx-swap="outerHTML"
-			>
-				{ fmt.Sprintf("Load page %d", v.Page+2) }
-			</button>
+			>Load more</button>
 		</li>
 	}
 }
@@ -113,7 +140,7 @@ templ BrowseRows(v BrowseView) {
 // open the thing by clicking the thing; a separate "Preview" beside "Follow"
 // presented navigation and commitment as siblings.
 templ BrowseRow(v BrowseView, i int, e scraper.Entry) {
-	{{ key := fmt.Sprintf("%d-%d", v.Page, i) }}
+	{{ key := fmt.Sprintf("%d-%d-%d", v.At.Dir, v.At.Page, i) }}
 	{{ label := entryLabel(e) }}
 	<li class="site-row" data-title={ label }>
 		if _, ok := v.Tracked[e.Link]; !ok {

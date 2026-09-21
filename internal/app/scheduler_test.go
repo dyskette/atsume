@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1274,5 +1275,129 @@ func TestCheckReconcilesDeletedFiles(t *testing.T) {
 		if len(entries) != 0 {
 			t.Errorf("the check re-downloaded on its own: %d files", len(entries))
 		}
+	}
+}
+
+// sectionedSite serves a directory split into three parts, the first of
+// which is empty — the shape that made ComicExtra list nothing at all, since
+// its first section is "others".
+func sectionedSite(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	// Section 0 has nothing; section 1 has two pages; section 2 has one.
+	titles := map[string][]string{
+		"1/0": {"Beta One", "Beta Two"},
+		"1/1": {"Beta Three"},
+		"2/0": {"Gamma One"},
+	}
+	mux.HandleFunc("/dir/", func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.URL.Path, "/dir/")
+		var b strings.Builder
+		b.WriteString(`<html><body><ul class="manga-list">`)
+		for _, name := range titles[key] {
+			fmt.Fprintf(&b, `<li><a href="/manga/%s/">%s</a></li>`,
+				strings.ToLower(strings.ReplaceAll(name, " ", "-")), name)
+		}
+		b.WriteString(`</ul></body></html>`)
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, b.String())
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// sectionedCheckout writes a module that splits its directory into sections,
+// the way thirty-one upstream modules do.
+func sectionedCheckout(t *testing.T, rootURL string) string {
+	t.Helper()
+	upstream := upstreamLua(t)
+	checkout := t.TempDir()
+	luaDir := filepath.Join(checkout, "lua")
+	if err := os.MkdirAll(filepath.Join(luaDir, "modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, shared := range []string{"templates", "utils"} {
+		if err := os.Symlink(filepath.Join(upstream, shared), filepath.Join(luaDir, shared)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := fmt.Sprintf(`
+function Init()
+	local m = NewWebsiteModule()
+	m.ID               = 'sectioned'
+	m.Name             = 'Sectioned'
+	m.RootURL          = '%s'
+	m.Category         = 'English'
+	m.TotalDirectory   = 3
+	m.OnGetNameAndLink = 'GetNameAndLink'
+end
+
+function GetNameAndLink()
+	local u = MODULE.RootURL .. '/dir/' .. MODULE.CurrentDirectoryIndex .. '/' .. URL
+	if not HTTP.GET(u) then return net_problem end
+	CreateTXQuery(HTTP.Document).XPathHREFAll('//ul[@class="manga-list"]/li/a', LINKS, NAMES)
+	return no_error
+end
+`, rootURL)
+	if err := os.WriteFile(filepath.Join(luaDir, "modules", "Sectioned.lua"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return checkout
+}
+
+// TestBrowseWalksEverySection covers a directory that is not one list.
+//
+// Thirty-one modules split theirs into sections — an alphabet with a page
+// per letter, or ongoing and finished — and atsume only ever read the first.
+// ComicExtra's first section is "others", so the site listed nothing at all.
+func TestBrowseWalksEverySection(t *testing.T) {
+	srv := sectionedSite(t)
+	a, _, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	// The first section is empty, so the first request must not come back
+	// empty: it rolls on until it finds something.
+	res, err := a.Browse(ctx, "Sectioned", BrowsePos{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sections != 3 {
+		t.Errorf("sections = %d, want 3", res.Sections)
+	}
+	if len(res.Entries) != 2 || res.Entries[0].Name != "Beta One" {
+		t.Fatalf("first screenful = %+v", res.Entries)
+	}
+	if res.At.Dir != 1 || res.At.Page != 0 {
+		t.Errorf("landed at %+v, want the start of section 2", res.At)
+	}
+
+	// Continuing stays in the section while it has pages.
+	res, err = a.Browse(ctx, "Sectioned", res.Next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Name != "Beta Three" {
+		t.Fatalf("second screenful = %+v", res.Entries)
+	}
+
+	// And then crosses into the next one rather than stopping.
+	res, err = a.Browse(ctx, "Sectioned", res.Next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Name != "Gamma One" {
+		t.Fatalf("third screenful = %+v", res.Entries)
+	}
+	if res.At.Dir != 2 {
+		t.Errorf("landed at %+v, want the last section", res.At)
+	}
+
+	// The end is the end: nothing left, and nothing offered.
+	res, err = a.Browse(ctx, "Sectioned", res.Next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Entries) != 0 || res.More {
+		t.Errorf("past the end: %d entries, more=%v", len(res.Entries), res.More)
 	}
 }
