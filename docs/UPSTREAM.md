@@ -1,7 +1,7 @@
 # Upstream patches
 
-atsume carries one patch against a dependency. This file records why, how to
-apply it, and when it can be dropped.
+atsume carries two patches against a dependency. This file records why, how to
+apply them, and when they can be dropped.
 
 ## gopher-lua: generic-for header miscompiles a chained call
 
@@ -75,3 +75,83 @@ replace github.com/yuin/gopher-lua => github.com/<you>/gopher-lua v1.1.2-atsume
 `TestRuntimeSupportsChainedForIn` fails while the patch is missing, and is the
 canary for this whole class of breakage. Drop the patch, the `replace` and this
 section once the fix lands upstream.
+
+## gopher-lua: no Lua 5.3 bitwise operators or floor division
+
+**Status**: not an upstream bug. gopher-lua implements Lua 5.1 deliberately;
+this is an extension, in `patches/gopher-lua-lua53-operators.patch`.
+
+### Symptom
+
+Thirteen module files cannot be parsed at all:
+
+```
+Comix.lua line:102(column:52) near '&': Invalid token
+MangaFire.lua line:62(column:37) near '~': Invalid '~' token
+TonarinoYoungJump.lua line:98(column:61) near '/': syntax error
+```
+
+They use `&`, `|`, `~` (both binary and unary), `<<`, `>>` and `//`, which
+arrived in Lua 5.3. Across the affected files there are 45 uses of `&`, 36 of
+`~`, 15 of `>>`, 11 of `<<`, 10 of `|` and 5 of `//` — all of it decrypting
+page addresses or decoding UTF-8 by hand.
+
+### Why it matters here
+
+**14 of 621 module files, 16 sites**, including MangaFire, ManHuaGui and
+MangaPlus. Unlike the generic-for bug this one is loud: the file does not
+load, so atsume lists the site as unavailable rather than producing wrong
+results.
+
+### What the patch does
+
+Adds the seven operators to the lexer, the grammar, the compiler and the VM.
+New opcodes are **appended** after `OP_NOP` rather than grouped with the other
+arithmetic, because the VM dispatch table is positional and inserting would
+renumber every opcode after the insertion point.
+
+The change is additive by construction: every one of these tokens is a parse
+error in unpatched gopher-lua, so no program that parses today can change
+meaning. gopher-lua's own test suite passes with the patch applied.
+
+### The one place it does not follow Lua 5.3
+
+gopher-lua holds every number as a `float64`; Lua 5.3 has true 64-bit
+integers. Integers are therefore exact only to 2^53.
+
+Rather than return a plausible-looking wrong answer, an operand or result that
+will not survive the round trip **raises**:
+
+```
+number 1.152921504606847e+18 is too large for an exact integer operation
+result 9007199254740993 is too large for this implementation to represent exactly
+```
+
+These operators compute image addresses. A silently wrong address is a wrong
+page, which nothing downstream could detect; a module that stops is at least
+visible. Nothing in the catalogue comes near the limit — the largest
+intermediate is a 32-bit shuffle whose product peaks around 7.1e15, just under
+9.007e15.
+
+Every expected value in `internal/scraper/lua53_test.go` was taken from an
+independent Lua 5.4 implementation (`arnodel/golua`) rather than worked out by
+hand.
+
+### Applying it
+
+```sh
+# on your fork of github.com/yuin/gopher-lua, on top of the generic-for patch
+git apply /path/to/atsume/patches/gopher-lua-lua53-operators.patch
+git commit -am "add Lua 5.3 bitwise operators and floor division"
+git tag v1.1.3-atsume && git push --tags
+```
+
+Then point `go.mod` at the new tag. Until that happens the tests in
+`internal/scraper/lua53_test.go` skip, naming this patch as the reason.
+
+### When it can be dropped
+
+If atsume ever moves to a Lua 5.3+ runtime — `arnodel/golua` on its `lua5.4`
+branch compiles the whole module corpus — both patches go with it, along with
+the float-precision caveat above. That is a larger change: every binding in
+`internal/scraper` is written against gopher-lua's API.

@@ -162,17 +162,21 @@ These raise a named error rather than failing quietly:
 `TestLoadAllModules` opens every upstream module, which runs its `Init()` and so
 exercises the whole declaration-time binding surface.
 
-**606 of 621 load (97.6%).** The remainder:
+**620 of 621 load (99.8%) with the patches applied.** The remainder:
 
 | Cause | Count |
 |---|---|
-| Lua 5.3 operators (`&`, `\|`, `~`, `<<`, `>>`, `//`) | 14 |
-| `fmd.mangafoxwatermark` required at declaration time | 1 |
+| Lua 5.3 operators (`&`, `\|`, `~`, `<<`, `>>`, `//`) | 13, recovered |
+| `require 'pb'` — protobuf, which atsume does not implement | 1 |
 
-gopher-lua implements Lua 5.1, so the first group fails at load with a parse
-error. That is deliberate: an explicit failure at startup beats a module that
-silently returns nothing. Moving to a Lua 5.3+ runtime would recover them at the
-cost of cgo.
+gopher-lua implements Lua 5.1, so the first group failed at load with a parse
+error. They are recovered by `patches/gopher-lua-lua53-operators.patch`, which
+adds the operators to the fork; see [UPSTREAM.md](UPSTREAM.md), including the
+one place it cannot follow Lua 5.3 exactly.
+
+MangaPlus is the remaining file. It parses, and then asks for a protobuf
+implementation that FMD2 links in from Pascal. Recovering it means a `pb`
+binding over a Go protobuf library, which is a separate piece of work.
 
 ### Bugs this test has caught
 
