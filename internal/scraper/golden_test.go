@@ -359,7 +359,7 @@ type goldenExchange struct {
 }
 
 // seedCassette builds a cassette from a case's declared exchanges.
-func seedCassette(t *testing.T, dir string, exchanges []goldenExchange) *Cassette {
+func seedCassette(t testing.TB, dir string, exchanges []goldenExchange) *Cassette {
 	t.Helper()
 	c, err := NewCassette(filepath.Join(t.TempDir(), "cassette"), false, nil)
 	if err != nil {
@@ -382,7 +382,7 @@ func seedCassette(t *testing.T, dir string, exchanges []goldenExchange) *Cassett
 }
 
 // goldenServer serves the case's fixture files, substituting the live base URL.
-func goldenServer(t *testing.T, dir string, routes map[string]string) (*httptest.Server, string) {
+func goldenServer(t testing.TB, dir string, routes map[string]string) (*httptest.Server, string) {
 	t.Helper()
 	var base string
 	mux := http.NewServeMux()
