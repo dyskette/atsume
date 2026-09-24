@@ -8,19 +8,40 @@ import (
 )
 
 func TestParseChapter(t *testing.T) {
-	cases := []struct{ name, wantNum, wantVol string }{
-		{"Chapter 1", "001", ""},
-		{"Chapter 12", "012", ""},
-		{"Ch.125", "125", ""},
-		{"Chapter 12.5", "012.5", ""},
-		{"Vol.2 Chapter 15", "015", "02"},
-		{"Volume 10 Ch. 3", "003", "10"},
-		{"7 - The Beginning", "007", ""},
-		{"Oneshot", "000", ""},
+	cases := []struct{ series, name, wantNum, wantVol string }{
+		{"Solo Leveling", "Chapter 1", "001", ""},
+		{"Solo Leveling", "Chapter 12", "012", ""},
+		{"Solo Leveling", "Ch.125", "125", ""},
+		{"Solo Leveling", "Chapter 12.5", "012.5", ""},
+		{"Solo Leveling", "Vol.2 Chapter 15", "015", "02"},
+		{"Solo Leveling", "Volume 10 Ch. 3", "003", "10"},
+		{"Solo Leveling", "7 - The Beginning", "007", ""},
+		{"Solo Leveling", "Oneshot", "000", ""},
+
+		// A number in the series title is not the chapter's.
+		{"Kaiju No. 8", "Kaiju No. 8 Chapter 100", "100", ""},
+		{"Kaiju No. 8", "kaiju no. 8 100", "100", ""},
+		{"Solo Leveling 2", "Solo Leveling 2 - Chapter 5", "005", ""},
+
+		// A marked number wins over the first one.
+		{"Tower of God", "Season 2 Chapter 10", "010", "02"},
+		{"Tower of God", "[Season 1] Ep. 0", "000", "01"},
+		{"Tower of God", "[Season 3] Ep. 150", "150", "03"},
+		{"Solo Leveling", "Episode 7: The Test", "007", ""},
+		{"Solo Leveling", "2023 Special #45", "045", ""},
+		{"El escuadrón V", "Capítulo 3", "003", ""},
+		{"El escuadrón V", "Capitulo 1", "001", ""},
+		{"Спаривание", "Глава 5", "005", ""},
+		{"進撃の巨人", "第12話", "012", ""},
+		{"Solo Leveling", "Chapitre 9", "009", ""},
+
+		// An explicit volume beats a season, and "ep" inside a word is no marker.
+		{"Solo Leveling", "Season 2 Vol.4 Chapter 30", "030", "04"},
+		{"Solo Leveling", "Epilogue 2", "002", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := ParseChapter("Solo Leveling", c.name)
+			got := ParseChapter(c.series, c.name)
 			if got.Number != c.wantNum {
 				t.Errorf("Number = %q, want %q", got.Number, c.wantNum)
 			}
