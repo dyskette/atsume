@@ -53,15 +53,82 @@ func preloadLibs(r *rt.Runtime, luaDir string) {
 	add("fmd.fileutil", goluaFileutil)
 	add("fmd.gzip", goluaGzip)
 
-	// Not ported yet: these wrap bindings that move to golua in a later step.
-	// Requiring them works, so a module that only mentions them still loads;
-	// calling one fails and says why.
-	for _, name := range []string{"fmd.duktape", "fmd.imagepuzzle", "fmd.mangafoxwatermark"} {
-		add(name, func(r *rt.Runtime) *rt.Table { return goluaUnsupported(name, "is not ported to golua yet") })
-	}
+	add("fmd.imagepuzzle", goluaImagePuzzle)
+	add("fmd.mangafoxwatermark", goluaWatermark)
+	add("fmd.duktape", func(r *rt.Runtime) *rt.Table { return goluaDuktape(r, luaDir) })
+
 	add("fmd.subprocess", func(r *rt.Runtime) *rt.Table {
 		return goluaUnsupported("fmd.subprocess", "requires external process execution, which atsume does not implement yet")
 	})
+}
+
+// goluaWatermark exposes the MangaFox watermark remover. The template set
+// belongs to the library instance, as in mangafoxwatermarkLoader: a module
+// loads it inside Init(), and each scrape runs its own Init().
+func goluaWatermark(r *rt.Runtime) *rt.Table {
+	var held *watermarkTemplates
+	return newLib(r, map[string]goFn{
+		// LoadTemplate(directory) returns how many templates were read.
+		"LoadTemplate": {1, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			dir, err := checkString(c, 0)
+			if err != nil {
+				return nil, err
+			}
+			loaded, err := loadWatermarkTemplates(dir)
+			if err != nil {
+				// Upstream returns zero and carries on; say so, since a silent
+				// zero looks exactly like a page that had no watermark.
+				slog.Warn("no MangaFox watermark templates", "dir", dir, "err", err)
+				return c.PushingNext1(t.Runtime, rt.IntValue(0)), nil
+			}
+			if len(loaded.items) == 0 {
+				slog.Warn("MangaFox watermark template directory is empty", "dir", dir)
+			}
+			held = loaded
+			return c.PushingNext1(t.Runtime, rt.IntValue(int64(len(loaded.items)))), nil
+		}},
+		// RemoveWatermark(filename, asPNG) reports whether one was found.
+		"RemoveWatermark": {2, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			path, err := checkString(c, 0)
+			if err != nil {
+				return nil, err
+			}
+			if held == nil {
+				return c.PushingNext1(t.Runtime, rt.BoolValue(false)), nil
+			}
+			removed, err := held.remove(path, rt.Truth(c.Arg(1)))
+			if err != nil {
+				return nil, fmt.Errorf("fmd.mangafoxwatermark.RemoveWatermark: %v", err)
+			}
+			return c.PushingNext1(t.Runtime, rt.BoolValue(removed)), nil
+		}},
+	})
+}
+
+// goluaDuktape exposes fmd.duktape, the name modules use for the JavaScript
+// engine whichever engine backs it. Each Lua runtime gets its own JavaScript
+// runtime, as each gopher-lua state does.
+func goluaDuktape(r *rt.Runtime, luaDir string) *rt.Table {
+	js := newJSRuntime(luaDir)
+	return newLib(r, map[string]goFn{
+		"ExecJS": strFnErr(js.Exec),
+	})
+}
+
+// strFnErr adapts a single-argument string function that can fail; the
+// failure becomes a Lua error.
+func strFnErr(fn func(string) (string, error)) goFn {
+	return goFn{1, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		s, err := checkString(c, 0)
+		if err != nil {
+			return nil, err
+		}
+		out, err := fn(s)
+		if err != nil {
+			return nil, err
+		}
+		return c.PushingNext1(t.Runtime, rt.StringValue(out)), nil
+	}}
 }
 
 // goluaUnsupported returns a library whose every function raises an error

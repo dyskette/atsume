@@ -125,23 +125,6 @@ function Fail() error('broken on purpose') end`,
 	}
 }
 
-func TestGoluaUnportedLibraryFailsWhenCalled(t *testing.T) {
-	luaDir := writeTree(t, map[string]string{
-		"modules/Js.lua": `
-local duktape = require 'fmd.duktape'
-function Init() local m = NewWebsiteModule(); m.Name = 'Js'; m.OnGetInfo = 'GetInfo' end
-function GetInfo() return duktape.ExecJS('1') end`,
-	})
-	h := &Host{LuaDir: luaDir}
-	r, err := h.openGolua(context.Background(), filepath.Join(luaDir, "modules", "Js.lua"), "", "")
-	if err != nil {
-		t.Fatalf("requiring an unported library should not stop the module loading: %v", err)
-	}
-	if _, err := r.call("OnGetInfo"); err == nil || !strings.Contains(err.Error(), "fmd.duktape.ExecJS is not ported to golua yet") {
-		t.Errorf("got %v, want an error naming fmd.duktape.ExecJS", err)
-	}
-}
-
 // loopModule declares handlers that loop forever, and a harmless one.
 const loopModule = `
 function Init()
@@ -245,12 +228,6 @@ var goluaCompileFailures = []string{
 	"SeiManga", "SelfMangaRU", "UsagiOne", "Zazaza",
 }
 
-// goluaPendingBindings are modules that call an unported binding from Init.
-// Each comes off this list when its binding is ported.
-var goluaPendingBindings = []string{
-	"FanFox", // fmd.mangafoxwatermark.LoadTemplate
-}
-
 // TestGoluaDeclarationsMatchGopher loads every upstream module with both
 // runtimes and requires them to declare the same sites, handlers and options.
 func TestGoluaDeclarationsMatchGopher(t *testing.T) {
@@ -262,7 +239,7 @@ func TestGoluaDeclarationsMatchGopher(t *testing.T) {
 	h := &Host{LuaDir: dir}
 	ctx := context.Background()
 
-	var goluaOnly, pending []string
+	var goluaOnly []string
 	matched := 0
 	for _, m := range reg.Modules() {
 		g, gErr := h.Open(ctx, m.File, "", "")
@@ -274,14 +251,10 @@ func TestGoluaDeclarationsMatchGopher(t *testing.T) {
 			t.Errorf("%s: loads with golua but not gopher-lua: %v", m.Name, gErr)
 			continue
 		case nErr != nil:
-			switch {
-			case strings.Contains(nErr.Error(), "constant variable"):
-				goluaOnly = append(goluaOnly, m.Name)
-			case strings.Contains(nErr.Error(), "is not ported to golua yet"):
-				pending = append(pending, m.Name)
-			default:
+			if !strings.Contains(nErr.Error(), "constant variable") {
 				t.Errorf("%s: loads with gopher-lua but not golua: %v", m.Name, nErr)
 			}
+			goluaOnly = append(goluaOnly, m.Name)
 			g.Close()
 			continue
 		}
@@ -303,10 +276,6 @@ func TestGoluaDeclarationsMatchGopher(t *testing.T) {
 	sort.Strings(goluaOnly)
 	if !reflect.DeepEqual(goluaOnly, goluaCompileFailures) {
 		t.Errorf("modules Lua 5.5 rejects:\n got %v\nwant %v", goluaOnly, goluaCompileFailures)
-	}
-	sort.Strings(pending)
-	if !reflect.DeepEqual(pending, goluaPendingBindings) {
-		t.Errorf("modules waiting on an unported binding:\n got %v\nwant %v", pending, goluaPendingBindings)
 	}
 	t.Logf("%d module files declare the same sites in both runtimes", matched)
 }
