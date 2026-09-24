@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestParseChapter(t *testing.T) {
@@ -66,6 +68,43 @@ func TestFilename(t *testing.T) {
 }
 
 // TestSanitize covers the names that break an SMB-shared library directory.
+func TestCandidates(t *testing.T) {
+	root := "/library"
+	ch := ParseChapter("Solo Leveling", "Oneshot: The Hunter's Day")
+	got := ch.Candidates(root, "1:/oneshot")
+	want := []string{
+		"/library/Solo Leveling/Solo Leveling - c000.cbz",
+		"/library/Solo Leveling/Solo Leveling - c000 - Oneshot The Hunter's Day.cbz",
+	}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %q", got)
+	}
+	if !strings.HasPrefix(got[2], strings.TrimSuffix(want[1], ".cbz")+" [") || !strings.HasSuffix(got[2], "].cbz") {
+		t.Errorf("last candidate %q should add a hash to the second", got[2])
+	}
+
+	// The hash follows the key, so two chapters never share the last name.
+	if other := ch.Candidates(root, "2:/oneshot"); other[2] == got[2] {
+		t.Errorf("different keys gave the same last candidate %q", got[2])
+	}
+	// And the same chapter always asks for the same names.
+	if again := ch.Candidates(root, "1:/oneshot"); again[2] != got[2] {
+		t.Errorf("candidates changed between calls: %q, %q", got[2], again[2])
+	}
+
+	// A volume stays in the stem, a long name is cut on a rune boundary, and a
+	// nameless chapter skips straight to the hash.
+	long := ParseChapter("Tower of God", "[Season 2] Ep. 1 "+strings.Repeat("長", 100))
+	c := long.Candidates(root, "k")
+	if !strings.Contains(c[1], "Tower of God - c001 (v02) - ") || !utf8.ValidString(c[1]) ||
+		utf8.RuneCountInString(filepath.Base(c[1])) > 120 {
+		t.Errorf("long name: %q", c[1])
+	}
+	if nameless := (Chapter{Series: "S", Number: "000"}).Candidates(root, "k"); len(nameless) != 2 {
+		t.Errorf("nameless chapter: %q", nameless)
+	}
+}
+
 func TestSanitize(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Normal Title", "Normal Title"},

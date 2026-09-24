@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -570,6 +571,17 @@ func (s *Store) GetChapter(ctx context.Context, id int64) (Chapter, error) {
 	err := s.DB.QueryRowContext(ctx, q, id).Scan(&c.ID, &c.SeriesID, &c.URL,
 		&c.Name, &c.Number, &c.Volume, &c.State, &c.FilePath, &c.Error, &c.Pages, &c.Position)
 	return c, err
+}
+
+// ChapterByFile returns the ID of the chapter recorded as written to path, or
+// 0 when none is.
+func (s *Store) ChapterByFile(ctx context.Context, path string) (int64, error) {
+	var id int64
+	err := s.DB.QueryRowContext(ctx, `SELECT id FROM chapters WHERE file_path = ? LIMIT 1`, path).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
 }
 
 // SetChapterState records progress or the outcome of a download.
