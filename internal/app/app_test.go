@@ -39,6 +39,19 @@ func upstreamLua(t *testing.T) string {
 	return lua
 }
 
+// copyShared copies upstream's shared templates and utils into a test
+// checkout's lua directory. They are copied rather than linked because
+// modules may only load code from inside the checkout, and a symlink that
+// points out of it is refused.
+func copyShared(t *testing.T, upstream, luaDir string) {
+	t.Helper()
+	for _, shared := range []string{"templates", "utils"} {
+		if err := os.CopyFS(filepath.Join(luaDir, shared), os.DirFS(filepath.Join(upstream, shared))); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // fakeCheckout builds a module tree that reuses upstream's shared templates but
 // supplies our own module, without writing anything into the upstream copy.
 func fakeCheckout(t *testing.T, rootURL string) string {
@@ -49,11 +62,7 @@ func fakeCheckout(t *testing.T, rootURL string) string {
 	if err := os.MkdirAll(filepath.Join(luaDir, "modules"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, shared := range []string{"templates", "utils"} {
-		if err := os.Symlink(filepath.Join(upstream, shared), filepath.Join(luaDir, shared)); err != nil {
-			t.Fatal(err)
-		}
-	}
+	copyShared(t, upstream, luaDir)
 
 	src := fmt.Sprintf(`
 function Init()
@@ -341,12 +350,7 @@ func TestScrambledChapterEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	upstream := upstreamLua(t)
-	for _, shared := range []string{"templates", "utils"} {
-		if err := os.Symlink(filepath.Join(upstream, shared),
-			filepath.Join(checkout, "lua", shared)); err != nil {
-			t.Fatal(err)
-		}
-	}
+	copyShared(t, upstream, filepath.Join(checkout, "lua"))
 	src := fmt.Sprintf(`
 function Init()
 	local m = NewWebsiteModule()
