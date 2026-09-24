@@ -4,23 +4,46 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestParseChapter(t *testing.T) {
-	cases := []struct{ name, wantNum, wantVol string }{
-		{"Chapter 1", "001", ""},
-		{"Chapter 12", "012", ""},
-		{"Ch.125", "125", ""},
-		{"Chapter 12.5", "012.5", ""},
-		{"Vol.2 Chapter 15", "015", "02"},
-		{"Volume 10 Ch. 3", "003", "10"},
-		{"7 - The Beginning", "007", ""},
-		{"Oneshot", "000", ""},
+	cases := []struct{ series, name, wantNum, wantVol string }{
+		{"Solo Leveling", "Chapter 1", "001", ""},
+		{"Solo Leveling", "Chapter 12", "012", ""},
+		{"Solo Leveling", "Ch.125", "125", ""},
+		{"Solo Leveling", "Chapter 12.5", "012.5", ""},
+		{"Solo Leveling", "Vol.2 Chapter 15", "015", "02"},
+		{"Solo Leveling", "Volume 10 Ch. 3", "003", "10"},
+		{"Solo Leveling", "7 - The Beginning", "007", ""},
+		{"Solo Leveling", "Oneshot", "000", ""},
+
+		// A number in the series title is not the chapter's.
+		{"Kaiju No. 8", "Kaiju No. 8 Chapter 100", "100", ""},
+		{"Kaiju No. 8", "kaiju no. 8 100", "100", ""},
+		{"Solo Leveling 2", "Solo Leveling 2 - Chapter 5", "005", ""},
+
+		// A marked number wins over the first one.
+		{"Tower of God", "Season 2 Chapter 10", "010", "02"},
+		{"Tower of God", "[Season 1] Ep. 0", "000", "01"},
+		{"Tower of God", "[Season 3] Ep. 150", "150", "03"},
+		{"Solo Leveling", "Episode 7: The Test", "007", ""},
+		{"Solo Leveling", "2023 Special #45", "045", ""},
+		{"El escuadrón V", "Capítulo 3", "003", ""},
+		{"El escuadrón V", "Capitulo 1", "001", ""},
+		{"Спаривание", "Глава 5", "005", ""},
+		{"進撃の巨人", "第12話", "012", ""},
+		{"Solo Leveling", "Chapitre 9", "009", ""},
+
+		// An explicit volume beats a season, and "ep" inside a word is no marker.
+		{"Solo Leveling", "Season 2 Vol.4 Chapter 30", "030", "04"},
+		{"Solo Leveling", "Epilogue 2", "002", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := ParseChapter("Solo Leveling", c.name)
+			got := ParseChapter(c.series, c.name)
 			if got.Number != c.wantNum {
 				t.Errorf("Number = %q, want %q", got.Number, c.wantNum)
 			}
@@ -45,6 +68,43 @@ func TestFilename(t *testing.T) {
 }
 
 // TestSanitize covers the names that break an SMB-shared library directory.
+func TestCandidates(t *testing.T) {
+	root := "/library"
+	ch := ParseChapter("Solo Leveling", "Oneshot: The Hunter's Day")
+	got := ch.Candidates(root, "1:/oneshot")
+	want := []string{
+		"/library/Solo Leveling/Solo Leveling - c000.cbz",
+		"/library/Solo Leveling/Solo Leveling - c000 - Oneshot The Hunter's Day.cbz",
+	}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %q", got)
+	}
+	if !strings.HasPrefix(got[2], strings.TrimSuffix(want[1], ".cbz")+" [") || !strings.HasSuffix(got[2], "].cbz") {
+		t.Errorf("last candidate %q should add a hash to the second", got[2])
+	}
+
+	// The hash follows the key, so two chapters never share the last name.
+	if other := ch.Candidates(root, "2:/oneshot"); other[2] == got[2] {
+		t.Errorf("different keys gave the same last candidate %q", got[2])
+	}
+	// And the same chapter always asks for the same names.
+	if again := ch.Candidates(root, "1:/oneshot"); again[2] != got[2] {
+		t.Errorf("candidates changed between calls: %q, %q", got[2], again[2])
+	}
+
+	// A volume stays in the stem, a long name is cut on a rune boundary, and a
+	// nameless chapter skips straight to the hash.
+	long := ParseChapter("Tower of God", "[Season 2] Ep. 1 "+strings.Repeat("長", 100))
+	c := long.Candidates(root, "k")
+	if !strings.Contains(c[1], "Tower of God - c001 (v02) - ") || !utf8.ValidString(c[1]) ||
+		utf8.RuneCountInString(filepath.Base(c[1])) > 120 {
+		t.Errorf("long name: %q", c[1])
+	}
+	if nameless := (Chapter{Series: "S", Number: "000"}).Candidates(root, "k"); len(nameless) != 2 {
+		t.Errorf("nameless chapter: %q", nameless)
+	}
+}
+
 func TestSanitize(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Normal Title", "Normal Title"},

@@ -41,6 +41,8 @@ type App struct {
 	Transport http.RoundTripper
 
 	catalogue catalogueCache
+	// files keeps concurrent downloads from writing the same library file.
+	files fileClaims
 	// started is when this process came up, which is what tells a scheduler
 	// that has never run apart from one that started a moment ago.
 	started time.Time
@@ -605,7 +607,11 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 		Series: series.Title, Name: ch.Name, Number: ch.Number, Volume: ch.Volume,
 		URL: scraper.MaybeFillHost(r.Module().RootURL, ch.URL),
 	}
-	path := target.Path(a.Cfg.LibraryDir)
+	path, release, err := a.claimFile(ctx, ch, target)
+	if err != nil {
+		return fail(err)
+	}
+	defer release()
 	if err := download.WriteCBZ(path, pages, a.comicInfo(ctx, series, target, r.Module().RootURL, len(pages))); err != nil {
 		return fail(err)
 	}

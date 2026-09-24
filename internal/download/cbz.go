@@ -3,12 +3,14 @@ package download
 
 import (
 	"archive/zip"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Page is one image destined for the archive, in reading order.
@@ -43,6 +45,40 @@ func (c Chapter) Filename() string {
 // Path returns the full destination path under root.
 func (c Chapter) Path(root string) string {
 	return filepath.Join(root, Sanitize(c.Series), c.Filename())
+}
+
+// maxLabel caps the chapter name added to a file name that needs one.
+const maxLabel = 80
+
+// Candidates lists the paths this chapter may be written to, preferred first.
+//
+// Two chapters can parse to the same number: seasons that restart their
+// count, a oneshot and an extra with no number at all, a redrawn chapter
+// published beside the original, or two series with the same title from
+// different sites, which share a folder. The first candidate is Path; the
+// next adds the chapter's own name, and the last adds a short hash of key,
+// which the caller makes unique to the chapter. Every candidate is derived
+// from the chapter alone, so a chapter asks for the same names each time and
+// taking one never renames a file already written.
+func (c Chapter) Candidates(root, key string) []string {
+	dir := filepath.Join(root, Sanitize(c.Series))
+	stem := strings.TrimSuffix(c.Filename(), ".cbz")
+	out := []string{filepath.Join(dir, stem+".cbz")}
+	label := ""
+	if strings.TrimSpace(c.Name) != "" {
+		label = " - " + truncateRunes(Sanitize(c.Name), maxLabel)
+		out = append(out, filepath.Join(dir, stem+label+".cbz"))
+	}
+	sum := sha256.Sum256([]byte(key))
+	return append(out, filepath.Join(dir, fmt.Sprintf("%s%s [%x].cbz", stem, label, sum[:4])))
+}
+
+// truncateRunes shortens s to at most n runes, never splitting one.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return strings.TrimSpace(string([]rune(s)[:n]))
 }
 
 // illegal matches the characters that are unsafe in a filename on either Linux
