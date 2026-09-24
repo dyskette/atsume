@@ -138,6 +138,32 @@ func fieldsNewIndexGolua(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	return c.Next(), nil
 }
 
+// goluaMethod builds a method bound to a Go receiver the closure captures.
+// Modules always use dot notation (LINKS.Add(x), x.XPathString(e)), never
+// colon, so arguments start with the first real one. A nil result returns
+// nothing.
+func goluaMethod(name string, nArgs int, fn func(t *rt.Thread, c *rt.GoCont) (rt.Value, error)) rt.Value {
+	return rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		v, err := fn(t, c)
+		if err != nil {
+			return nil, err
+		}
+		if v.IsNil() {
+			return c.Next(), nil
+		}
+		return c.PushingNext1(t.Runtime, v), nil
+	}, name, nArgs, false))
+}
+
+// optString reads optional argument n as a string, or def when it is absent
+// or nil.
+func optString(c *rt.GoCont, n int, def string) (string, error) {
+	if c.Arg(n).IsNil() {
+		return def, nil
+	}
+	return checkString(c, n)
+}
+
 // luaString reads a string or number as text, and anything else as "".
 func luaString(v rt.Value) string {
 	switch v.Type() {

@@ -47,22 +47,6 @@ func checkInt(c *rt.GoCont, n int) (int, error) {
 	return truncInt(c.Arg(n)), nil
 }
 
-// stringsMethod builds a method bound to s. Modules always use dot notation
-// (LINKS.Add(x)), never colon, so the receiver is captured rather than read
-// from the arguments.
-func stringsMethod(name string, nArgs int, fn func(t *rt.Thread, c *rt.GoCont) (rt.Value, error)) rt.Value {
-	return rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
-		v, err := fn(t, c)
-		if err != nil {
-			return nil, err
-		}
-		if v.IsNil() {
-			return c.Next(), nil
-		}
-		return c.PushingNext1(t.Runtime, v), nil
-	}, name, nArgs, false))
-}
-
 func stringsIndexGolua(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	s, err := toGoluaStrings(c)
 	if err != nil {
@@ -88,7 +72,7 @@ func stringsIndexGolua(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	case "Values":
 		v = pushGoluaValues(t.Runtime, s)
 	case "Add":
-		v = stringsMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+		v = goluaMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
 			item, err := checkString(c, 0)
 			if err == nil {
 				s.Add(item)
@@ -96,17 +80,17 @@ func stringsIndexGolua(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 			return rt.NilValue, err
 		})
 	case "Clear":
-		v = stringsMethod(name, 0, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+		v = goluaMethod(name, 0, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
 			s.Clear()
 			return rt.NilValue, nil
 		})
 	case "Reverse":
-		v = stringsMethod(name, 0, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+		v = goluaMethod(name, 0, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
 			s.Reverse()
 			return rt.NilValue, nil
 		})
 	case "Delete":
-		v = stringsMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+		v = goluaMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
 			i, err := checkInt(c, 0)
 			if err == nil && i >= 0 && i < len(s.items) {
 				s.items = append(s.items[:i], s.items[i+1:]...)
@@ -114,7 +98,7 @@ func stringsIndexGolua(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 			return rt.NilValue, err
 		})
 	case "IndexOf":
-		v = stringsMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+		v = goluaMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
 			want, err := checkString(c, 0)
 			if err != nil {
 				return rt.NilValue, err
@@ -127,7 +111,7 @@ func stringsIndexGolua(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 			return rt.IntValue(-1), nil
 		})
 	case "Get":
-		v = stringsMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+		v = goluaMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
 			i, err := checkInt(c, 0)
 			if err != nil {
 				return rt.NilValue, err

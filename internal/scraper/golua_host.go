@@ -43,6 +43,7 @@ func (h *Host) openGolua(ctx context.Context, moduleFile, site, rootURL string) 
 	gr := &goluaRunner{r: r, ctx: ctx, cpuLimit: goluaCPULimit, storage: map[string]string{}}
 	env := r.GlobalEnv()
 	preloadLibs(r, h.LuaDir)
+	registerGoluaBuiltins(r, ctx)
 
 	// Each declaration collects its own options; see the same capture in Open.
 	type declaration struct {
