@@ -1,9 +1,10 @@
 package scraper
 
 import (
+	"fmt"
 	"strings"
 
-	lua "github.com/yuin/gopher-lua"
+	rt "github.com/arnodel/golua/runtime"
 )
 
 // Strings is the Go side of Pascal's TStringList, which FMD2 modules use for
@@ -127,143 +128,10 @@ func (s *Strings) SetValue(name, value string) {
 
 const stringsTypeName = "atsume.Strings"
 
-func registerStrings(L *lua.LState) {
-	mt := L.NewTypeMetatable(stringsTypeName)
-	L.SetField(mt, "__index", L.NewFunction(stringsIndex))
-	L.SetField(mt, "__newindex", L.NewFunction(stringsNewIndex))
-	L.SetField(mt, "__len", L.NewFunction(func(L *lua.LState) int {
-		L.Push(lua.LNumber(checkStrings(L, 1).Count()))
-		return 1
-	}))
-}
-
-// pushStrings wraps a list as Lua userdata. The same *Strings is shared with Go,
-// so a module writing to LINKS mutates the list the caller reads afterwards.
-func pushStrings(L *lua.LState, s *Strings) lua.LValue {
-	ud := L.NewUserData()
-	ud.Value = s
-	L.SetMetatable(ud, L.GetTypeMetatable(stringsTypeName))
-	return ud
-}
-
-func checkStrings(L *lua.LState, n int) *Strings {
-	ud, ok := L.Get(n).(*lua.LUserData)
-	if !ok {
-		L.ArgError(n, "Strings expected")
-		return nil
-	}
-	s, ok := ud.Value.(*Strings)
-	if !ok {
-		L.ArgError(n, "Strings expected")
-		return nil
-	}
-	return s
-}
-
 // valuesProxy exposes list.Values['name'] as a settable table-like object.
 type valuesProxy struct{ s *Strings }
 
 const valuesTypeName = "atsume.StringsValues"
-
-func registerValues(L *lua.LState) {
-	mt := L.NewTypeMetatable(valuesTypeName)
-	L.SetField(mt, "__index", L.NewFunction(func(L *lua.LState) int {
-		p := L.CheckUserData(1).Value.(*valuesProxy)
-		L.Push(lua.LString(p.s.Value(L.CheckString(2))))
-		return 1
-	}))
-	L.SetField(mt, "__newindex", L.NewFunction(func(L *lua.LState) int {
-		p := L.CheckUserData(1).Value.(*valuesProxy)
-		p.s.SetValue(L.CheckString(2), L.CheckString(3))
-		return 0
-	}))
-}
-
-func stringsIndex(L *lua.LState) int {
-	s := checkStrings(L, 1)
-	switch key := L.Get(2).(type) {
-	case lua.LNumber:
-		L.Push(lua.LString(s.Get(int(key))))
-		return 1
-	case lua.LString:
-		switch string(key) {
-		case "Count":
-			L.Push(lua.LNumber(s.Count()))
-		case "Text":
-			L.Push(lua.LString(strings.Join(s.items, "\r\n")))
-		case "CommaText":
-			L.Push(lua.LString(s.CommaText()))
-		case "Values":
-			ud := L.NewUserData()
-			ud.Value = &valuesProxy{s: s}
-			L.SetMetatable(ud, L.GetTypeMetatable(valuesTypeName))
-			L.Push(ud)
-		// Modules always use dot notation (LINKS.Add(x)), never colon, so the
-		// receiver is captured here rather than read off the stack.
-		case "Add":
-			L.Push(L.NewFunction(func(L *lua.LState) int {
-				s.Add(L.CheckString(1))
-				return 0
-			}))
-		case "Clear":
-			L.Push(L.NewFunction(func(L *lua.LState) int {
-				s.Clear()
-				return 0
-			}))
-		case "Reverse":
-			L.Push(L.NewFunction(func(L *lua.LState) int {
-				s.Reverse()
-				return 0
-			}))
-		case "Delete":
-			L.Push(L.NewFunction(func(L *lua.LState) int {
-				i := L.CheckInt(1)
-				if i >= 0 && i < len(s.items) {
-					s.items = append(s.items[:i], s.items[i+1:]...)
-				}
-				return 0
-			}))
-		case "IndexOf":
-			L.Push(L.NewFunction(func(L *lua.LState) int {
-				want := L.CheckString(1)
-				for i, it := range s.items {
-					if it == want {
-						L.Push(lua.LNumber(i))
-						return 1
-					}
-				}
-				L.Push(lua.LNumber(-1))
-				return 1
-			}))
-		case "Get":
-			L.Push(L.NewFunction(func(L *lua.LState) int {
-				L.Push(lua.LString(s.Get(L.CheckInt(1))))
-				return 1
-			}))
-		default:
-			L.Push(lua.LNil)
-		}
-		return 1
-	}
-	L.Push(lua.LNil)
-	return 1
-}
-
-func stringsNewIndex(L *lua.LState) int {
-	s := checkStrings(L, 1)
-	switch key := L.Get(2).(type) {
-	case lua.LNumber:
-		s.Put(int(key), L.CheckString(3))
-	case lua.LString:
-		switch string(key) {
-		case "CommaText":
-			s.SetCommaText(L.CheckString(3))
-		case "Text":
-			s.Set(splitLines(L.CheckString(3)))
-		}
-	}
-	return 0
-}
 
 func splitLines(v string) []string {
 	v = strings.ReplaceAll(v, "\r\n", "\n")
@@ -271,4 +139,194 @@ func splitLines(v string) []string {
 		return nil
 	}
 	return strings.Split(strings.TrimSuffix(v, "\n"), "\n")
+}
+
+// pushStrings wraps a list as Lua userdata. The same *Strings is shared
+// with Go, so a module writing to LINKS mutates the list the caller reads.
+func pushStrings(r *rt.Runtime, s *Strings) rt.Value {
+	meta := typeMeta(r, stringsTypeName, func() *rt.Table {
+		mt := rt.NewTable()
+		mt.Set(rt.StringValue("__index"), rt.FunctionValue(newGoFunc(stringsIndex, "__index", 2, false)))
+		mt.Set(rt.StringValue("__newindex"), rt.FunctionValue(newGoFunc(stringsNewIndex, "__newindex", 3, false)))
+		mt.Set(rt.StringValue("__len"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			s, err := toStrings(c)
+			if err != nil {
+				return nil, err
+			}
+			return c.PushingNext1(t.Runtime, rt.IntValue(int64(s.Count()))), nil
+		}, "__len", 1, false)))
+		return mt
+	})
+	return rt.UserDataValue(rt.NewUserData(s, meta))
+}
+
+func toStrings(c *rt.GoCont) (*Strings, error) {
+	if u, ok := c.Arg(0).TryUserData(); ok {
+		if s, ok := u.Value().(*Strings); ok {
+			return s, nil
+		}
+	}
+	return nil, fmt.Errorf("bad argument #1 (Strings expected, got %s)", c.Arg(0).TypeName())
+}
+
+// checkInt reads argument n as an integer, truncating a float and accepting a
+// numeric string.
+func checkInt(c *rt.GoCont, n int) (int, error) {
+	if _, _, tp := rt.ToNumber(c.Arg(n)); tp == rt.NaN {
+		return 0, fmt.Errorf("bad argument #%d (number expected, got %s)", n+1, c.Arg(n).TypeName())
+	}
+	return truncInt(c.Arg(n)), nil
+}
+
+func stringsIndex(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	s, err := toStrings(c)
+	if err != nil {
+		return nil, err
+	}
+	key := c.Arg(1)
+	if key.Type() == rt.IntType || key.Type() == rt.FloatType {
+		return c.PushingNext1(t.Runtime, rt.StringValue(s.Get(truncInt(key)))), nil
+	}
+	name, ok := key.TryString()
+	if !ok {
+		return c.PushingNext1(t.Runtime, rt.NilValue), nil
+	}
+
+	var v rt.Value
+	switch name {
+	case "Count":
+		v = rt.IntValue(int64(s.Count()))
+	case "Text":
+		v = rt.StringValue(strings.Join(s.items, "\r\n"))
+	case "CommaText":
+		v = rt.StringValue(s.CommaText())
+	case "Values":
+		v = pushValues(t.Runtime, s)
+	case "Add":
+		v = luaMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			item, err := checkString(c, 0)
+			if err == nil {
+				s.Add(item)
+			}
+			return rt.NilValue, err
+		})
+	case "Clear":
+		v = luaMethod(name, 0, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			s.Clear()
+			return rt.NilValue, nil
+		})
+	case "Reverse":
+		v = luaMethod(name, 0, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			s.Reverse()
+			return rt.NilValue, nil
+		})
+	case "Delete":
+		v = luaMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			i, err := checkInt(c, 0)
+			if err == nil && i >= 0 && i < len(s.items) {
+				s.items = append(s.items[:i], s.items[i+1:]...)
+			}
+			return rt.NilValue, err
+		})
+	case "IndexOf":
+		v = luaMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			want, err := checkString(c, 0)
+			if err != nil {
+				return rt.NilValue, err
+			}
+			for i, it := range s.items {
+				if it == want {
+					return rt.IntValue(int64(i)), nil
+				}
+			}
+			return rt.IntValue(-1), nil
+		})
+	case "Get":
+		v = luaMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			i, err := checkInt(c, 0)
+			if err != nil {
+				return rt.NilValue, err
+			}
+			return rt.StringValue(s.Get(i)), nil
+		})
+	}
+	return c.PushingNext1(t.Runtime, v), nil
+}
+
+func stringsNewIndex(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	s, err := toStrings(c)
+	if err != nil {
+		return nil, err
+	}
+	key := c.Arg(1)
+	switch key.Type() {
+	case rt.IntType, rt.FloatType:
+		v, err := checkString(c, 2)
+		if err != nil {
+			return nil, err
+		}
+		s.Put(truncInt(key), v)
+	case rt.StringType:
+		switch key.AsString() {
+		case "CommaText":
+			v, err := checkString(c, 2)
+			if err != nil {
+				return nil, err
+			}
+			s.SetCommaText(v)
+		case "Text":
+			v, err := checkString(c, 2)
+			if err != nil {
+				return nil, err
+			}
+			s.Set(splitLines(v))
+		}
+	}
+	return c.Next(), nil
+}
+
+// pushValues exposes list.Values['name'] for the name=value pairs such
+// as HTTP headers.
+func pushValues(r *rt.Runtime, s *Strings) rt.Value {
+	meta := typeMeta(r, valuesTypeName, func() *rt.Table {
+		mt := rt.NewTable()
+		mt.Set(rt.StringValue("__index"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			p, err := toValuesProxy(c)
+			if err != nil {
+				return nil, err
+			}
+			name, err := checkString(c, 1)
+			if err != nil {
+				return nil, err
+			}
+			return c.PushingNext1(t.Runtime, rt.StringValue(p.s.Value(name))), nil
+		}, "__index", 2, false)))
+		mt.Set(rt.StringValue("__newindex"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			p, err := toValuesProxy(c)
+			if err != nil {
+				return nil, err
+			}
+			name, err := checkString(c, 1)
+			if err != nil {
+				return nil, err
+			}
+			value, err := checkString(c, 2)
+			if err != nil {
+				return nil, err
+			}
+			p.s.SetValue(name, value)
+			return c.Next(), nil
+		}, "__newindex", 3, false)))
+		return mt
+	})
+	return rt.UserDataValue(rt.NewUserData(&valuesProxy{s: s}, meta))
+}
+
+func toValuesProxy(c *rt.GoCont) (*valuesProxy, error) {
+	if u, ok := c.Arg(0).TryUserData(); ok {
+		if p, ok := u.Value().(*valuesProxy); ok {
+			return p, nil
+		}
+	}
+	return nil, fmt.Errorf("bad argument #1 (Values expected, got %s)", c.Arg(0).TypeName())
 }

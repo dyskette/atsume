@@ -5,15 +5,12 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
-	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-
-	lua "github.com/yuin/gopher-lua"
 )
 
 // The MangaFox watermark remover.
@@ -305,53 +302,4 @@ func (t *watermarkTemplates) remove(path string, asPNG bool) (bool, error) {
 		os.Remove(path)
 	}
 	return true, nil
-}
-
-// mangafoxwatermarkLoader exposes the remover to Lua.
-//
-// The template set belongs to the library instance rather than the process:
-// a module loads it inside Init(), and each scrape runs its own Init().
-func mangafoxwatermarkLoader(L *lua.LState) int {
-	var held *watermarkTemplates
-	t := L.NewTable()
-	L.SetFuncs(t, map[string]lua.LGFunction{
-		// LoadTemplate(directory) returns how many templates were read.
-		"LoadTemplate": func(L *lua.LState) int {
-			dir := L.CheckString(1)
-			loaded, err := loadWatermarkTemplates(dir)
-			if err != nil {
-				// Upstream returns zero for a directory it cannot read and
-				// the module carries on without removing anything. Say so:
-				// a silent zero here looks exactly like a page that had no
-				// watermark, and the pages go out with the banner still on.
-				slog.Warn("no MangaFox watermark templates", "dir", dir, "err", err)
-				L.Push(lua.LNumber(0))
-				return 1
-			}
-			if len(loaded.items) == 0 {
-				slog.Warn("MangaFox watermark template directory is empty", "dir", dir)
-			}
-			held = loaded
-			L.Push(lua.LNumber(len(loaded.items)))
-			return 1
-		},
-		// RemoveWatermark(filename, asPNG) reports whether one was found.
-		"RemoveWatermark": func(L *lua.LState) int {
-			path := L.CheckString(1)
-			asPNG := L.ToBool(2)
-			if held == nil {
-				L.Push(lua.LFalse)
-				return 1
-			}
-			removed, err := held.remove(path, asPNG)
-			if err != nil {
-				L.RaiseError("fmd.mangafoxwatermark.RemoveWatermark: %v", err)
-				return 0
-			}
-			L.Push(lua.LBool(removed))
-			return 1
-		},
-	})
-	L.Push(t)
-	return 1
 }

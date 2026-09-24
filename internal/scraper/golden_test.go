@@ -52,9 +52,6 @@ type goldenCase struct {
 	chapterPath string
 	// directory is whether the case exercises GetNameAndLink.
 	directory bool
-	// needsChainedForIn marks a template that iterates with the
-	// `x.XPath(expr).Get()` idiom, which an unpatched runtime miscompiles.
-	needsChainedForIn bool
 
 	// rootURL, when set, replaces the test server: the module talks to fixed
 	// API hosts instead, and exchanges seeds a cassette with the responses.
@@ -68,12 +65,11 @@ type goldenCase struct {
 
 var goldenCases = []goldenCase{
 	{
-		name:              "mangahub",
-		template:          "MangaHub",
-		rootURL:           "https://mangahub.example.test",
-		seriesPath:        "/manga/vagabond",
-		chapterPath:       "/vagabond/chapter-1",
-		needsChainedForIn: false,
+		name:        "mangahub",
+		template:    "MangaHub",
+		rootURL:     "https://mangahub.example.test",
+		seriesPath:  "/manga/vagabond",
+		chapterPath: "/vagabond/chapter-1",
 		exchanges: []goldenExchange{
 			{method: "POST", url: "https://api.mghcdn.com/graphql", contains: "{manga(", file: "info.json"},
 			{method: "POST", url: "https://api.mghcdn.com/graphql", contains: "{chapter(", file: "pages.json"},
@@ -99,12 +95,11 @@ function GetPageNumber() return Template.GetPageNumber() end
 `,
 	},
 	{
-		name:              "vtheme",
-		template:          "VTheme",
-		rootURL:           "https://vtheme.example.test",
-		seriesPath:        "/series/blood-and-steel",
-		chapterPath:       "/series/blood-and-steel/9001",
-		needsChainedForIn: true,
+		name:        "vtheme",
+		template:    "VTheme",
+		rootURL:     "https://vtheme.example.test",
+		seriesPath:  "/series/blood-and-steel",
+		chapterPath: "/series/blood-and-steel/9001",
 		exchanges: []goldenExchange{
 			{method: "GET", url: "https://vtheme.example.test/series/blood-and-steel", file: "series.html"},
 			{method: "GET", url: "https://api.vtheme.example.test/api/post?postId=12345", file: "post.json"},
@@ -135,9 +130,8 @@ function GetPageNumber() return Template.GetPageNumber() end
 			"/berserk":     "series.html",
 			"/berserk/374": "chapter.html",
 		},
-		seriesPath:        "/berserk",
-		chapterPath:       "/berserk/374",
-		needsChainedForIn: true,
+		seriesPath:  "/berserk",
+		chapterPath: "/berserk/374",
 		module: `
 function Init()
 	local m = NewWebsiteModule()
@@ -162,9 +156,8 @@ function GetPageNumber() return Template.GetPageNumber() end
 			"/series/orv":           "series.html",
 			"/series/orv/chapter-1": "chapter.html",
 		},
-		seriesPath:        "/series/orv",
-		chapterPath:       "/series/orv/chapter-1",
-		needsChainedForIn: true,
+		seriesPath:  "/series/orv",
+		chapterPath: "/series/orv/chapter-1",
 		module: `
 function Init()
 	local m = NewWebsiteModule()
@@ -220,9 +213,8 @@ function GetPageNumber()  return Template.GetPageNumber() end
 			"/manga/kanojo/":     "series.html",
 			"/kanojo-chapter-1/": "chapter.html",
 		},
-		seriesPath:        "/manga/kanojo/",
-		chapterPath:       "/kanojo-chapter-1/",
-		needsChainedForIn: true,
+		seriesPath:  "/manga/kanojo/",
+		chapterPath: "/kanojo-chapter-1/",
 		module: `
 function Init()
 	local m = NewWebsiteModule()
@@ -253,87 +245,89 @@ func TestGolden(t *testing.T) {
 	luaRoot := luaDir(t)
 
 	for _, c := range goldenCases {
-		t.Run(c.name, func(t *testing.T) {
-			if c.needsChainedForIn && runtimeForInBug() {
-				t.Skip("blocked by the gopher-lua generic-for bug; see TestRuntimeSupportsChainedForIn")
-			}
-			caseDir := filepath.Join("testdata", "golden", c.name)
-
-			var base string
-			var hostAddr string
-			var transport http.RoundTripper
-			if c.rootURL != "" {
-				base, hostAddr = c.rootURL, strings.TrimPrefix(c.rootURL, "https://")
-				transport = seedCassette(t, caseDir, c.exchanges)
-			} else {
-				var srv *httptest.Server
-				srv, base = goldenServer(t, caseDir, c.routes)
-				hostAddr = srv.Listener.Addr().String()
-			}
-
-			modPath := filepath.Join(t.TempDir(), c.name+".lua")
-			if err := os.WriteFile(modPath, []byte(fmt.Sprintf(c.module, base)), 0o644); err != nil {
-				t.Fatal(err)
-			}
-
-			h := &Host{LuaDir: luaRoot, Transport: transport}
-			r, err := h.Open(context.Background(), modPath, "", "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer r.Close()
-
-			got := goldenResult{Template: c.template}
-
-			if c.directory {
-				entries, err := r.GetNameAndLink(0)
-				if err != nil {
-					t.Fatalf("GetNameAndLink: %v", err)
-				}
-				got.Directory = entries
-			}
-
-			info, err := r.GetInfo(base + c.seriesPath)
-			if err != nil {
-				t.Fatalf("GetInfo: %v", err)
-			}
-			got.Info = &goldenInfo{
-				Title: info.Title, AltTitles: info.AltTitles, CoverLink: info.CoverLink,
-				Authors: info.Authors, Artists: info.Artists, Genres: info.Genres,
-				Status: info.Status, Summary: info.Summary,
-				ChapterLinks: info.ChapterLinks.All(), ChapterNames: info.ChapterNames.All(),
-			}
-
-			pages, err := r.GetPageNumber(base + c.chapterPath)
-			if err != nil {
-				t.Fatalf("GetPageNumber: %v", err)
-			}
-			got.Pages = pages
-
-			// The test server's port changes every run, so it is folded back
-			// into a placeholder before the comparison.
-			normalized := strings.ReplaceAll(mustJSON(t, got), base, "{{BASE}}")
-			normalized = strings.ReplaceAll(normalized, hostAddr, "{{HOST}}")
-
-			goldenPath := filepath.Join(caseDir, "golden.json")
-			if *updateGolden {
-				if err := os.WriteFile(goldenPath, []byte(normalized+"\n"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				t.Logf("wrote %s", goldenPath)
-				return
-			}
-
-			want, err := os.ReadFile(goldenPath)
-			if err != nil {
-				t.Fatalf("%v\nrun `go test ./internal/scraper/ -run TestGolden -update` to create it", err)
-			}
-			if diff := strings.TrimSpace(string(want)); diff != normalized {
-				t.Errorf("output differs from %s\n--- want ---\n%s\n--- got ---\n%s",
-					goldenPath, diff, normalized)
-			}
-		})
+		t.Run(c.name, func(t *testing.T) { runGoldenCase(t, luaRoot, c) })
 	}
+}
+
+// runGoldenCase runs one case and returns the runner it used, which
+// TestCPULimitHeadroom inspects.
+func runGoldenCase(t *testing.T, luaRoot string, c goldenCase) *Runner {
+	caseDir := filepath.Join("testdata", "golden", c.name)
+
+	var base string
+	var hostAddr string
+	var transport http.RoundTripper
+	if c.rootURL != "" {
+		base, hostAddr = c.rootURL, strings.TrimPrefix(c.rootURL, "https://")
+		transport = seedCassette(t, caseDir, c.exchanges)
+	} else {
+		var srv *httptest.Server
+		srv, base = goldenServer(t, caseDir, c.routes)
+		hostAddr = srv.Listener.Addr().String()
+	}
+
+	modPath := filepath.Join(t.TempDir(), c.name+".lua")
+	if err := os.WriteFile(modPath, []byte(fmt.Sprintf(c.module, base)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &Host{LuaDir: luaRoot, Transport: transport}
+	r, err := h.Open(context.Background(), modPath, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	got := goldenResult{Template: c.template}
+
+	if c.directory {
+		entries, err := r.GetNameAndLink(0)
+		if err != nil {
+			t.Fatalf("GetNameAndLink: %v", err)
+		}
+		got.Directory = entries
+	}
+
+	info, err := r.GetInfo(base + c.seriesPath)
+	if err != nil {
+		t.Fatalf("GetInfo: %v", err)
+	}
+	got.Info = &goldenInfo{
+		Title: info.Title, AltTitles: info.AltTitles, CoverLink: info.CoverLink,
+		Authors: info.Authors, Artists: info.Artists, Genres: info.Genres,
+		Status: info.Status, Summary: info.Summary,
+		ChapterLinks: info.ChapterLinks.All(), ChapterNames: info.ChapterNames.All(),
+	}
+
+	pages, err := r.GetPageNumber(base + c.chapterPath)
+	if err != nil {
+		t.Fatalf("GetPageNumber: %v", err)
+	}
+	got.Pages = pages
+
+	// The test server's port changes every run, so it is folded back into a
+	// placeholder before the comparison.
+	normalized := strings.ReplaceAll(mustJSON(t, got), base, "{{BASE}}")
+	normalized = strings.ReplaceAll(normalized, hostAddr, "{{HOST}}")
+
+	goldenPath := filepath.Join(caseDir, "golden.json")
+	if *updateGolden {
+		if err := os.WriteFile(goldenPath, []byte(normalized+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("wrote %s", goldenPath)
+		return r
+	}
+
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("%v\nrun `go test ./internal/scraper/ -run TestGolden -update` to create it", err)
+	}
+	if diff := strings.TrimSpace(string(want)); diff != normalized {
+		t.Errorf("output differs from %s\n--- want ---\n%s\n--- got ---\n%s",
+			goldenPath, diff, normalized)
+	}
+	return r
 }
 
 // goldenExchange is one response seeded into a cassette. A request body is
@@ -348,7 +342,7 @@ type goldenExchange struct {
 }
 
 // seedCassette builds a cassette from a case's declared exchanges.
-func seedCassette(t *testing.T, dir string, exchanges []goldenExchange) *Cassette {
+func seedCassette(t testing.TB, dir string, exchanges []goldenExchange) *Cassette {
 	t.Helper()
 	c, err := NewCassette(filepath.Join(t.TempDir(), "cassette"), false, nil)
 	if err != nil {
@@ -371,7 +365,7 @@ func seedCassette(t *testing.T, dir string, exchanges []goldenExchange) *Cassett
 }
 
 // goldenServer serves the case's fixture files, substituting the live base URL.
-func goldenServer(t *testing.T, dir string, routes map[string]string) (*httptest.Server, string) {
+func goldenServer(t testing.TB, dir string, routes map[string]string) (*httptest.Server, string) {
 	t.Helper()
 	var base string
 	mux := http.NewServeMux()

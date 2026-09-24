@@ -2,13 +2,14 @@ package scraper
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
 	"image/jpeg"
 	"image/png"
 
-	lua "github.com/yuin/gopher-lua"
+	rt "github.com/arnodel/golua/runtime"
 	_ "golang.org/x/image/webp" // decode-only, for sites serving scrambled webp
 )
 
@@ -192,102 +193,137 @@ const (
 	matrixTypeName = "atsume.ImagePuzzleMatrix"
 )
 
-// imagepuzzleLoader registers fmd.imagepuzzle.
-func imagepuzzleLoader(L *lua.LState) int {
-	create := func(L *lua.LState) int {
-		L.Push(pushPuzzle(L, NewImagePuzzle(L.CheckInt(1), L.CheckInt(2))))
-		return 1
+func imagePuzzleLib(r *rt.Runtime) *rt.Table {
+	create := goFn{2, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		hor, err := checkInt(c, 0)
+		if err != nil {
+			return nil, err
+		}
+		ver, err := checkInt(c, 1)
+		if err != nil {
+			return nil, err
+		}
+		return c.PushingNext1(t.Runtime, pushPuzzle(t.Runtime, NewImagePuzzle(hor, ver))), nil
+	}}
+	return newLib(r, map[string]goFn{"Create": create, "New": create})
+}
+
+func toPuzzle(c *rt.GoCont) (*ImagePuzzle, error) {
+	if u, ok := c.Arg(0).TryUserData(); ok {
+		if p, ok := u.Value().(*ImagePuzzle); ok {
+			return p, nil
+		}
 	}
-	L.Push(L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-		"Create": create,
-		"New":    create,
-	}))
-	return 1
+	return nil, fmt.Errorf("bad argument #1 (image puzzle expected, got %s)", c.Arg(0).TypeName())
 }
 
-func registerImagePuzzle(L *lua.LState) {
-	mt := L.NewTypeMetatable(puzzleTypeName)
-	L.SetField(mt, "__index", L.NewFunction(puzzleIndex))
-	L.SetField(mt, "__newindex", L.NewFunction(puzzleNewIndex))
-
-	// Matrix is an indexed property, so it needs an object of its own to carry
-	// the element accessors.
-	mmt := L.NewTypeMetatable(matrixTypeName)
-	L.SetField(mmt, "__index", L.NewFunction(func(L *lua.LState) int {
-		p := L.CheckUserData(1).Value.(*ImagePuzzle)
-		i := L.CheckInt(2)
-		if i < 0 || i >= len(p.Matrix) {
-			L.Push(lua.LNil)
-			return 1
-		}
-		L.Push(lua.LNumber(p.Matrix[i]))
-		return 1
-	}))
-	L.SetField(mmt, "__newindex", L.NewFunction(func(L *lua.LState) int {
-		p := L.CheckUserData(1).Value.(*ImagePuzzle)
-		i := L.CheckInt(2)
-		if i < 0 || i >= len(p.Matrix) {
-			L.RaiseError("imagepuzzle: Matrix[%d] is outside a %dx%d grid",
-				i, p.HorBlock, p.VerBlock)
-			return 0
-		}
-		p.Matrix[i] = L.CheckInt(3)
-		return 0
-	}))
-	L.SetField(mmt, "__len", L.NewFunction(func(L *lua.LState) int {
-		L.Push(lua.LNumber(len(L.CheckUserData(1).Value.(*ImagePuzzle).Matrix)))
-		return 1
-	}))
+func pushPuzzle(r *rt.Runtime, p *ImagePuzzle) rt.Value {
+	meta := typeMeta(r, puzzleTypeName, func() *rt.Table {
+		mt := rt.NewTable()
+		mt.Set(rt.StringValue("__index"), rt.FunctionValue(newGoFunc(puzzleIndex, "__index", 2, false)))
+		mt.Set(rt.StringValue("__newindex"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			p, err := toPuzzle(c)
+			if err != nil {
+				return nil, err
+			}
+			key, err := checkString(c, 1)
+			if err != nil {
+				return nil, err
+			}
+			if key == "Multiply" {
+				if p.Multiply, err = checkInt(c, 2); err != nil {
+					return nil, err
+				}
+			}
+			return c.Next(), nil
+		}, "__newindex", 3, false)))
+		return mt
+	})
+	return rt.UserDataValue(rt.NewUserData(p, meta))
 }
 
-func pushPuzzle(L *lua.LState, p *ImagePuzzle) lua.LValue {
-	ud := L.NewUserData()
-	ud.Value = p
-	L.SetMetatable(ud, L.GetTypeMetatable(puzzleTypeName))
-	return ud
-}
-
-func puzzleIndex(L *lua.LState) int {
-	p := L.CheckUserData(1).Value.(*ImagePuzzle)
-	switch L.CheckString(2) {
+func puzzleIndex(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	p, err := toPuzzle(c)
+	if err != nil {
+		return nil, err
+	}
+	key, err := checkString(c, 1)
+	if err != nil {
+		return nil, err
+	}
+	var v rt.Value
+	switch key {
 	case "Matrix":
-		ud := L.NewUserData()
-		ud.Value = p
-		L.SetMetatable(ud, L.GetTypeMetatable(matrixTypeName))
-		L.Push(ud)
+		v = pushMatrix(t.Runtime, p)
 	case "HorBlock":
-		L.Push(lua.LNumber(p.HorBlock))
+		v = rt.IntValue(int64(p.HorBlock))
 	case "VerBlock":
-		L.Push(lua.LNumber(p.VerBlock))
+		v = rt.IntValue(int64(p.VerBlock))
 	case "Multiply":
-		L.Push(lua.LNumber(p.Multiply))
+		v = rt.IntValue(int64(p.Multiply))
 	case "DeScramble":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
+		v = luaMethod(key, 2, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
 			// Modules call DeScramble(HTTP.Document, HTTP.Document) to rewrite
 			// the response in place, so input and output are often the same.
-			in, out := documentArg(L, 1), documentArg(L, 2)
+			in, out := documentArg(c, 0), documentArg(c, 1)
 			if in == nil || out == nil {
-				L.RaiseError("imagepuzzle: DeScramble expects two streams")
-				return 0
+				return rt.NilValue, errors.New("imagepuzzle: DeScramble expects two streams")
 			}
-			result, err := p.DeScramble(in.data)
+			result, err := p.DeScramble(in.Bytes())
 			if err != nil {
-				L.RaiseError("%s", err.Error())
-				return 0
+				return rt.NilValue, err
 			}
-			out.data = result
-			return 0
-		}))
-	default:
-		L.Push(lua.LNil)
+			out.Set(result)
+			return rt.NilValue, nil
+		})
 	}
-	return 1
+	return c.PushingNext1(t.Runtime, v), nil
 }
 
-func puzzleNewIndex(L *lua.LState) int {
-	p := L.CheckUserData(1).Value.(*ImagePuzzle)
-	if L.CheckString(2) == "Multiply" {
-		p.Multiply = L.CheckInt(3)
-	}
-	return 0
+// pushMatrix exposes Matrix, an indexed property, as an object of its
+// own carrying the element accessors. Indexes are 0-based, as upstream's.
+func pushMatrix(r *rt.Runtime, p *ImagePuzzle) rt.Value {
+	meta := typeMeta(r, matrixTypeName, func() *rt.Table {
+		mt := rt.NewTable()
+		mt.Set(rt.StringValue("__index"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			p, err := toPuzzle(c)
+			if err != nil {
+				return nil, err
+			}
+			i, err := checkInt(c, 1)
+			if err != nil {
+				return nil, err
+			}
+			if i < 0 || i >= len(p.Matrix) {
+				return c.PushingNext1(t.Runtime, rt.NilValue), nil
+			}
+			return c.PushingNext1(t.Runtime, rt.IntValue(int64(p.Matrix[i]))), nil
+		}, "__index", 2, false)))
+		mt.Set(rt.StringValue("__newindex"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			p, err := toPuzzle(c)
+			if err != nil {
+				return nil, err
+			}
+			i, err := checkInt(c, 1)
+			if err != nil {
+				return nil, err
+			}
+			if i < 0 || i >= len(p.Matrix) {
+				return nil, fmt.Errorf("imagepuzzle: Matrix[%d] is outside a %dx%d grid", i, p.HorBlock, p.VerBlock)
+			}
+			if p.Matrix[i], err = checkInt(c, 2); err != nil {
+				return nil, err
+			}
+			return c.Next(), nil
+		}, "__newindex", 3, false)))
+		mt.Set(rt.StringValue("__len"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			p, err := toPuzzle(c)
+			if err != nil {
+				return nil, err
+			}
+			return c.PushingNext1(t.Runtime, rt.IntValue(int64(len(p.Matrix)))), nil
+		}, "__len", 1, false)))
+		return mt
+	})
+	return rt.UserDataValue(rt.NewUserData(p, meta))
 }

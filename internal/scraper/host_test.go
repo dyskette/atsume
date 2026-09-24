@@ -222,22 +222,22 @@ func TestMadaraChapterProtector(t *testing.T) {
 		// ciphertext decrypts to a JSON *string* that itself holds JSON. The
 		// template relies on that, so the fixture has to match.
 		encrypted, err := rt.Exec(fmt.Sprintf(`
-			var CryptoJS = require("utils/crypto-js.min.js");
-			var CryptoJSAesJson = require("utils/cryptojs-aes-format.js");
-			var listText = JSON.stringify([%q, %q]);
-			CryptoJS.AES.encrypt(JSON.stringify(listText), %q,
-				{ format: CryptoJSAesJson }).toString();
-		`, base+"/p1.jpg", base+"/p2.jpg", nonce))
+		var CryptoJS = require("utils/crypto-js.min.js");
+		var CryptoJSAesJson = require("utils/cryptojs-aes-format.js");
+		var listText = JSON.stringify([%q, %q]);
+		CryptoJS.AES.encrypt(JSON.stringify(listText), %q,
+			{ format: CryptoJSAesJson }).toString();
+	`, base+"/p1.jpg", base+"/p2.jpg", nonce))
 		if err != nil {
 			t.Errorf("building the fixture failed: %v", err)
 			return
 		}
 		fmt.Fprintf(w, `<html><body>
-			<script id="chapter-protector-data">
-				var chapter_data = '%s';
-				var wpmangaprotectornonce = '%s';
-			</script>
-		</body></html>`, encrypted, nonce)
+		<script id="chapter-protector-data">
+			var chapter_data = '%s';
+			var wpmangaprotectornonce = '%s';
+		</script>
+	</body></html>`, encrypted, nonce)
 	})
 
 	srv := httptest.NewServer(mux)
@@ -358,11 +358,11 @@ end
 
 function GetPageNumber()
 	local x = CreateTXQuery('<ul><li><a href="/c1"><span class="n">  One  </span></a></li>' ..
-		'<li><a href="/c2"><span class="n">Two</span></a></li></ul>')
+	'<li><a href="/c2"><span class="n">Two</span></a></li></ul>')
 	for v in x.XPath('//li/a').Get() do
-		TASK.PageLinks.Add(v.GetAttribute('href'))
-		TASK.PageLinks.Add(x.XPathString('span[@class="n"]/normalize-space(.)', v))
-		TASK.PageLinks.Add(v.XPathString('span[@class="n"]/normalize-space(.)'))
+	TASK.PageLinks.Add(v.GetAttribute('href'))
+	TASK.PageLinks.Add(x.XPathString('span[@class="n"]/normalize-space(.)', v))
+	TASK.PageLinks.Add(v.XPathString('span[@class="n"]/normalize-space(.)'))
 	end
 	return true
 end
@@ -378,9 +378,6 @@ end
 	}
 	defer r.Close()
 
-	if runtimeForInBug() {
-		t.Skip("blocked by the gopher-lua generic-for bug; see TestRuntimeSupportsChainedForIn")
-	}
 	got, err := r.GetPageNumber("https://example.invalid/c")
 	if err != nil {
 		t.Fatal(err)
@@ -577,11 +574,11 @@ func TestMirrorsShareASite(t *testing.T) {
 	const src = `
 function Init()
 	local function AddWebsiteModule(id, url)
-		local m = NewWebsiteModule()
-		m.ID        = id
-		m.Name      = 'Many Doors'
-		m.RootURL   = url
-		m.OnGetInfo = 'GetInfo'
+	local m = NewWebsiteModule()
+	m.ID        = id
+	m.Name      = 'Many Doors'
+	m.RootURL   = url
+	m.OnGetInfo = 'GetInfo'
 	end
 	AddWebsiteModule('1111', 'https://one.example')
 	AddWebsiteModule('2222', 'https://two.example')
@@ -662,7 +659,7 @@ end
 	defer r.Close()
 
 	start := time.Now()
-	if _, err := r.call("OnGetPageNumber"); err != nil {
+	if err := r.testCall("OnGetPageNumber"); err != nil {
 		t.Fatalf("sleep is a global upstream provides: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
@@ -707,7 +704,7 @@ end
 		cancel()
 	}()
 	start := time.Now()
-	if _, err = r.call("OnGetPageNumber"); err == nil {
+	if err = r.testCall("OnGetPageNumber"); err == nil {
 		t.Error("a cancelled sleep should report why it stopped")
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
@@ -745,7 +742,7 @@ end
 	}
 	defer r.Close()
 
-	got := r.L.GetGlobal("DIR").String()
+	got := r.testGlobal("DIR")
 	if want := dir + string(os.PathSeparator); got != want {
 		t.Errorf("fmd.LuaDirectory = %q, want %q", got, want)
 	}

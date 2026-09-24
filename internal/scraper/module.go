@@ -1,6 +1,10 @@
 package scraper
 
-import lua "github.com/yuin/gopher-lua"
+import (
+	"math"
+
+	rt "github.com/arnodel/golua/runtime"
+)
 
 // OptionKind is the widget a module asks for when declaring a setting.
 type OptionKind string
@@ -18,7 +22,10 @@ type Option struct {
 	Kind    OptionKind
 	Name    string
 	Caption string
-	Default lua.LValue
+	// Default is what the module declared, as a plain Go value: nil, bool,
+	// int64, float64 or string. It is kept free of any Lua runtime's types so
+	// that callers outside this package never depend on one.
+	Default any
 	Items   []string
 }
 
@@ -57,55 +64,92 @@ var moduleEvents = []string{
 	"OnBeforeUpdateList", "OnAfterUpdateList",
 }
 
-// newWebsiteModule builds the table a module's Init() populates. Option setters
-// live on the table so `m.AddOptionCheckBox(...)` works as written upstream.
-//
-// The setters are called with dot notation, so there is no self and the first
-// argument is the option name. The signature is (name, caption, default),
-// except AddOptionComboBox which takes (name, caption, items, default).
-func newWebsiteModule(L *lua.LState, opts *[]Option, storage map[string]string) *lua.LTable {
-	t := L.NewTable()
-	// Three modules seed MODULE.Storage from inside Init(), so the declaration
-	// table exposes the same map the runner will read later.
-	L.SetField(t, "Storage", pushStorage(L, storage))
-	add := func(kind OptionKind) lua.LGFunction {
-		return func(L *lua.LState) int {
-			o := Option{
-				Kind:    kind,
-				Name:    L.CheckString(1),
-				Caption: L.OptString(2, ""),
+// newWebsiteModule builds the table NewWebsiteModule returns: the option
+// setters and the Storage scratchpad. Modules call the setters with a dot, so
+// the first argument is the option name, not the table.
+func newWebsiteModule(r *rt.Runtime, opts *[]Option, storage map[string]string) *rt.Table {
+	t := rt.NewTable()
+	t.Set(rt.StringValue("Storage"), pushStorage(storage))
+	add := func(kind OptionKind) rt.GoFunctionFunc {
+		return func(th *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			name, err := checkString(c, 0)
+			if err != nil {
+				return nil, err
 			}
-			defaultArg := 3
+			o := Option{Kind: kind, Name: name}
+			o.Caption, _ = c.Arg(1).ToString()
+			if c.Arg(1).IsNil() {
+				o.Caption = ""
+			}
+			defaultArg := 2
 			if kind == OptionComboBox {
-				if items, ok := L.Get(3).(*lua.LTable); ok {
-					items.ForEach(func(_, v lua.LValue) { o.Items = append(o.Items, v.String()) })
+				// Only a table of items is read. The newline-separated string
+				// form some modules pass ('Auto\nOriginal') leaves Items
+				// empty, so those combo boxes offer no choices.
+				if items, ok := c.Arg(2).TryTable(); ok {
+					for i := int64(1); i <= items.Len(); i++ {
+						s, _ := items.Get(rt.IntValue(i)).ToString()
+						o.Items = append(o.Items, s)
+					}
 				}
-				defaultArg = 4
+				defaultArg = 3
 			}
-			o.Default = L.Get(defaultArg)
+			o.Default = optionValue(c.Arg(defaultArg))
 			*opts = append(*opts, o)
-			return 0
+			return c.Next(), nil
 		}
 	}
-	L.SetField(t, "AddOptionCheckBox", L.NewFunction(add(OptionCheckBox)))
-	L.SetField(t, "AddOptionSpinEdit", L.NewFunction(add(OptionSpinEdit)))
-	L.SetField(t, "AddOptionComboBox", L.NewFunction(add(OptionComboBox)))
-	// Upstream's name is AddOptionEdit; LUA-REFERENCE.md calls it AddOptionEditBox.
-	L.SetField(t, "AddOptionEdit", L.NewFunction(add(OptionEditBox)))
-	L.SetField(t, "AddOptionEditBox", L.NewFunction(add(OptionEditBox)))
+	for name, kind := range map[string]OptionKind{
+		"AddOptionCheckBox": OptionCheckBox,
+		"AddOptionSpinEdit": OptionSpinEdit,
+		"AddOptionComboBox": OptionComboBox,
+		"AddOptionEdit":     OptionEditBox,
+		"AddOptionEditBox":  OptionEditBox,
+	} {
+		setGoFunc(r, t, name, add(kind), 4, false)
+	}
 	return t
 }
 
-// readModule copies the table Init() returned into a Module.
-func readModule(t *lua.LTable, opts []Option, file string) *Module {
+// pushStorage exposes a string map as Storage['key']. A missing key reads as
+// "" rather than nil, because templates compare it with the empty string.
+func pushStorage(m map[string]string) rt.Value {
+	meta := rt.NewTable()
+	meta.Set(rt.StringValue("__index"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		key, err := checkString(c, 1)
+		if err != nil {
+			return nil, err
+		}
+		return c.PushingNext1(t.Runtime, rt.StringValue(m[key])), nil
+	}, "__index", 2, false)))
+	meta.Set(rt.StringValue("__newindex"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		key, err := checkString(c, 1)
+		if err != nil {
+			return nil, err
+		}
+		val, err := checkString(c, 2)
+		if err != nil {
+			return nil, err
+		}
+		m[key] = val
+		return c.Next(), nil
+	}, "__newindex", 3, false)))
+	return rt.UserDataValue(rt.NewUserData(m, meta))
+}
+
+// readModule reads a declaration table into a Module. Text fields accept a
+// number, as Lua would; flags take Lua truthiness.
+func readModule(t *rt.Table, opts []Option, file string) *Module {
 	m := &Module{Handlers: map[string]string{}, File: file, Options: opts}
 	m.ID = luaStr(t, "ID")
 	m.Name = luaStr(t, "Name")
 	m.RootURL = luaStr(t, "RootURL")
 	m.Category = luaStr(t, "Category")
-	m.AccountSupport = lua.LVAsBool(t.RawGetString("AccountSupport"))
-	m.SortedList = lua.LVAsBool(t.RawGetString("SortedList"))
-	m.TotalDirectory = int(lua.LVAsNumber(t.RawGetString("TotalDirectory")))
+	m.AccountSupport = rt.Truth(t.Get(rt.StringValue("AccountSupport")))
+	m.SortedList = rt.Truth(t.Get(rt.StringValue("SortedList")))
+	if n, ok := rt.ToFloat(t.Get(rt.StringValue("TotalDirectory"))); ok {
+		m.TotalDirectory = int(n)
+	}
 	for _, ev := range moduleEvents {
 		if v := luaStr(t, ev); v != "" {
 			m.Handlers[ev] = v
@@ -114,35 +158,53 @@ func readModule(t *lua.LTable, opts []Option, file string) *Module {
 	return m
 }
 
-const storageTypeName = "atsume.Storage"
-
-// pushStorage exposes a string map as Storage['key'] for reading and writing.
-// A missing key reads as "" rather than nil, because templates compare it to ”.
-func pushStorage(L *lua.LState, m map[string]string) lua.LValue {
-	mt := L.GetTypeMetatable(storageTypeName)
-	if mt == lua.LNil {
-		mt = L.NewTypeMetatable(storageTypeName)
-		L.SetField(mt, "__index", L.NewFunction(func(L *lua.LState) int {
-			store := L.CheckUserData(1).Value.(map[string]string)
-			L.Push(lua.LString(store[L.CheckString(2)]))
-			return 1
-		}))
-		L.SetField(mt, "__newindex", L.NewFunction(func(L *lua.LState) int {
-			store := L.CheckUserData(1).Value.(map[string]string)
-			store[L.CheckString(2)] = L.CheckString(3)
-			return 0
-		}))
+// luaStr reads a string field. A number is converted, as Lua would; any
+// other type reads as empty.
+func luaStr(t *rt.Table, key string) string {
+	v := t.Get(rt.StringValue(key))
+	switch v.Type() {
+	case rt.StringType, rt.IntType, rt.FloatType:
+		s, _ := v.ToString()
+		return s
 	}
-	ud := L.NewUserData()
-	ud.Value = m
-	L.SetMetatable(ud, mt)
-	return ud
+	return ""
 }
 
-func luaStr(t *lua.LTable, key string) string {
-	v := t.RawGetString(key)
-	if v == lua.LNil {
-		return ""
+// optionValue converts a declared default to a plain Go value. A float
+// holding a whole number becomes an int64, so a default written 1.0 and one
+// written 1 read the same on the settings page.
+func optionValue(v rt.Value) any {
+	switch v.Type() {
+	case rt.NilType:
+		return nil
+	case rt.BoolType:
+		return v.AsBool()
+	case rt.IntType:
+		return v.AsInt()
+	case rt.FloatType:
+		if f := v.AsFloat(); f == math.Trunc(f) && math.Abs(f) < 1<<53 {
+			return int64(f)
+		}
+		return v.AsFloat()
+	case rt.StringType:
+		return v.AsString()
 	}
-	return lua.LVAsString(v)
+	s, _ := v.ToString()
+	return s
+}
+
+// luaValueOf is optionValue's inverse, for handing a default back through
+// MODULE.GetOption.
+func luaValueOf(v any) rt.Value {
+	switch v := v.(type) {
+	case bool:
+		return rt.BoolValue(v)
+	case int64:
+		return rt.IntValue(v)
+	case float64:
+		return rt.FloatValue(v)
+	case string:
+		return rt.StringValue(v)
+	}
+	return rt.NilValue
 }

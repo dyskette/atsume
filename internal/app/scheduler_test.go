@@ -502,11 +502,7 @@ func TestModuleKeyDiffersFromDeclaredName(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(luaDir, "modules"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, shared := range []string{"templates", "utils"} {
-		if err := os.Symlink(filepath.Join(upstream, shared), filepath.Join(luaDir, shared)); err != nil {
-			t.Fatal(err)
-		}
-	}
+	copyShared(t, upstream, luaDir)
 	src := fmt.Sprintf(`
 function Init()
 	local m = NewWebsiteModule()
@@ -833,11 +829,7 @@ func twoSiteCheckout(t *testing.T, rootURL string) string {
 	if err := os.MkdirAll(filepath.Join(luaDir, "modules"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, shared := range []string{"templates", "utils"} {
-		if err := os.Symlink(filepath.Join(upstream, shared), filepath.Join(luaDir, shared)); err != nil {
-			t.Fatal(err)
-		}
-	}
+	copyShared(t, upstream, luaDir)
 
 	pair := fmt.Sprintf(`
 function Init()
@@ -1318,11 +1310,7 @@ func sectionedCheckout(t *testing.T, rootURL string) string {
 	if err := os.MkdirAll(filepath.Join(luaDir, "modules"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, shared := range []string{"templates", "utils"} {
-		if err := os.Symlink(filepath.Join(upstream, shared), filepath.Join(luaDir, shared)); err != nil {
-			t.Fatal(err)
-		}
-	}
+	copyShared(t, upstream, luaDir)
 	src := fmt.Sprintf(`
 function Init()
 	local m = NewWebsiteModule()
@@ -1539,11 +1527,7 @@ func TestIndexStopsWhenNothingIsNew(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(luaDir, "modules"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, shared := range []string{"templates", "utils"} {
-		if err := os.Symlink(filepath.Join(upstream, shared), filepath.Join(luaDir, shared)); err != nil {
-			t.Fatal(err)
-		}
-	}
+	copyShared(t, upstream, luaDir)
 	// The page it is given is ignored, exactly as upstream's does.
 	src := fmt.Sprintf(`
 function Init()

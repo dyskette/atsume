@@ -3,14 +3,16 @@ package scraper
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 )
 
 // minLoadRate is the share of upstream modules that must load. It guards
-// against a regression in the Lua host; the known shortfall is the handful of
-// modules written against Lua 5.3+ syntax that gopher-lua's 5.1 parser rejects.
+// against a regression in the Lua host. The known shortfall is MangaPlus,
+// which needs a C protobuf library, and the nine modules Lua 5.5 rejects for
+// assigning to a for loop's control variable (see lua55Rejects).
 const minLoadRate = 0.97
 
 // TestLoadAllModules opens every upstream module and reports which fail.
@@ -69,12 +71,20 @@ func TestLoadAllModules(t *testing.T) {
 	// failure there is a binding bug worth seeing without having to breach the
 	// floor first.
 	for _, c := range causes {
-		if c == "lua 5.3 operators" {
+		if c == "lua 5.5 read-only for" {
 			continue
 		}
 		for _, name := range byCause[c] {
 			t.Logf("    %s: %s", name, firstLine(failures[name]))
 		}
+	}
+
+	// The Lua 5.5 rejects are pinned exactly: a module joining them is a
+	// regression, and one leaving them means upstream fixed it.
+	rejects := byCause["lua 5.5 read-only for"]
+	sort.Strings(rejects)
+	if !slices.Equal(rejects, lua55Rejects) {
+		t.Errorf("modules Lua 5.5 rejects:\n got %v\nwant %v", rejects, lua55Rejects)
 	}
 
 	if rate < minLoadRate {
@@ -93,14 +103,12 @@ func firstLine(s string) string {
 // classifyLoadError buckets a load failure by its root cause.
 func classifyLoadError(err string) string {
 	switch {
+	// Lua 5.5 makes a for loop's control variable read-only; nine upstream
+	// modules assign to it.
+	case strings.Contains(err, "constant variable"):
+		return "lua 5.5 read-only for"
 	case strings.Contains(err, "goto"):
 		return "lua 5.2 goto"
-	// Bitwise operators and floor division are Lua 5.3 syntax that gopher-lua's
-	// 5.1 parser rejects outright.
-	case strings.Contains(err, `near '&'`) || strings.Contains(err, `near '|'`) ||
-		strings.Contains(err, `near '~'`) || strings.Contains(err, `near '<<'`) ||
-		strings.Contains(err, `near '>>'`) || strings.Contains(err, `near '/'`):
-		return "lua 5.3 operators"
 	case strings.Contains(err, "module") && strings.Contains(err, "not found"):
 		return "missing require target"
 	case strings.Contains(err, "Init never called"):

@@ -1,12 +1,14 @@
 package scraper
 
 import (
+	"context"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
+	rt "github.com/arnodel/golua/runtime"
 	"github.com/dyskette/atsume/internal/txquery"
-	lua "github.com/yuin/gopher-lua"
 )
 
 // Handler return codes, injected as globals because every module returns them.
@@ -26,284 +28,9 @@ const (
 
 const queryTypeName = "atsume.Query"
 
-// registerQuery installs the object CreateTXQuery returns.
-func registerQuery(L *lua.LState) {
-	mt := L.NewTypeMetatable(queryTypeName)
-	L.SetField(mt, "__index", L.NewFunction(queryIndex))
-}
-
-func pushQuery(L *lua.LState, q *txquery.Query) lua.LValue {
-	ud := L.NewUserData()
-	ud.Value = q
-	L.SetMetatable(ud, L.GetTypeMetatable(queryTypeName))
-	return ud
-}
-
 const nodeListTypeName = "atsume.NodeList"
 
-func registerNodeList(L *lua.LState) {
-	mt := L.NewTypeMetatable(nodeListTypeName)
-	L.SetField(mt, "__index", L.NewFunction(nodeListIndex))
-	L.SetField(mt, "__len", L.NewFunction(func(L *lua.LState) int {
-		L.Push(lua.LNumber(len(L.CheckUserData(1).Value.(*nodeList).nodes)))
-		return 1
-	}))
-}
-
-// nodeList is what XPath() returns. FMD2 modules consume it either as
-// `list.Get()` in a generic for, or by index through Get(i).
-type nodeList struct{ nodes []*txquery.Node }
-
-func pushNodeList(L *lua.LState, nodes []*txquery.Node) lua.LValue {
-	ud := L.NewUserData()
-	ud.Value = &nodeList{nodes: nodes}
-	L.SetMetatable(ud, L.GetTypeMetatable(nodeListTypeName))
-	return ud
-}
-
-func nodeListIndex(L *lua.LState) int {
-	nl := L.CheckUserData(1).Value.(*nodeList)
-	switch key := L.Get(2).(type) {
-	case lua.LNumber:
-		i := int(key)
-		if i >= 1 && i <= len(nl.nodes) { // Get(i) is 1-based upstream
-			L.Push(pushNode(L, nl.nodes[i-1]))
-		} else {
-			L.Push(lua.LNil)
-		}
-		return 1
-	case lua.LString:
-		switch string(key) {
-		case "Count":
-			L.Push(lua.LNumber(len(nl.nodes)))
-		case "Get":
-			// Get() with no argument yields an iterator; Get(i) returns one node.
-			L.Push(L.NewFunction(func(L *lua.LState) int {
-				if L.GetTop() >= 1 {
-					i := L.CheckInt(1)
-					if i >= 1 && i <= len(nl.nodes) {
-						L.Push(pushNode(L, nl.nodes[i-1]))
-					} else {
-						L.Push(lua.LNil)
-					}
-					return 1
-				}
-				i := 0
-				L.Push(L.NewFunction(func(L *lua.LState) int {
-					if i >= len(nl.nodes) {
-						L.Push(lua.LNil)
-						return 1
-					}
-					L.Push(pushNode(L, nl.nodes[i]))
-					i++
-					return 1
-				}))
-				return 1
-			}))
-		default:
-			L.Push(lua.LNil)
-		}
-		return 1
-	}
-	L.Push(lua.LNil)
-	return 1
-}
-
 const nodeTypeName = "atsume.Node"
-
-func registerNode(L *lua.LState) {
-	mt := L.NewTypeMetatable(nodeTypeName)
-	L.SetField(mt, "__index", L.NewFunction(nodeIndex))
-}
-
-func pushNode(L *lua.LState, n *txquery.Node) lua.LValue {
-	ud := L.NewUserData()
-	ud.Value = n
-	L.SetMetatable(ud, L.GetTypeMetatable(nodeTypeName))
-	return ud
-}
-
-func queryIndex(L *lua.LState) int {
-	ud := L.CheckUserData(1)
-	q := ud.Value.(*txquery.Query)
-	switch L.CheckString(2) {
-	case "XPathString":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			// x.XPathString(expr) or x.XPathString(expr, contextNode)
-			if ctx := contextNode(L, 2); ctx != nil {
-				L.Push(lua.LString(ctx.XPathString(L.CheckString(1))))
-				return 1
-			}
-			L.Push(lua.LString(q.XPathString(L.CheckString(1))))
-			return 1
-		}))
-	case "XPathStringAll":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			expr := L.CheckString(1)
-			// Upstream overloads this three ways: a separator, an output list
-			// to fill, or a context node. Madara uses the list form to collect
-			// TASK.PageLinks, so all three have to be distinguished here.
-			if out := stringsArg(L, 2); out != nil {
-				for _, v := range q.XPathValues(expr, nil) {
-					if v != "" {
-						out.Add(v)
-					}
-				}
-				return 0
-			}
-			sep, ctxArg := txquery.DefaultSeparator, 2
-			if s, ok := L.Get(2).(lua.LString); ok {
-				sep, ctxArg = string(s), 3
-			}
-			if ctx := contextNode(L, ctxArg); ctx != nil {
-				L.Push(lua.LString(ctx.XPathStringAll(expr, sep)))
-				return 1
-			}
-			L.Push(lua.LString(q.XPathStringAll(expr, sep)))
-			return 1
-		}))
-	case "XPathCount":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			if ctx := contextNode(L, 2); ctx != nil {
-				L.Push(lua.LNumber(ctx.XPathCount(L.CheckString(1))))
-				return 1
-			}
-			L.Push(lua.LNumber(q.XPathCount(L.CheckString(1))))
-			return 1
-		}))
-	case "XPath":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			if ctx := contextNode(L, 2); ctx != nil {
-				L.Push(pushNodeList(L, ctx.XPath(L.CheckString(1))))
-				return 1
-			}
-			L.Push(pushNodeList(L, q.XPath(L.CheckString(1))))
-			return 1
-		}))
-	case "XPathHREFAll":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			// The fourth argument, when present, scopes the search to a node.
-			var links, names []string
-			if ctx := contextNode(L, 4); ctx != nil {
-				links, names = ctx.XPathHREFAll(L.CheckString(1))
-			} else {
-				links, names = q.XPathHREFAll(L.CheckString(1))
-			}
-			appendAll(L, 2, links)
-			appendAll(L, 3, names)
-			return 0
-		}))
-	case "XPathHREFTitleAll":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			var links, names []string
-			if ctx := contextNode(L, 4); ctx != nil {
-				links, names = ctx.XPathHREFTitleAll(L.CheckString(1))
-			} else {
-				links, names = q.XPathHREFTitleAll(L.CheckString(1))
-			}
-			appendAll(L, 2, links)
-			appendAll(L, 3, names)
-			return 0
-		}))
-	case "ParseHTML":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			// Reparsing replaces the document in place, matching x.ParseHTML(s).
-			if nq, err := txquery.ParseString(argText(L, 1)); err == nil {
-				ud.Value = nq
-			}
-			return 0
-		}))
-	default:
-		L.Push(lua.LNil)
-	}
-	return 1
-}
-
-// appendAll pushes values into a Strings argument, skipping a missing one so a
-// module may pass only the list it cares about.
-func appendAll(L *lua.LState, n int, vals []string) {
-	ud, ok := L.Get(n).(*lua.LUserData)
-	if !ok {
-		return
-	}
-	s, ok := ud.Value.(*Strings)
-	if !ok {
-		return
-	}
-	for _, v := range vals {
-		s.Add(v)
-	}
-}
-
-func nodeIndex(L *lua.LState) int {
-	n := L.CheckUserData(1).Value.(*txquery.Node)
-	switch L.CheckString(2) {
-	case "ToString":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			L.Push(lua.LString(n.Text()))
-			return 1
-		}))
-	case "GetAttribute":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			L.Push(lua.LString(n.Attribute(L.CheckString(1))))
-			return 1
-		}))
-	case "GetProperty":
-		// Upstream returns a value object here, and modules chain straight into
-		// .ToString(), so this must be a node rather than a plain string.
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			L.Push(pushNode(L, n.Property(L.CheckString(1))))
-			return 1
-		}))
-	case "XPathString":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			L.Push(lua.LString(n.XPathString(L.CheckString(1))))
-			return 1
-		}))
-	case "XPathStringAll":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			L.Push(lua.LString(n.XPathStringAll(L.CheckString(1), L.OptString(2, txquery.DefaultSeparator))))
-			return 1
-		}))
-	case "XPath":
-		L.Push(L.NewFunction(func(L *lua.LState) int {
-			L.Push(pushNodeList(L, n.XPath(L.CheckString(1))))
-			return 1
-		}))
-	default:
-		L.Push(lua.LNil)
-	}
-	return 1
-}
-
-// stringsArg returns the Strings list at argument n, or nil when it is not one.
-func stringsArg(L *lua.LState, n int) *Strings {
-	ud, ok := L.Get(n).(*lua.LUserData)
-	if !ok {
-		return nil
-	}
-	s, _ := ud.Value.(*Strings)
-	return s
-}
-
-// contextNode resolves the optional context argument a module passes to
-// XPathString/XPath. It accepts either a node or a node list, since modules use
-// both: a list comes from an earlier XPath() call, a node from iterating one.
-func contextNode(L *lua.LState, n int) *txquery.Node {
-	ud, ok := L.Get(n).(*lua.LUserData)
-	if !ok {
-		return nil
-	}
-	switch v := ud.Value.(type) {
-	case *txquery.Node:
-		return v
-	case *nodeList:
-		if len(v.nodes) > 0 {
-			return v.nodes[0]
-		}
-	}
-	return nil
-}
 
 // GetBetween returns the text between the first left and the following right.
 func GetBetween(left, right, s string) string {
@@ -403,95 +130,410 @@ func MangaInfoStatusIfPos(s, ongoing, completed, hiatus, dropped string) string 
 	return ""
 }
 
-// registerBuiltins installs the free functions and constants modules expect.
 // maxSleep caps what a module can ask to wait for. The longest deliberate
 // pause upstream uses is a few seconds.
 const maxSleep = 30 * time.Second
 
-func registerBuiltins(L *lua.LState) {
-	L.SetGlobal("no_error", lua.LNumber(noError))
-	L.SetGlobal("net_problem", lua.LNumber(netProblem))
-	L.SetGlobal("information_not_found", lua.LNumber(informationNotFound))
-	L.SetGlobal("asUnknown", lua.LNumber(asUnknown))
-	L.SetGlobal("asChecking", lua.LNumber(asChecking))
-	L.SetGlobal("asValid", lua.LNumber(asValid))
-	L.SetGlobal("asInvalid", lua.LNumber(asInvalid))
+// queryHolder holds the parsed document behind a query object. It is a holder
+// rather than the *txquery.Query itself because ParseHTML replaces the
+// document in place, and golua userdata cannot change its value.
+type queryHolder struct{ q *txquery.Query }
+
+// nodeList is what XPath() returns. Modules consume it either as
+// list.Get() in a generic for, or by index through Get(i).
+type nodeList struct{ nodes []*txquery.Node }
+
+func pushQuery(r *rt.Runtime, q *txquery.Query) rt.Value {
+	meta := typeMeta(r, queryTypeName, func() *rt.Table {
+		mt := rt.NewTable()
+		mt.Set(rt.StringValue("__index"), rt.FunctionValue(newGoFunc(queryIndex, "__index", 2, false)))
+		return mt
+	})
+	return rt.UserDataValue(rt.NewUserData(&queryHolder{q: q}, meta))
+}
+
+func pushNodeList(r *rt.Runtime, nodes []*txquery.Node) rt.Value {
+	meta := typeMeta(r, nodeListTypeName, func() *rt.Table {
+		mt := rt.NewTable()
+		mt.Set(rt.StringValue("__index"), rt.FunctionValue(newGoFunc(nodeListIndex, "__index", 2, false)))
+		mt.Set(rt.StringValue("__len"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			nl, err := toNodeList(c)
+			if err != nil {
+				return nil, err
+			}
+			return c.PushingNext1(t.Runtime, rt.IntValue(int64(len(nl.nodes)))), nil
+		}, "__len", 1, false)))
+		return mt
+	})
+	return rt.UserDataValue(rt.NewUserData(&nodeList{nodes: nodes}, meta))
+}
+
+func pushNode(r *rt.Runtime, n *txquery.Node) rt.Value {
+	meta := typeMeta(r, nodeTypeName, func() *rt.Table {
+		mt := rt.NewTable()
+		mt.Set(rt.StringValue("__index"), rt.FunctionValue(newGoFunc(nodeIndex, "__index", 2, false)))
+		return mt
+	})
+	return rt.UserDataValue(rt.NewUserData(n, meta))
+}
+
+func toNodeList(c *rt.GoCont) (*nodeList, error) {
+	if u, ok := c.Arg(0).TryUserData(); ok {
+		if nl, ok := u.Value().(*nodeList); ok {
+			return nl, nil
+		}
+	}
+	return nil, fmt.Errorf("bad argument #1 (node list expected, got %s)", c.Arg(0).TypeName())
+}
+
+// at returns the node at a 1-based index, as upstream's Get(i) counts, or
+// nil when out of range.
+func (nl *nodeList) at(r *rt.Runtime, i int) rt.Value {
+	if i < 1 || i > len(nl.nodes) {
+		return rt.NilValue
+	}
+	return pushNode(r, nl.nodes[i-1])
+}
+
+func nodeListIndex(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	nl, err := toNodeList(c)
+	if err != nil {
+		return nil, err
+	}
+	key := c.Arg(1)
+	if key.Type() == rt.IntType || key.Type() == rt.FloatType {
+		return c.PushingNext1(t.Runtime, nl.at(t.Runtime, truncInt(key))), nil
+	}
+	var v rt.Value
+	switch name, _ := key.TryString(); name {
+	case "Count":
+		v = rt.IntValue(int64(len(nl.nodes)))
+	case "Get":
+		// Get() with no argument yields an iterator; Get(i) returns one node.
+		v = rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			if c.NArgs() >= 1 {
+				i, err := checkInt(c, 0)
+				if err != nil {
+					return nil, err
+				}
+				return c.PushingNext1(t.Runtime, nl.at(t.Runtime, i)), nil
+			}
+			i := 0
+			next := newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+				i++
+				return c.PushingNext1(t.Runtime, nl.at(t.Runtime, i)), nil
+			}, "Get", 0, false)
+			return c.PushingNext1(t.Runtime, rt.FunctionValue(next)), nil
+		}, "Get", 1, false))
+	}
+	return c.PushingNext1(t.Runtime, v), nil
+}
+
+// contextNode resolves the optional context argument a module passes to
+// XPathString and friends: a node, or a node list meaning its first node.
+func contextNode(c *rt.GoCont, n int) *txquery.Node {
+	u, ok := c.Arg(n).TryUserData()
+	if !ok {
+		return nil
+	}
+	switch v := u.Value().(type) {
+	case *txquery.Node:
+		return v
+	case *nodeList:
+		if len(v.nodes) > 0 {
+			return v.nodes[0]
+		}
+	}
+	return nil
+}
+
+// stringsArg returns the Strings list at argument n, or nil when it is
+// not one.
+func stringsArg(c *rt.GoCont, n int) *Strings {
+	if u, ok := c.Arg(n).TryUserData(); ok {
+		s, _ := u.Value().(*Strings)
+		return s
+	}
+	return nil
+}
+
+// appendAll adds values to a Strings argument, skipping a missing one so
+// a module may pass only the list it cares about.
+func appendAll(c *rt.GoCont, n int, vals []string) {
+	if s := stringsArg(c, n); s != nil {
+		for _, v := range vals {
+			s.Add(v)
+		}
+	}
+}
+
+func queryIndex(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	u, ok := c.Arg(0).TryUserData()
+	var h *queryHolder
+	if ok {
+		h, ok = u.Value().(*queryHolder)
+	}
+	if !ok {
+		return nil, fmt.Errorf("bad argument #1 (query expected, got %s)", c.Arg(0).TypeName())
+	}
+	key, err := checkString(c, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	var v rt.Value
+	switch key {
+	case "XPathString":
+		// x.XPathString(expr) or x.XPathString(expr, contextNode)
+		v = luaMethod(key, 2, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			expr, err := checkString(c, 0)
+			if err != nil {
+				return rt.NilValue, err
+			}
+			if ctx := contextNode(c, 1); ctx != nil {
+				return rt.StringValue(ctx.XPathString(expr)), nil
+			}
+			return rt.StringValue(h.q.XPathString(expr)), nil
+		})
+	case "XPathStringAll":
+		v = luaMethod(key, 3, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			expr, err := checkString(c, 0)
+			if err != nil {
+				return rt.NilValue, err
+			}
+			// Upstream overloads this three ways: a separator, an output list
+			// to fill, or a context node. Madara uses the list form to collect
+			// TASK.PageLinks, so all three have to be distinguished here.
+			if out := stringsArg(c, 1); out != nil {
+				for _, v := range h.q.XPathValues(expr, nil) {
+					if v != "" {
+						out.Add(v)
+					}
+				}
+				return rt.NilValue, nil
+			}
+			sep, ctxArg := txquery.DefaultSeparator, 1
+			if s, ok := c.Arg(1).TryString(); ok {
+				sep, ctxArg = s, 2
+			}
+			if ctx := contextNode(c, ctxArg); ctx != nil {
+				return rt.StringValue(ctx.XPathStringAll(expr, sep)), nil
+			}
+			return rt.StringValue(h.q.XPathStringAll(expr, sep)), nil
+		})
+	case "XPathCount":
+		v = luaMethod(key, 2, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			expr, err := checkString(c, 0)
+			if err != nil {
+				return rt.NilValue, err
+			}
+			if ctx := contextNode(c, 1); ctx != nil {
+				return rt.IntValue(int64(ctx.XPathCount(expr))), nil
+			}
+			return rt.IntValue(int64(h.q.XPathCount(expr))), nil
+		})
+	case "XPath":
+		v = luaMethod(key, 2, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			expr, err := checkString(c, 0)
+			if err != nil {
+				return rt.NilValue, err
+			}
+			if ctx := contextNode(c, 1); ctx != nil {
+				return pushNodeList(t.Runtime, ctx.XPath(expr)), nil
+			}
+			return pushNodeList(t.Runtime, h.q.XPath(expr)), nil
+		})
+	case "XPathHREFAll", "XPathHREFTitleAll":
+		// XPathHREFAll(expr, links, names[, contextNode]); the context node
+		// scopes the search.
+		title := key == "XPathHREFTitleAll"
+		v = luaMethod(key, 4, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			expr, err := checkString(c, 0)
+			if err != nil {
+				return rt.NilValue, err
+			}
+			var links, names []string
+			switch ctx := contextNode(c, 3); {
+			case ctx != nil && title:
+				links, names = ctx.XPathHREFTitleAll(expr)
+			case ctx != nil:
+				links, names = ctx.XPathHREFAll(expr)
+			case title:
+				links, names = h.q.XPathHREFTitleAll(expr)
+			default:
+				links, names = h.q.XPathHREFAll(expr)
+			}
+			appendAll(c, 1, links)
+			appendAll(c, 2, names)
+			return rt.NilValue, nil
+		})
+	case "ParseHTML":
+		v = luaMethod(key, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			// Reparsing replaces the document in place, matching x.ParseHTML(s).
+			if nq, err := txquery.ParseString(argText(c, 0)); err == nil {
+				h.q = nq
+			}
+			return rt.NilValue, nil
+		})
+	}
+	return c.PushingNext1(t.Runtime, v), nil
+}
+
+func nodeIndex(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	u, ok := c.Arg(0).TryUserData()
+	var n *txquery.Node
+	if ok {
+		n, ok = u.Value().(*txquery.Node)
+	}
+	if !ok {
+		return nil, fmt.Errorf("bad argument #1 (node expected, got %s)", c.Arg(0).TypeName())
+	}
+	key, err := checkString(c, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	// str1 adapts a node method taking one string.
+	str1 := func(name string, fn func(string) rt.Value) rt.Value {
+		return luaMethod(name, 1, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			s, err := checkString(c, 0)
+			if err != nil {
+				return rt.NilValue, err
+			}
+			return fn(s), nil
+		})
+	}
+	var v rt.Value
+	switch key {
+	case "ToString":
+		v = luaMethod(key, 0, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			return rt.StringValue(n.Text()), nil
+		})
+	case "GetAttribute":
+		v = str1(key, func(s string) rt.Value { return rt.StringValue(n.Attribute(s)) })
+	case "GetProperty":
+		// Upstream returns a value object here, and modules chain straight
+		// into .ToString(), so this must be a node rather than a string.
+		v = str1(key, func(s string) rt.Value { return pushNode(t.Runtime, n.Property(s)) })
+	case "XPathString":
+		v = str1(key, func(s string) rt.Value { return rt.StringValue(n.XPathString(s)) })
+	case "XPathStringAll":
+		v = luaMethod(key, 2, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+			expr, err := checkString(c, 0)
+			if err != nil {
+				return rt.NilValue, err
+			}
+			sep, err := optString(c, 1, txquery.DefaultSeparator)
+			if err != nil {
+				return rt.NilValue, err
+			}
+			return rt.StringValue(n.XPathStringAll(expr, sep)), nil
+		})
+	case "XPath":
+		v = str1(key, func(s string) rt.Value { return pushNodeList(t.Runtime, n.XPath(s)) })
+	}
+	return c.PushingNext1(t.Runtime, v), nil
+}
+
+// registerBuiltins installs the free functions and constants modules expect.
+// ctx bounds sleep.
+func registerBuiltins(r *rt.Runtime, ctx context.Context) {
+	env := r.GlobalEnv()
+	for name, v := range map[string]int64{
+		"no_error":              noError,
+		"net_problem":           netProblem,
+		"information_not_found": informationNotFound,
+		"asUnknown":             asUnknown,
+		"asChecking":            asChecking,
+		"asValid":               asValid,
+		"asInvalid":             asInvalid,
+	} {
+		env.Set(rt.StringValue(name), rt.IntValue(v))
+	}
 
 	// sleep(milliseconds) is an upstream global. Twelve modules use it, and
 	// they are not being polite: a site that drip-feeds images over repeated
 	// requests gives back only a couple per request without a pause between
 	// them, so skipping the wait loses pages.
 	//
-	// It honours the scrape's context, so cancelling a download does not have
-	// to wait out a module's idea of a reasonable delay, and it is capped
-	// because a module asking to sleep for an hour has gone wrong.
-	L.SetGlobal("sleep", L.NewFunction(func(L *lua.LState) int {
-		d := time.Duration(L.CheckInt64(1)) * time.Millisecond
+	// It is capped at maxSleep, because a module asking to sleep for an hour
+	// has gone wrong. A cancelled context ends the whole call rather than
+	// just the wait, since the module would otherwise carry on as though it
+	// had slept.
+	setGoFunc(r, env, "sleep", func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		ms, err := checkInt(c, 0)
+		if err != nil {
+			return nil, err
+		}
+		d := time.Duration(ms) * time.Millisecond
 		if d <= 0 {
-			return 0
+			return c.Next(), nil
 		}
-		if d > maxSleep {
-			d = maxSleep
-		}
-		ctx := L.Context()
-		if ctx == nil {
-			time.Sleep(d)
-			return 0
-		}
+		d = min(d, maxSleep)
 		timer := time.NewTimer(d)
 		defer timer.Stop()
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
-			L.RaiseError("sleep: %v", ctx.Err())
+			t.TerminateContext("sleep: %v", ctx.Err())
 		}
-		return 0
-	}))
-	L.SetGlobal("CreateTXQuery", L.NewFunction(func(L *lua.LState) int {
-		// The argument is usually HTTP.Document, which is userdata, not a string.
-		q, err := txquery.ParseString(argText(L, 1))
+		return c.Next(), nil
+	}, 1, false)
+
+	setGoFunc(r, env, "CreateTXQuery", func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		// The argument is usually HTTP.Document, which is userdata.
+		q, err := txquery.ParseString(argText(c, 0))
 		if err != nil {
-			L.Push(lua.LNil)
-			return 1
+			return c.PushingNext1(t.Runtime, rt.NilValue), nil
 		}
-		L.Push(pushQuery(L, q))
-		return 1
-	}))
-	L.SetGlobal("GetBetween", L.NewFunction(func(L *lua.LState) int {
-		L.Push(lua.LString(GetBetween(L.CheckString(1), L.CheckString(2), L.CheckString(3))))
-		return 1
-	}))
-	L.SetGlobal("SeparateLeft", L.NewFunction(func(L *lua.LState) int {
-		s, sep := L.CheckString(1), L.CheckString(2)
-		if left, _, ok := strings.Cut(s, sep); ok {
-			L.Push(lua.LString(left))
-		} else {
-			L.Push(lua.LString(s))
+		return c.PushingNext1(t.Runtime, pushQuery(t.Runtime, q)), nil
+	}, 1, false)
+
+	// strFns adapts functions of plain strings, all arguments required.
+	strFns := map[string]struct {
+		n  int
+		fn func(a []string) string
+	}{
+		"GetBetween": {3, func(a []string) string { return GetBetween(a[0], a[1], a[2]) }},
+		"SeparateLeft": {2, func(a []string) string {
+			left, _, _ := strings.Cut(a[0], a[1])
+			return left
+		}},
+		"SeparateRight": {2, func(a []string) string {
+			if _, right, ok := strings.Cut(a[0], a[1]); ok {
+				return right
+			}
+			return a[0]
+		}},
+		"Trim":          {1, func(a []string) string { return strings.TrimSpace(a[0]) }},
+		"MaybeFillHost": {2, func(a []string) string { return MaybeFillHost(a[0], a[1]) }},
+	}
+	for name, f := range strFns {
+		setGoFunc(r, env, name, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			args := make([]string, f.n)
+			for i := range args {
+				s, err := checkString(c, i)
+				if err != nil {
+					return nil, err
+				}
+				args[i] = s
+			}
+			return c.PushingNext1(t.Runtime, rt.StringValue(f.fn(args))), nil
+		}, f.n, false)
+	}
+
+	setGoFunc(r, env, "MangaInfoStatusIfPos", func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		s, err := checkString(c, 0)
+		if err != nil {
+			return nil, err
 		}
-		return 1
-	}))
-	L.SetGlobal("SeparateRight", L.NewFunction(func(L *lua.LState) int {
-		s, sep := L.CheckString(1), L.CheckString(2)
-		if _, right, ok := strings.Cut(s, sep); ok {
-			L.Push(lua.LString(right))
-		} else {
-			L.Push(lua.LString(s))
+		lists := [4]string{defaultOngoing, defaultCompleted, defaultHiatus, defaultDropped}
+		for i := range lists {
+			if lists[i], err = optString(c, i+1, lists[i]); err != nil {
+				return nil, err
+			}
 		}
-		return 1
-	}))
-	L.SetGlobal("Trim", L.NewFunction(func(L *lua.LState) int {
-		L.Push(lua.LString(strings.TrimSpace(L.CheckString(1))))
-		return 1
-	}))
-	L.SetGlobal("MaybeFillHost", L.NewFunction(func(L *lua.LState) int {
-		L.Push(lua.LString(MaybeFillHost(L.CheckString(1), L.CheckString(2))))
-		return 1
-	}))
-	L.SetGlobal("MangaInfoStatusIfPos", L.NewFunction(func(L *lua.LState) int {
-		L.Push(lua.LString(MangaInfoStatusIfPos(
-			L.CheckString(1),
-			L.OptString(2, defaultOngoing), L.OptString(3, defaultCompleted),
-			L.OptString(4, defaultHiatus), L.OptString(5, defaultDropped))))
-		return 1
-	}))
+		return c.PushingNext1(t.Runtime, rt.StringValue(
+			MangaInfoStatusIfPos(s, lists[0], lists[1], lists[2], lists[3]))), nil
+	}, 5, false)
 }

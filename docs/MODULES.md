@@ -34,6 +34,61 @@ scripts people run in it.
 - Tests that need modules read `ATSUME_FMD2_DIR`, or clone into an ignored
   directory when `ATSUME_FETCH_CORPUS=1` is set. Without either they skip.
 
+## The Lua runtime
+
+Modules run on [golua](https://github.com/arnodel/golua) v0.3.0, a pure-Go
+implementation of Lua 5.5. FMD2 itself builds against Lua 5.4, so this is one
+step newer than what the modules are written for; gopher-lua, which atsume used
+before, implements Lua 5.1 and needed a patched fork to parse them.
+
+Two consequences of 5.5 matter to modules:
+
+- **Integers and floats are distinct.** A float prints as `2.0`, so every
+  number atsume hands to Lua that a module might put in a URL — a page number,
+  a count, `URL` on a directory page — is an integer.
+- **A `for` loop's control variable is read-only.** Nine modules assign to it
+  and fail to compile; see the load rate below.
+
+### The sandbox
+
+Modules are fetched from upstream at run time, so they are treated as untrusted
+code. The runtime holds only what they use:
+
+- **Libraries are listed, not taken whole.** `golib` (imports Go packages),
+  `runtime` and `debug` are left out, as are `dofile` and `loadfile`. `os`
+  keeps its clock functions; `os.remove` and `os.rename` exist but always fail,
+  because `utils/nodejs.lua` uses `rename` as an existence check.
+- **Files are read-only and confined to the checkout.** `io.open` and
+  `io.lines` resolve relative paths against the checkout root, FMD2's working
+  directory, through `os.OpenInRoot`, which also refuses symlinks and `..`
+  that lead out. A write fails as on a read-only filesystem. The exception is
+  `OnAfterImageSaved`: upstream lets it edit the page it is given in place, so
+  that one file may be read and written while the hook runs.
+- **`require` loads only from the `lua` directory**, as text, or from the
+  `fmd.*` libraries. golua's own `require` would follow whatever
+  `package.path` names; no module sets it.
+
+### Limits and cancellation
+
+golua cannot be interrupted from another goroutine, so a scrape is bounded two
+ways instead:
+
+- **A CPU limit of 10⁹ VM ticks on each call** — loading a file, `Init`, or a
+  handler — about seven seconds of pure Lua. Time spent in Go (HTTP waits,
+  XPath) costs nothing. The heaviest call across the golden and recorded tests
+  uses about 52 thousand ticks; decoding 1 MB of JSON with upstream's pure-Lua
+  `utils/json` about 40 million. `TestCPULimitHeadroom` keeps at least 100× and
+  10× room above those.
+- **The scrape's context.** No call starts once it is cancelled. A request in
+  flight is abandoned, and the call ends at the module's next request; a
+  `sleep` ends it at once. A call cancelled mid-way always returns an error,
+  even if the module caught the termination.
+
+A termination raised inside `pcall` ends only that `pcall`, because golua runs
+it in a nested context. Upstream uses `pcall` only around JSON decoding, so in
+practice a call still stops at its next request, and a loop that kept catching
+it would still stop at the CPU limit.
+
 ## How modules are evaluated
 
 FMD2 evaluates its modules' XPath with Pascal's `internettools`, an XQuery 3.1
@@ -142,11 +197,9 @@ produces a PNG, and trusting the URL there would misname it.
 
 ### Reach
 
-Seven modules use `fmd.imagepuzzle`, but four of them (Comix, NexusScanlation,
-PhiliaScans, TonarinoYoungJump) do not load at all because they use Lua 5.3
-operators. The descrambler therefore reaches **three** modules today — MangaGo,
-PlusComico and WolfManga — and the other four are gated on the Lua runtime
-decision rather than on anything here.
+Seven modules use `fmd.imagepuzzle` — Comix, MangaGo, NexusScanlation,
+PhiliaScans, PlusComico, TonarinoYoungJump and WolfManga — and all of them
+load.
 
 ## Unimplemented capabilities
 
@@ -154,29 +207,29 @@ These raise a named error rather than failing quietly:
 
 | Library | Modules affected | Needs |
 |---|---|---|
-| `utils.nodejs` | 4 | Puppeteer |
-| `fmd.mangafoxwatermark` | 1 | watermark removal |
+| `utils.nodejs` | Comix, RaijinScans, and a fallback in the Madara template | Puppeteer |
 
 ## Module load rate
 
 `TestLoadAllModules` opens every upstream module, which runs its `Init()` and so
 exercises the whole declaration-time binding surface.
 
-**620 of 621 load (99.8%) with the patches applied.** The remainder:
+**611 of 621 load (98.4%).** The remainder:
 
 | Cause | Count |
 |---|---|
-| Lua 5.3 operators (`&`, `\|`, `~`, `<<`, `>>`, `//`) | 13, recovered |
+| Assigns to a `for` loop's control variable, which Lua 5.5 forbids | 9 |
 | `require 'pb'` — protobuf, which atsume does not implement | 1 |
 
-gopher-lua implements Lua 5.1, so the first group failed at load with a parse
-error. They are recovered by `patches/gopher-lua-lua53-operators.patch`, which
-adds the operators to the fork; see [UPSTREAM.md](UPSTREAM.md), including the
-one place it cannot follow Lua 5.3 exactly.
+The nine are LeerCapitulo (`modules/LeerCapitulo.lua:179`) and the eight
+modules built on the GroupLe template (`templates/GroupLe.lua:127`). Both are
+one-line fixes upstream — a local copy of the variable at the top of the loop
+body — that behave the same under 5.4. `TestLoadAllModules` pins the list, so it fails when
+FMD2 fixes them and the list needs to shrink.
 
-MangaPlus is the remaining file. It parses, and then asks for a protobuf
-implementation that FMD2 links in from Pascal. Recovering it means a `pb`
-binding over a Go protobuf library, which is a separate piece of work.
+MangaPlus parses, and then asks for a protobuf implementation that FMD2 links
+in from Pascal. Recovering it means a `pb` binding over a Go protobuf library,
+which is a separate piece of work.
 
 ### Bugs this test has caught
 
@@ -185,7 +238,9 @@ Worth keeping, because each one was invisible from reading the docs:
 - `AddOptionCheckBox` is `(name, caption, default)` dot-called, and the setter is
   named `AddOptionEdit`, not `AddOptionEditBox` as `LUA-REFERENCE.md` states.
   Fixing the signature recovered **57 modules** in one change.
-- Several modules are saved with a UTF-8 BOM, which gopher-lua rejects as an
-  invalid token on line 1. Stripping it recovered **17 more**.
+- Several modules are saved with a UTF-8 BOM, which a Lua compiler rejects as
+  an invalid token on line 1 unless the file goes through the loader that
+  skips it, as Lua's own `luaL_loadfile` does. Loading them that way recovered
+  **17 more**.
 - Three modules seed `MODULE.Storage` from inside `Init()`, so the declaration
   table has to expose the same map the runner reads later.

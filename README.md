@@ -17,21 +17,24 @@ deliberately does not include a reader or a library model.
 
 ## Status
 
-**606 of 621 upstream modules load** (97.6%). Working: module loading, the
+**611 of 621 upstream modules load** (98.4%). Working: module loading, the
 TXQuery/XPath translation layer, JavaScript execution for protected pages,
-image descrambling, scheduled subscription checks, the job queue, image
-downloads, CBZ output, and a web UI with live progress over SSE.
+image descrambling, the MangaFox watermark remover, scheduled subscription
+checks, the job queue, image downloads, CBZ output, and a web UI with live
+progress over SSE.
 
-atsume carries two patches against gopher-lua; see [docs/UPSTREAM.md](docs/UPSTREAM.md).
-Without it, 255 of 621 modules fail at handler time.
+Modules run on [golua](https://github.com/arnodel/golua), a pure-Go Lua 5.5, in
+a sandbox: no process or arbitrary file access, and a CPU limit on every call.
+See [docs/MODULES.md](docs/MODULES.md#the-lua-runtime).
 
-Not implemented yet: Puppeteer-backed modules and the MangaFox watermark
-remover. Modules needing those fail loudly and name the missing capability
-rather than returning blank fields.
+Not implemented yet: Puppeteer-backed modules. Modules needing it fail loudly
+and name the missing capability rather than returning blank fields.
 
-The 15 modules that do not load break down as 14 written against Lua 5.3 syntax
-(bitwise operators, floor division) that gopher-lua's 5.1 parser rejects, plus
-FanFox, which needs the MangaFox watermark remover at declaration time.
+Of the 10 modules that do not load, nine assign to a `for` loop's control
+variable, which Lua 5.5 forbids: LeerCapitulo, and eight that use the GroupLe
+template (AllHentai, MintManga, ReadManga, RuMIX, SeiManga, SelfMangaRU,
+UsagiOne, Zazaza). The fix is one line in each of two upstream files. The
+tenth, MangaPlus, needs a protobuf library FMD2 links in from Pascal.
 
 ## Running
 
