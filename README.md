@@ -22,9 +22,6 @@ TXQuery/XPath translation layer, JavaScript execution for protected pages,
 image descrambling, scheduled subscription checks, the job queue, image
 downloads, CBZ output, and a web UI with live progress over SSE.
 
-atsume carries two patches against gopher-lua; see [docs/UPSTREAM.md](docs/UPSTREAM.md).
-Without it, 255 of 621 modules fail at handler time.
-
 Not implemented yet: Puppeteer-backed modules and the MangaFox watermark
 remover. Modules needing those fail loudly and name the missing capability
 rather than returning blank fields.

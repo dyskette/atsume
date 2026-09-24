@@ -10,7 +10,6 @@ require (
 	github.com/bodgit/sevenzip v1.6.5
 	github.com/dop251/goja v0.0.0-20260917113740-793a2a65c13b
 	github.com/pressly/goose/v3 v3.28.0
-	github.com/yuin/gopher-lua v1.1.2
 	golang.org/x/image v0.46.0
 	golang.org/x/net v0.59.0
 	golang.org/x/time v0.16.0
@@ -57,7 +56,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
-
-replace github.com/yuin/gopher-lua => github.com/dyskette/gopher-lua v1.1.3-atsume002
 
 tool github.com/a-h/templ/cmd/templ

@@ -169,10 +169,9 @@ exercises the whole declaration-time binding surface.
 | Lua 5.3 operators (`&`, `\|`, `~`, `<<`, `>>`, `//`) | 13, recovered |
 | `require 'pb'` — protobuf, which atsume does not implement | 1 |
 
-gopher-lua implements Lua 5.1, so the first group failed at load with a parse
-error. They are recovered by `patches/gopher-lua-lua53-operators.patch`, which
-adds the operators to the fork; see [UPSTREAM.md](UPSTREAM.md), including the
-one place it cannot follow Lua 5.3 exactly.
+The first group failed at load with a parse error under gopher-lua, which
+implements Lua 5.1; a patched fork added the operators. atsume now runs Lua 5.5
+(golua), which parses them natively.
 
 MangaPlus is the remaining file. It parses, and then asks for a protobuf
 implementation that FMD2 links in from Pascal. Recovering it means a `pb`
