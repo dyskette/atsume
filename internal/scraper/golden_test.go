@@ -253,86 +253,97 @@ func TestGolden(t *testing.T) {
 	luaRoot := luaDir(t)
 
 	for _, c := range goldenCases {
-		t.Run(c.name, func(t *testing.T) {
-			if c.needsChainedForIn && runtimeForInBug() {
-				t.Skip("blocked by the gopher-lua generic-for bug; see TestRuntimeSupportsChainedForIn")
-			}
-			caseDir := filepath.Join("testdata", "golden", c.name)
+		for _, lr := range luaRuntimes {
+			t.Run(c.name+"/"+lr.name, func(t *testing.T) {
+				runGoldenCase(t, luaRoot, c, lr)
+			})
+		}
+	}
+}
 
-			var base string
-			var hostAddr string
-			var transport http.RoundTripper
-			if c.rootURL != "" {
-				base, hostAddr = c.rootURL, strings.TrimPrefix(c.rootURL, "https://")
-				transport = seedCassette(t, caseDir, c.exchanges)
-			} else {
-				var srv *httptest.Server
-				srv, base = goldenServer(t, caseDir, c.routes)
-				hostAddr = srv.Listener.Addr().String()
-			}
+// runGoldenCase runs one case with one runtime. Fixtures are built afresh for
+// each run, so the two runtimes never share a server or a cassette.
+func runGoldenCase(t *testing.T, luaRoot string, c goldenCase, lr luaRuntime) {
+	if c.needsChainedForIn && lr.name == "gopher-lua" && runtimeForInBug() {
+		t.Skip("blocked by the gopher-lua generic-for bug; see TestRuntimeSupportsChainedForIn")
+	}
+	caseDir := filepath.Join("testdata", "golden", c.name)
 
-			modPath := filepath.Join(t.TempDir(), c.name+".lua")
-			if err := os.WriteFile(modPath, []byte(fmt.Sprintf(c.module, base)), 0o644); err != nil {
-				t.Fatal(err)
-			}
+	var base string
+	var hostAddr string
+	var transport http.RoundTripper
+	if c.rootURL != "" {
+		base, hostAddr = c.rootURL, strings.TrimPrefix(c.rootURL, "https://")
+		transport = seedCassette(t, caseDir, c.exchanges)
+	} else {
+		var srv *httptest.Server
+		srv, base = goldenServer(t, caseDir, c.routes)
+		hostAddr = srv.Listener.Addr().String()
+	}
 
-			h := &Host{LuaDir: luaRoot, Transport: transport}
-			r, err := h.Open(context.Background(), modPath, "", "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer r.Close()
+	modPath := filepath.Join(t.TempDir(), c.name+".lua")
+	if err := os.WriteFile(modPath, []byte(fmt.Sprintf(c.module, base)), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-			got := goldenResult{Template: c.template}
+	h := &Host{LuaDir: luaRoot, Transport: transport}
+	r, err := lr.open(h, context.Background(), modPath, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
 
-			if c.directory {
-				entries, err := r.GetNameAndLink(0)
-				if err != nil {
-					t.Fatalf("GetNameAndLink: %v", err)
-				}
-				got.Directory = entries
-			}
+	got := goldenResult{Template: c.template}
 
-			info, err := r.GetInfo(base + c.seriesPath)
-			if err != nil {
-				t.Fatalf("GetInfo: %v", err)
-			}
-			got.Info = &goldenInfo{
-				Title: info.Title, AltTitles: info.AltTitles, CoverLink: info.CoverLink,
-				Authors: info.Authors, Artists: info.Artists, Genres: info.Genres,
-				Status: info.Status, Summary: info.Summary,
-				ChapterLinks: info.ChapterLinks.All(), ChapterNames: info.ChapterNames.All(),
-			}
+	if c.directory {
+		entries, err := r.GetNameAndLink(0)
+		if err != nil {
+			t.Fatalf("GetNameAndLink: %v", err)
+		}
+		got.Directory = entries
+	}
 
-			pages, err := r.GetPageNumber(base + c.chapterPath)
-			if err != nil {
-				t.Fatalf("GetPageNumber: %v", err)
-			}
-			got.Pages = pages
+	info, err := r.GetInfo(base + c.seriesPath)
+	if err != nil {
+		t.Fatalf("GetInfo: %v", err)
+	}
+	got.Info = &goldenInfo{
+		Title: info.Title, AltTitles: info.AltTitles, CoverLink: info.CoverLink,
+		Authors: info.Authors, Artists: info.Artists, Genres: info.Genres,
+		Status: info.Status, Summary: info.Summary,
+		ChapterLinks: info.ChapterLinks.All(), ChapterNames: info.ChapterNames.All(),
+	}
 
-			// The test server's port changes every run, so it is folded back
-			// into a placeholder before the comparison.
-			normalized := strings.ReplaceAll(mustJSON(t, got), base, "{{BASE}}")
-			normalized = strings.ReplaceAll(normalized, hostAddr, "{{HOST}}")
+	pages, err := r.GetPageNumber(base + c.chapterPath)
+	if err != nil {
+		t.Fatalf("GetPageNumber: %v", err)
+	}
+	got.Pages = pages
 
-			goldenPath := filepath.Join(caseDir, "golden.json")
-			if *updateGolden {
-				if err := os.WriteFile(goldenPath, []byte(normalized+"\n"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				t.Logf("wrote %s", goldenPath)
-				return
-			}
+	// The test server's port changes every run, so it is folded back into a
+	// placeholder before the comparison.
+	normalized := strings.ReplaceAll(mustJSON(t, got), base, "{{BASE}}")
+	normalized = strings.ReplaceAll(normalized, hostAddr, "{{HOST}}")
 
-			want, err := os.ReadFile(goldenPath)
-			if err != nil {
-				t.Fatalf("%v\nrun `go test ./internal/scraper/ -run TestGolden -update` to create it", err)
-			}
-			if diff := strings.TrimSpace(string(want)); diff != normalized {
-				t.Errorf("output differs from %s\n--- want ---\n%s\n--- got ---\n%s",
-					goldenPath, diff, normalized)
-			}
-		})
+	goldenPath := filepath.Join(caseDir, "golden.json")
+	if *updateGolden {
+		if !lr.writes {
+			t.Skip("goldens are written from gopher-lua's output")
+		}
+		if err := os.WriteFile(goldenPath, []byte(normalized+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("wrote %s", goldenPath)
+		return
+	}
+
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("%v\nrun `go test ./internal/scraper/ -run TestGolden -update` to create it", err)
+	}
+	if diff := strings.TrimSpace(string(want)); diff != normalized {
+		t.Errorf("output differs from %s\n--- want ---\n%s\n--- got ---\n%s",
+			goldenPath, diff, normalized)
 	}
 }
 

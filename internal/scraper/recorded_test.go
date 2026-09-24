@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -46,102 +47,112 @@ func TestRecorded(t *testing.T) {
 		if !e.IsDir() {
 			continue
 		}
-		t.Run(e.Name(), func(t *testing.T) {
-			dir := filepath.Join(root, e.Name())
-
-			raw, err := os.ReadFile(filepath.Join(dir, "case.json"))
-			if err != nil {
-				t.Fatalf("%v", err)
-			}
-			var c recordedCase
-			if err := json.Unmarshal(raw, &c); err != nil {
-				t.Fatal(err)
-			}
-
-			cassetteDir := filepath.Join(dir, "cassette")
-			if !record {
-				if _, err := os.Stat(cassetteDir); err != nil {
-					t.Skipf("no recording for %s; capture one with ATSUME_RECORD=1", c.Module)
+		for _, lr := range luaRuntimes {
+			t.Run(e.Name()+"/"+lr.name, func(t *testing.T) {
+				// Recording and rewriting goldens is gopher-lua's job; golua
+				// replays the same traffic and must produce the same output.
+				if (record || *updateGolden) && !lr.writes {
+					t.Skip("recordings are captured with gopher-lua")
 				}
-			}
-			cassette, err := NewCassette(cassetteDir, record, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+				dir := filepath.Join(root, e.Name())
 
-			modFile := filepath.Join(luaRoot, "modules", c.Module+".lua")
-			if _, err := os.Stat(modFile); err != nil {
-				t.Skipf("module %s is not in this checkout", c.Module)
-			}
-
-			h := &Host{LuaDir: luaRoot, Transport: cassette}
-			r, err := h.Open(context.Background(), modFile, "", "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer r.Close()
-
-			got := goldenResult{Template: c.Module}
-
-			info, err := r.GetInfo(c.SeriesURL)
-			if err != nil {
-				t.Fatalf("GetInfo: %v", err)
-			}
-			got.Info = &goldenInfo{
-				Title: info.Title, AltTitles: info.AltTitles, CoverLink: info.CoverLink,
-				Authors: info.Authors, Artists: info.Artists, Genres: info.Genres,
-				Status: info.Status, Summary: info.Summary,
-				ChapterLinks: info.ChapterLinks.All(), ChapterNames: info.ChapterNames.All(),
-			}
-
-			if c.ChapterURL != "" {
-				pages, err := r.GetPageNumber(c.ChapterURL)
+				raw, err := os.ReadFile(filepath.Join(dir, "case.json"))
 				if err != nil {
-					t.Fatalf("GetPageNumber: %v", err)
+					t.Fatalf("%v", err)
 				}
-				got.Pages = pages
-			}
-
-			// A recorded run must actually extract something; a module that
-			// silently returns nothing is the failure this whole suite exists
-			// to catch.
-			if got.Info.Title == "" {
-				t.Error("title is empty")
-			}
-			switch {
-			case c.ExpectNoChapters != "":
-				// Pinning the absence: if chapters ever appear, the recorded
-				// explanation has gone stale and needs revisiting.
-				if len(got.Info.ChapterLinks) > 0 {
-					t.Errorf("expected no chapters (%s) but found %d",
-						c.ExpectNoChapters, len(got.Info.ChapterLinks))
-				}
-			case len(got.Info.ChapterLinks) == 0:
-				t.Error("no chapters were extracted")
-			}
-			if c.ChapterURL != "" && len(got.Pages) == 0 {
-				t.Error("no pages were extracted")
-			}
-
-			goldenPath := filepath.Join(dir, "golden.json")
-			out := mustJSON(t, got)
-			if *updateGolden {
-				if err := os.WriteFile(goldenPath, []byte(out+"\n"), 0o644); err != nil {
+				var c recordedCase
+				if err := json.Unmarshal(raw, &c); err != nil {
 					t.Fatal(err)
 				}
-				t.Logf("wrote %s (%d chapters, %d pages)",
-					goldenPath, len(got.Info.ChapterLinks), len(got.Pages))
-				return
-			}
+				if !lr.writes && slices.Contains(goluaCompileFailures, c.Module) {
+					t.Skipf("%s needs a template Lua 5.5 rejects until FMD2 fixes it; see goluaCompileFailures", c.Module)
+				}
 
-			want, err := os.ReadFile(goldenPath)
-			if err != nil {
-				t.Skipf("no golden yet; create one with -update")
-			}
-			if strings.TrimSpace(string(want)) != out {
-				t.Errorf("output differs from %s\n--- want ---\n%s\n--- got ---\n%s",
-					goldenPath, strings.TrimSpace(string(want)), out)
-			}
-		})
+				cassetteDir := filepath.Join(dir, "cassette")
+				if !record {
+					if _, err := os.Stat(cassetteDir); err != nil {
+						t.Skipf("no recording for %s; capture one with ATSUME_RECORD=1", c.Module)
+					}
+				}
+				cassette, err := NewCassette(cassetteDir, record, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				modFile := filepath.Join(luaRoot, "modules", c.Module+".lua")
+				if _, err := os.Stat(modFile); err != nil {
+					t.Skipf("module %s is not in this checkout", c.Module)
+				}
+
+				h := &Host{LuaDir: luaRoot, Transport: cassette}
+				r, err := lr.open(h, context.Background(), modFile, "", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer r.Close()
+
+				got := goldenResult{Template: c.Module}
+
+				info, err := r.GetInfo(c.SeriesURL)
+				if err != nil {
+					t.Fatalf("GetInfo: %v", err)
+				}
+				got.Info = &goldenInfo{
+					Title: info.Title, AltTitles: info.AltTitles, CoverLink: info.CoverLink,
+					Authors: info.Authors, Artists: info.Artists, Genres: info.Genres,
+					Status: info.Status, Summary: info.Summary,
+					ChapterLinks: info.ChapterLinks.All(), ChapterNames: info.ChapterNames.All(),
+				}
+
+				if c.ChapterURL != "" {
+					pages, err := r.GetPageNumber(c.ChapterURL)
+					if err != nil {
+						t.Fatalf("GetPageNumber: %v", err)
+					}
+					got.Pages = pages
+				}
+
+				// A recorded run must actually extract something; a module that
+				// silently returns nothing is the failure this whole suite exists
+				// to catch.
+				if got.Info.Title == "" {
+					t.Error("title is empty")
+				}
+				switch {
+				case c.ExpectNoChapters != "":
+					// Pinning the absence: if chapters ever appear, the recorded
+					// explanation has gone stale and needs revisiting.
+					if len(got.Info.ChapterLinks) > 0 {
+						t.Errorf("expected no chapters (%s) but found %d",
+							c.ExpectNoChapters, len(got.Info.ChapterLinks))
+					}
+				case len(got.Info.ChapterLinks) == 0:
+					t.Error("no chapters were extracted")
+				}
+				if c.ChapterURL != "" && len(got.Pages) == 0 {
+					t.Error("no pages were extracted")
+				}
+
+				goldenPath := filepath.Join(dir, "golden.json")
+				out := mustJSON(t, got)
+				if *updateGolden {
+					if err := os.WriteFile(goldenPath, []byte(out+"\n"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					t.Logf("wrote %s (%d chapters, %d pages)",
+						goldenPath, len(got.Info.ChapterLinks), len(got.Pages))
+					return
+				}
+
+				want, err := os.ReadFile(goldenPath)
+				if err != nil {
+					t.Skipf("no golden yet; create one with -update")
+				}
+				if strings.TrimSpace(string(want)) != out {
+					t.Errorf("output differs from %s\n--- want ---\n%s\n--- got ---\n%s",
+						goldenPath, strings.TrimSpace(string(want)), out)
+				}
+			})
+		}
 	}
 }

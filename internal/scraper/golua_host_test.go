@@ -3,6 +3,8 @@ package scraper
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -308,3 +310,45 @@ func TestGoluaDeclarationsMatchGopher(t *testing.T) {
 	}
 	t.Logf("%d module files declare the same sites in both runtimes", matched)
 }
+
+// TestGoluaHTTPStopsOnCancel checks the HTTP binding's side of cancellation:
+// a handler that keeps requesting pages ends at its next request once the
+// context is done, instead of looping over failed requests.
+func TestGoluaHTTPStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	requests := 0
+	luaDir := writeTree(t, map[string]string{"modules/Pager.lua": `
+function Init()
+	local m = NewWebsiteModule()
+	m.Name = 'Pager'
+	m.OnGetNameAndLink = 'List'
+end
+function List()
+	while true do
+		if HTTP.GET('https://pager.example/page/' .. URL) then LINKS.Add(URL) end
+		URL = URL + 1
+	end
+end`})
+	h := &Host{LuaDir: luaDir, Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 3 {
+			cancel()
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("ok")), Request: r}, nil
+	})}
+	r, err := h.openGolua(ctx, filepath.Join(luaDir, "modules", "Pager.lua"), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.GetNameAndLink(0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+	if requests != 3 {
+		t.Errorf("made %d requests; the one after cancellation should not have been sent", requests)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

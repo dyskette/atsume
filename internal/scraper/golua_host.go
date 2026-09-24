@@ -24,8 +24,19 @@ type goluaRunner struct {
 	// file declared, because one file is not one website.
 	mod   *Module
 	sites []*Module
-	// storage backs MODULE.Storage; see Runner.storage.
-	storage map[string]string
+	http  *HTTP
+
+	mangaInfo *MangaInfo
+	task      *Task
+	links     *Strings
+	names     *Strings
+	update    *updateList
+	options   map[string]rt.Value
+	// storage, account and directoryIndex back MODULE.Storage, .Account and
+	// .CurrentDirectoryIndex; see the same fields on Runner.
+	storage        map[string]string
+	account        *Account
+	directoryIndex int
 }
 
 // goluaCPULimit caps the VM ticks one call into a module may use: loading its
@@ -40,10 +51,34 @@ const goluaCPULimit = 1_000_000_000
 // do there.
 func (h *Host) openGolua(ctx context.Context, moduleFile, site, rootURL string) (*goluaRunner, error) {
 	r := newLuaRuntime(os.Stdout, h.LuaDir)
-	gr := &goluaRunner{r: r, ctx: ctx, cpuLimit: goluaCPULimit, storage: map[string]string{}}
+	gr := &goluaRunner{
+		r:         r,
+		ctx:       ctx,
+		cpuLimit:  goluaCPULimit,
+		http:      NewHTTP(ctx, h.Limiter, h.Transport, h.Solver),
+		mangaInfo: NewMangaInfo(),
+		task:      NewTask(),
+		links:     NewStrings(),
+		names:     NewStrings(),
+		update:    &updateList{},
+		options:   map[string]rt.Value{},
+		storage:   map[string]string{},
+		account:   &Account{Status: asUnknown},
+	}
 	env := r.GlobalEnv()
 	preloadLibs(r, h.LuaDir)
 	registerGoluaBuiltins(r, ctx)
+	for name, v := range map[string]rt.Value{
+		"HTTP":       gr.http.bindGolua(r, gr.checkContext),
+		"MANGAINFO":  gr.mangaInfo.bindGolua(r),
+		"TASK":       gr.task.bindGolua(r),
+		"LINKS":      pushGoluaStrings(r, gr.links),
+		"NAMES":      pushGoluaStrings(r, gr.names),
+		"UPDATELIST": gr.update.bindGolua(r),
+		"PAGENUMBER": rt.IntValue(1),
+	} {
+		env.Set(rt.StringValue(name), v)
+	}
 
 	// Each declaration collects its own options; see the same capture in Open.
 	type declaration struct {
@@ -83,6 +118,10 @@ func (h *Host) openGolua(ctx context.Context, moduleFile, site, rootURL string) 
 	if gr.mod == nil {
 		return nil, fmt.Errorf("%s declares no website named %q", moduleFile, site)
 	}
+	for _, o := range gr.mod.Options {
+		gr.options[o.Name] = luaValueOf(o.Default)
+	}
+	env.Set(rt.StringValue("MODULE"), gr.bindModule())
 	return gr, nil
 }
 
