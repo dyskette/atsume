@@ -33,7 +33,7 @@ type goFn struct {
 func newLib(r *rt.Runtime, fns map[string]goFn) *rt.Table {
 	t := rt.NewTable()
 	for name, f := range fns {
-		r.SetEnvGoFunc(t, name, f.fn, f.nArgs, false)
+		setGoFunc(r, t, name, f.fn, f.nArgs, false)
 	}
 	return t
 }
@@ -42,7 +42,7 @@ func newLib(r *rt.Runtime, fns map[string]goFn) *rt.Table {
 func preloadLibs(r *rt.Runtime, luaDir string) {
 	preload := r.GlobalEnv().Get(rt.StringValue("package")).AsTable().Get(rt.StringValue("preload")).AsTable()
 	add := func(name string, build func(r *rt.Runtime) *rt.Table) {
-		loader := rt.NewGoFunction(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		loader := newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 			return c.PushingNext1(t.Runtime, rt.TableValue(build(t.Runtime))), nil
 		}, name, 0, true)
 		preload.Set(rt.StringValue(name), rt.FunctionValue(loader))
@@ -69,9 +69,9 @@ func preloadLibs(r *rt.Runtime, luaDir string) {
 // an "attempt to call a nil value".
 func goluaUnsupported(lib, why string) *rt.Table {
 	meta := rt.NewTable()
-	meta.Set(rt.StringValue("__index"), rt.FunctionValue(rt.NewGoFunction(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	meta.Set(rt.StringValue("__index"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 		name, _ := c.Arg(1).ToString()
-		fn := rt.NewGoFunction(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		fn := newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 			return nil, fmt.Errorf("%s.%s %s", lib, name, why)
 		}, name, 0, true)
 		return c.PushingNext1(t.Runtime, rt.FunctionValue(fn)), nil

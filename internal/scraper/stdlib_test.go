@@ -14,7 +14,7 @@ import (
 // as a string.
 func evalStd(t *testing.T, root, src string) (string, error) {
 	t.Helper()
-	r := newLuaRuntime(io.Discard, root)
+	r := newLuaRuntime(io.Discard, filepath.Join(root, "lua"))
 	chunk, err := r.CompileAndLoadLuaChunk("test", []byte(src), rt.TableValue(r.GlobalEnv()))
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -43,7 +43,7 @@ func TestLuaRuntimeLibraries(t *testing.T) {
 	for _, name := range []string{
 		"string.format", "string.gsub", "table.concat", "table.unpack", "math.floor",
 		"utf8.char", "os.time", "os.date", "os.clock", "os.remove", "os.rename",
-		"io.open", "io.lines", "require", "package.path", "pcall", "tonumber",
+		"io.open", "io.lines", "require", "package.loaded", "package.preload", "pcall", "tonumber",
 		"coroutine.wrap", "load",
 	} {
 		if got := mustEvalStd(t, root, "return type("+name+")"); got == "nil" {
@@ -56,6 +56,7 @@ func TestLuaRuntimeLibraries(t *testing.T) {
 		"golib", "runtime", "debug", "dofile", "loadfile",
 		"os.execute", "os.exit", "os.getenv", "os.tmpname", "os.setlocale",
 		"io.popen", "io.write", "io.output", "io.tmpfile",
+		"package.path", "package.searchpath",
 	} {
 		if got := mustEvalStd(t, root, "return type("+name+")"); got != "nil" {
 			t.Errorf("%s should not be available, got a %s", name, got)
@@ -147,6 +148,54 @@ func TestLuaRuntimeCannotLeaveRoot(t *testing.T) {
 	for _, name := range []string{"new.txt", "moved.txt"} {
 		if _, err := os.Stat(filepath.Join(root, name)); err == nil {
 			t.Errorf("%s was created", name)
+		}
+	}
+}
+
+func TestLuaRuntimeRequire(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.lua"), []byte("return 'secret'"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	lua := filepath.Join(root, "lua")
+	for name, body := range map[string]string{
+		"utils/counter.lua":    "LOADS = (LOADS or 0) + 1; return {n = LOADS}",
+		"templates/X/init.lua": "return 'init'",
+		"utils/nothing.lua":    "local x = 1",
+	} {
+		path := filepath.Join(lua, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, filepath.Join(lua, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := map[string]struct{ src, want string }{
+		"file, loaded once": {
+			`local a = require 'utils.counter'; local b = require('utils.counter'); return a.n .. b.n .. tostring(a == b)`, "11true"},
+		"init.lua":              {`return require 'templates.X'`, "init"},
+		"no return is true":     {`return tostring(require 'utils.nothing')`, "true"},
+		"standard library":      {`return tostring(require('utf8') == utf8)`, "true"},
+		"second result is path": {`local _, p = require 'templates.X'; return p:sub(-10)`, "X/init.lua"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := mustEvalStd(t, root, c.src); got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+
+	for _, name := range []string{"nope", "escape.secret", "..escape.secret"} {
+		_, err := evalStd(t, root, `return require `+luaQuote(name))
+		if err == nil || !strings.Contains(err.Error(), "module '"+name+"' not found") {
+			t.Errorf("require %q: got %v, want not found", name, err)
 		}
 	}
 }

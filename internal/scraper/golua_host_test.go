@@ -2,12 +2,15 @@ package scraper
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+
+	rt "github.com/arnodel/golua/runtime"
 )
 
 // writeTree writes files under a fresh FMD2-shaped checkout and returns its
@@ -135,6 +138,101 @@ function GetInfo() return duktape.ExecJS('1') end`,
 	if _, err := r.call("OnGetInfo"); err == nil || !strings.Contains(err.Error(), "fmd.duktape.ExecJS is not ported to golua yet") {
 		t.Errorf("got %v, want an error naming fmd.duktape.ExecJS", err)
 	}
+}
+
+// loopModule declares handlers that loop forever, and a harmless one.
+const loopModule = `
+function Init()
+	local m = NewWebsiteModule()
+	m.Name = 'Loop'
+	m.OnGetInfo = 'Spin'
+	m.OnGetPageNumber = 'Poll'
+	m.OnCheckSite = 'Fine'
+	m.OnLogin = 'Swallow'
+	m.OnGetImageURL = 'Stubborn'
+end
+function Spin() while true do end end
+function Poll() cancel(); while true do poll() end end
+function Swallow() cancel(); pcall(poll); return 'looks fine' end
+function Stubborn() cancel(); while true do pcall(poll) end end
+function Fine() RAN = true; return 'fine' end`
+
+func openLoop(t *testing.T, ctx context.Context) (*goluaRunner, error) {
+	t.Helper()
+	luaDir := writeTree(t, map[string]string{"modules/Loop.lua": loopModule})
+	h := &Host{LuaDir: luaDir}
+	return h.openGolua(ctx, filepath.Join(luaDir, "modules", "Loop.lua"), "", "")
+}
+
+func TestGoluaCPULimit(t *testing.T) {
+	r, err := openLoop(t, context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.cpuLimit = 1_000_000
+	_, err = r.call("OnGetInfo")
+	if err == nil || !strings.Contains(err.Error(), "CPU limit") || !strings.Contains(err.Error(), "ran too long") {
+		t.Fatalf("a runaway loop should hit the CPU limit, got %v", err)
+	}
+	// The runner is still usable: the limit applies per call.
+	if v, err := r.call("OnCheckSite"); err != nil || v.AsString() != "fine" {
+		t.Errorf("after a killed call: %v, %v", v, err)
+	}
+}
+
+func TestGoluaCancellation(t *testing.T) {
+	// withCancel opens a runner whose Lua can cancel its own context, and
+	// poll, which stands in for a binding such as HTTP that checks on entry.
+	withCancel := func(t *testing.T) (*goluaRunner, context.Context) {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		r, err := openLoop(t, ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := r.r.GlobalEnv()
+		setGoFunc(r.r, env, "cancel", func(th *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			cancel()
+			return c.Next(), nil
+		}, 0, false)
+		setGoFunc(r.r, env, "poll", func(th *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			r.checkContext(th)
+			return c.Next(), nil
+		}, 0, false)
+		return r, ctx
+	}
+
+	t.Run("the next binding ends the call", func(t *testing.T) {
+		r, ctx := withCancel(t)
+		if _, err := r.call("OnGetPageNumber"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v, want context.Canceled", err)
+		}
+		// Once cancelled, nothing else runs, and nothing new opens.
+		if _, err := r.call("OnCheckSite"); !errors.Is(err, context.Canceled) {
+			t.Errorf("got %v, want context.Canceled", err)
+		}
+		if !r.r.GlobalEnv().Get(rt.StringValue("RAN")).IsNil() {
+			t.Error("a handler ran after cancellation")
+		}
+		if _, err := openLoop(t, ctx); !errors.Is(err, context.Canceled) {
+			t.Errorf("opening with a cancelled context: got %v, want context.Canceled", err)
+		}
+	})
+
+	t.Run("a result after a caught termination is not taken", func(t *testing.T) {
+		r, _ := withCancel(t)
+		if v, err := r.call("OnLogin"); !errors.Is(err, context.Canceled) {
+			t.Errorf("got %v, %v; want context.Canceled", v, err)
+		}
+	})
+
+	t.Run("a loop that keeps catching it stops at the CPU limit", func(t *testing.T) {
+		r, _ := withCancel(t)
+		r.cpuLimit = 1_000_000
+		if _, err := r.call("OnGetImageURL"); !errors.Is(err, context.Canceled) {
+			t.Errorf("got %v, want context.Canceled", err)
+		}
+	})
 }
 
 // goluaCompileFailures are the upstream files that Lua 5.5 rejects because

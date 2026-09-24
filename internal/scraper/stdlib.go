@@ -30,9 +30,14 @@ import (
 // registry) are left out, and io and os are replaced by the narrow versions
 // below. What remains is what the FMD2 modules actually call.
 //
-// root is the FMD2 checkout. File reads resolve relative paths against it,
-// because that is FMD2's working directory, and cannot leave it.
-func newLuaRuntime(stdout io.Writer, root string) *rt.Runtime {
+// luaDir is the checkout's lua directory. require loads shared code from it,
+// and file reads resolve relative paths against the checkout root above it,
+// FMD2's working directory. Neither can leave the checkout.
+//
+// Every Go function exposed here is declared CPU-safe (see setGoFunc), so a
+// handler can run under a CPU limit.
+func newLuaRuntime(stdout io.Writer, luaDir string) *rt.Runtime {
+	root := filepath.Dir(luaDir)
 	r := rt.New(stdout)
 	for _, l := range []packagelib.Loader{
 		base.LibLoader,
@@ -54,8 +59,97 @@ func newLuaRuntime(stdout io.Writer, root string) *rt.Runtime {
 	env.Set(rt.StringValue("dofile"), rt.NilValue)
 	env.Set(rt.StringValue("loadfile"), rt.NilValue)
 
+	// golua's own require is replaced: it reads whatever package.path names,
+	// anywhere on disk, and is not declared CPU-safe, so it would fail under
+	// the limit handlers run with. No module reads or sets package.path, and
+	// searchpath goes with it.
+	pkg := env.Get(rt.StringValue("package")).AsTable()
+	pkg.Set(rt.StringValue("path"), rt.NilValue)
+	pkg.Set(rt.StringValue("searchpath"), rt.NilValue)
+	setGoFunc(r, env, "require", requireFunc(pkg, luaDir), 1, false)
+
 	narrowOS(r, env.Get(rt.StringValue("os")).AsTable())
 	return r
+}
+
+// setGoFunc sets a Go function in a table and declares it CPU-safe.
+//
+// golua refuses, inside a CPU-limited call, any Go function not declared
+// safe. The declaration promises the function's own work is bounded by its
+// input. That holds for every binding here: none loops on the module's
+// behalf, and the limit exists to stop loops written in Lua.
+func setGoFunc(r *rt.Runtime, t *rt.Table, name string, fn rt.GoFunctionFunc, nArgs int, hasEtc bool) *rt.GoFunction {
+	f := r.SetEnvGoFunc(t, name, fn, nArgs, hasEtc)
+	rt.SolemnlyDeclareCompliance(rt.ComplyCpuSafe, f)
+	return f
+}
+
+// newGoFunc makes a Go function value declared CPU-safe; see setGoFunc.
+func newGoFunc(fn rt.GoFunctionFunc, name string, nArgs int, hasEtc bool) *rt.GoFunction {
+	f := rt.NewGoFunction(fn, name, nArgs, hasEtc)
+	rt.SolemnlyDeclareCompliance(rt.ComplyCpuSafe, f)
+	return f
+}
+
+// requireFunc implements require for module code.
+//
+// It looks in package.loaded, then package.preload (the fmd.* libraries),
+// then for name.lua or name/init.lua under luaDir, with dots as directory
+// separators. Files are opened with os.OpenInRoot, so a name cannot reach
+// outside luaDir, and are loaded as text only: the checkout holds no
+// precompiled chunks.
+func requireFunc(pkg *rt.Table, luaDir string) rt.GoFunctionFunc {
+	loadedKey, preloadKey := rt.StringValue("loaded"), rt.StringValue("preload")
+	return func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		name, err := c.StringArg(0)
+		if err != nil {
+			return nil, err
+		}
+		loaded := pkg.Get(loadedKey).AsTable()
+		if v := loaded.Get(rt.StringValue(name)); !v.IsNil() {
+			return c.PushingNext1(t.Runtime, v), nil
+		}
+
+		var loader, extra rt.Value
+		if l := pkg.Get(preloadKey).AsTable().Get(rt.StringValue(name)); !l.IsNil() {
+			loader, extra = l, rt.StringValue(":preload:")
+		} else {
+			rel := filepath.FromSlash(strings.ReplaceAll(name, ".", "/"))
+			var tried []string
+			for _, candidate := range []string{rel + ".lua", filepath.Join(rel, "init.lua")} {
+				src, err := readInRoot(luaDir, candidate)
+				if err != nil {
+					tried = append(tried, "\n\tno file '"+filepath.Join(luaDir, candidate)+"'")
+					continue
+				}
+				path := filepath.Join(luaDir, candidate)
+				chunk, err := t.LoadFromSourceOrCode(path, src, "t", rt.TableValue(t.GlobalEnv()), true)
+				if err != nil {
+					return nil, fmt.Errorf("error loading module '%s' from file '%s':\n\t%w", name, path, err)
+				}
+				loader, extra = rt.FunctionValue(chunk), rt.StringValue(path)
+				break
+			}
+			if loader.IsNil() {
+				return nil, fmt.Errorf("module '%s' not found:\n\tno field package.preload['%s']%s",
+					name, name, strings.Join(tried, ""))
+			}
+		}
+
+		v, err := rt.Call1(t, loader, rt.StringValue(name), extra)
+		if err != nil {
+			return nil, err
+		}
+		// A module that returns nothing may have filled package.loaded itself;
+		// otherwise it is recorded as true, as Lua does.
+		if v.IsNil() {
+			if v = loaded.Get(rt.StringValue(name)); v.IsNil() {
+				v = rt.BoolValue(true)
+			}
+		}
+		loaded.Set(rt.StringValue(name), v)
+		return c.PushingNext(t.Runtime, v, extra), nil
+	}
 }
 
 // narrowOS keeps the clock functions and refuses the ones that touch the
@@ -69,7 +163,7 @@ func narrowOS(r *rt.Runtime, os *rt.Table) {
 		os.Set(rt.StringValue(name), rt.NilValue)
 	}
 	refuse := func(name string) {
-		r.SetEnvGoFunc(os, name, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		setGoFunc(r, os, name, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 			path, _ := c.StringArg(0)
 			return c.PushingNext(t.Runtime, rt.NilValue, rt.StringValue(path+": operation not permitted")), nil
 		}, 2, false)
@@ -87,7 +181,7 @@ func narrowOS(r *rt.Runtime, os *rt.Table) {
 func ioTable(r *rt.Runtime, root string) *rt.Table {
 	meta := luaFileMeta()
 	pkg := rt.NewTable()
-	r.SetEnvGoFunc(pkg, "open", func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	setGoFunc(r, pkg, "open", func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 		name, err := c.StringArg(0)
 		if err != nil {
 			return nil, err
@@ -108,7 +202,7 @@ func ioTable(r *rt.Runtime, root string) *rt.Table {
 		return c.PushingNext1(t.Runtime, rt.UserDataValue(rt.NewUserData(&luaFile{data: data}, meta))), nil
 	}, 2, false)
 
-	r.SetEnvGoFunc(pkg, "lines", func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	setGoFunc(r, pkg, "lines", func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 		name, err := c.StringArg(0)
 		if err != nil {
 			return nil, err
@@ -118,7 +212,7 @@ func ioTable(r *rt.Runtime, root string) *rt.Table {
 			return nil, err
 		}
 		f := &luaFile{data: data}
-		next := rt.NewGoFunction(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		next := newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 			return c.PushingNext1(t.Runtime, f.readLine(false)), nil
 		}, "lines", 0, false)
 		return c.PushingNext1(t.Runtime, rt.FunctionValue(next)), nil
@@ -162,7 +256,7 @@ type luaFile struct {
 func luaFileMeta() *rt.Table {
 	methods := rt.NewTable()
 	set := func(name string, nArgs int, fn rt.GoFunctionFunc) {
-		methods.Set(rt.StringValue(name), rt.FunctionValue(rt.NewGoFunction(fn, name, nArgs, true)))
+		methods.Set(rt.StringValue(name), rt.FunctionValue(newGoFunc(fn, name, nArgs, true)))
 	}
 	set("read", 1, fileRead)
 	set("lines", 1, fileLines)
@@ -238,7 +332,7 @@ func fileLines(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	if err != nil {
 		return nil, err
 	}
-	next := rt.NewGoFunction(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	next := newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 		return c.PushingNext1(t.Runtime, f.readLine(false)), nil
 	}, "lines", 0, false)
 	return c.PushingNext1(t.Runtime, rt.FunctionValue(next)), nil
