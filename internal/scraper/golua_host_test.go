@@ -3,6 +3,7 @@ package scraper
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -218,6 +219,65 @@ func TestGoluaCancellation(t *testing.T) {
 			t.Errorf("got %v, want context.Canceled", err)
 		}
 	})
+}
+
+// cpuHeadroom is how many times the heaviest real handler call goluaCPULimit
+// must allow, and jsonHeadroom how many times a 1 MB pure-Lua JSON decode.
+// Below either, a slow but legitimate handler could be killed.
+const (
+	cpuHeadroom  = 100
+	jsonHeadroom = 10
+)
+
+// TestGoluaCPULimitHeadroom runs every golden and recorded case under golua,
+// the closest thing to real scrapes the suite has, plus the heaviest thing a
+// module commonly does in Lua itself: decoding a large JSON response with
+// upstream's utils/json. The limit must leave room above both.
+func TestGoluaCPULimitHeadroom(t *testing.T) {
+	dir := luaDir(t)
+	var runners []*goluaRunner
+	onGoluaOpen = func(r *goluaRunner) { runners = append(runners, r) }
+	defer func() { onGoluaOpen = nil }()
+
+	t.Run("golden", TestGolden)
+	t.Run("recorded", TestRecorded)
+	var peak uint64
+	for _, r := range runners {
+		peak = max(peak, r.peakCPU)
+	}
+	t.Logf("%d runners; heaviest call used %d ticks, %.0fx below the limit",
+		len(runners), peak, float64(goluaCPULimit)/float64(max(peak, 1)))
+	if peak*cpuHeadroom > goluaCPULimit {
+		t.Errorf("the limit is less than %dx the heaviest handler call", cpuHeadroom)
+	}
+
+	// About 1 MB of JSON shaped like a chapter list API response.
+	var b strings.Builder
+	b.WriteString(`{"data":[`)
+	for i := range 8000 {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"id":%d,"title":"Chapter %d: A reasonably long chapter title","slug":"chapter-%d","group":{"id":7,"name":"Scans"}}`, i, i, i)
+	}
+	b.WriteString(`]}`)
+	mod := writeTree(t, map[string]string{"modules/Json.lua": `
+function Init() local m = NewWebsiteModule(); m.Name = 'Json'; m.OnGetInfo = 'GetInfo' end
+function GetInfo() return #require('utils.json').decode(DATA).data end`})
+	h := &Host{LuaDir: dir}
+	r, err := h.openGolua(context.Background(), filepath.Join(mod, "modules", "Json.lua"), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.setGlobal("DATA", rt.StringValue(b.String()))
+	if v, err := r.call("OnGetInfo"); err != nil || v.AsInt() != 8000 {
+		t.Fatalf("decoding: %v, %v", v, err)
+	}
+	t.Logf("decoding %d bytes of JSON used %d ticks, %.0fx below the limit",
+		b.Len(), r.peakCPU, float64(goluaCPULimit)/float64(r.peakCPU))
+	if r.peakCPU*jsonHeadroom > goluaCPULimit {
+		t.Errorf("the limit is less than %dx a 1 MB JSON decode", jsonHeadroom)
+	}
 }
 
 // goluaCompileFailures are the upstream files that Lua 5.5 rejects because

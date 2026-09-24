@@ -18,8 +18,10 @@ type goluaRunner struct {
 	// ctx stops the runner: no Lua call starts once it is done, and bindings
 	// end the running call through checkContext.
 	ctx context.Context
-	// cpuLimit caps the VM ticks of each call; see goluaCPULimit.
+	// cpuLimit caps the VM ticks of each call; see goluaCPULimit. peakCPU is
+	// the most any one call has used, which is how the limit is calibrated.
 	cpuLimit uint64
+	peakCPU  uint64
 	// mod is the website this runner is scraping; sites is everything the
 	// file declared, because one file is not one website.
 	mod   *Module
@@ -40,10 +42,15 @@ type goluaRunner struct {
 }
 
 // goluaCPULimit caps the VM ticks one call into a module may use: loading its
-// file, Init, or a handler. At roughly 140 million ticks a second it allows
-// about seven seconds of pure Lua work. Loading the heaviest upstream module
-// takes about 14 thousand ticks, and time spent in Go (HTTP waits, XPath)
-// costs none, so only a runaway loop reaches it.
+// file, Init, or a handler. golua runs roughly 140 million ticks a second of
+// pure Lua, so this is about seven seconds of it; time spent in Go (HTTP
+// waits, XPath) costs nothing.
+//
+// Measured under golua: the heaviest call in the golden and recorded tests
+// uses about 52 thousand ticks, and decoding 1.1 MB of JSON with upstream's
+// pure-Lua utils/json about 45 million. The limit leaves room for a response
+// twenty times that size, and still stops a runaway loop within seconds.
+// TestGoluaCPULimitHeadroom keeps both margins.
 const goluaCPULimit = 1_000_000_000
 
 // openGolua loads a module file into a golua runtime and runs its Init, the
@@ -158,9 +165,12 @@ func (gr *goluaRunner) protect(f func(t *rt.Thread) error) error {
 		return err
 	}
 	t := gr.r.MainThread()
-	_, err := t.CallContext(rt.RuntimeContextDef{
+	used, err := t.CallContext(rt.RuntimeContextDef{
 		HardLimits: rt.RuntimeResources{Cpu: gr.cpuLimit},
 	}, func() error { return f(t) })
+	if used != nil {
+		gr.peakCPU = max(gr.peakCPU, used.UsedResources().Cpu)
+	}
 	if gr.ctx.Err() != nil {
 		return fmt.Errorf("stopped: %w", gr.ctx.Err())
 	}

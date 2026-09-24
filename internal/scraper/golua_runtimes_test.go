@@ -41,6 +41,10 @@ func (gr *goluaRunner) testCall(event string) error {
 	return err
 }
 
+// onGoluaOpen, when set, sees every runner the golua runtime opens, so a test
+// can inspect runners that other test helpers create and close.
+var onGoluaOpen func(*goluaRunner)
+
 // eachRuntime runs fn once per Lua runtime, as a subtest named after it.
 func eachRuntime(t *testing.T, fn func(t *testing.T, lr luaRuntime)) {
 	for _, lr := range luaRuntimes {
@@ -69,6 +73,9 @@ var luaRuntimes = []luaRuntime{
 		r, err := h.openGolua(ctx, file, site, rootURL)
 		if err != nil {
 			return nil, err
+		}
+		if onGoluaOpen != nil {
+			onGoluaOpen(r)
 		}
 		return r, nil
 	}},
