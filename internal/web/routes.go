@@ -49,7 +49,20 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /static/", http.StripPrefix("/static/",
 		http.FileServer(http.FS(static.FS))))
 
-	return logRequests(mux)
+	return logRequests(crossOriginProtection(mux))
+}
+
+// crossOriginProtection refuses a state-changing request that another site's
+// page makes in the reader's browser. atsume has no login of its own, so
+// without this any page the reader visits could queue downloads, remove a
+// series or overwrite stored credentials by submitting a form to it.
+//
+// It relies on every route that changes something being a POST: GET, HEAD
+// and OPTIONS always pass. Requests from outside a browser carry neither
+// Sec-Fetch-Site nor Origin and pass too, so scripts and health checks are
+// unaffected.
+func crossOriginProtection(next http.Handler) http.Handler {
+	return http.NewCrossOriginProtection().Handler(next)
 }
 
 // logRequests records each request once it completes.
