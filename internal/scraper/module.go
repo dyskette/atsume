@@ -1,6 +1,10 @@
 package scraper
 
-import lua "github.com/yuin/gopher-lua"
+import (
+	"math"
+
+	lua "github.com/yuin/gopher-lua"
+)
 
 // OptionKind is the widget a module asks for when declaring a setting.
 type OptionKind string
@@ -18,7 +22,10 @@ type Option struct {
 	Kind    OptionKind
 	Name    string
 	Caption string
-	Default lua.LValue
+	// Default is what the module declared, as a plain Go value: nil, bool,
+	// int64, float64 or string. It is kept free of any Lua runtime's types so
+	// that callers outside this package never depend on one.
+	Default any
 	Items   []string
 }
 
@@ -82,7 +89,7 @@ func newWebsiteModule(L *lua.LState, opts *[]Option, storage map[string]string) 
 				}
 				defaultArg = 4
 			}
-			o.Default = L.Get(defaultArg)
+			o.Default = optionValue(L.Get(defaultArg))
 			*opts = append(*opts, o)
 			return 0
 		}
@@ -145,4 +152,41 @@ func luaStr(t *lua.LTable, key string) string {
 		return ""
 	}
 	return lua.LVAsString(v)
+}
+
+// optionValue converts a declared default to a plain Go value. A whole number
+// becomes an int64, since that is what a spin edit or combo box index is.
+func optionValue(v lua.LValue) any {
+	switch v := v.(type) {
+	case *lua.LNilType:
+		return nil
+	case lua.LBool:
+		return bool(v)
+	case lua.LNumber:
+		if f := float64(v); f == math.Trunc(f) && math.Abs(f) < 1<<53 {
+			return int64(f)
+		}
+		return float64(v)
+	case lua.LString:
+		return string(v)
+	default:
+		return v.String()
+	}
+}
+
+// luaOptionValue is the inverse of optionValue, for handing a default back to
+// a module through MODULE.GetOption.
+func luaOptionValue(v any) lua.LValue {
+	switch v := v.(type) {
+	case bool:
+		return lua.LBool(v)
+	case int64:
+		return lua.LNumber(v)
+	case float64:
+		return lua.LNumber(v)
+	case string:
+		return lua.LString(v)
+	default:
+		return lua.LNil
+	}
 }

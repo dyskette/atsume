@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/dyskette/atsume/internal/scraper"
@@ -91,16 +92,16 @@ func (a *App) ModuleSettings(ctx context.Context, name string) (*ModuleSettings,
 
 // defaultText renders an option's declared default as text.
 func defaultText(o scraper.Option) string {
-	if o.Default == nil {
-		return ""
-	}
-	switch o.Default.String() {
-	case "true":
-		return "1"
-	case "false", "nil":
+	switch v := o.Default.(type) {
+	case bool:
+		if v {
+			return "1"
+		}
+		return "0"
+	case nil:
 		return "0"
 	default:
-		return o.Default.String()
+		return fmt.Sprint(v)
 	}
 }
 

@@ -178,7 +178,7 @@ func (h *Host) Open(ctx context.Context, moduleFile, site, rootURL string) (*Run
 		return nil, fmt.Errorf("%s declares no website named %q", moduleFile, site)
 	}
 	for _, o := range r.mod.Options {
-		r.options[o.Name] = o.Default
+		r.options[o.Name] = luaOptionValue(o.Default)
 	}
 	L.SetGlobal("MODULE", r.bindModule(L))
 	return r, nil
