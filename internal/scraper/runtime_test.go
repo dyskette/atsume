@@ -1,8 +1,11 @@
 package scraper
 
 import (
+	"io"
+	"path/filepath"
 	"testing"
 
+	rt "github.com/arnodel/golua/runtime"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -41,12 +44,47 @@ result = n
 // them raises "attempt to call a non-function object" at handler time, which no
 // module load test can detect.
 func TestRuntimeSupportsChainedForIn(t *testing.T) {
-	if runtimeForInBug() {
-		t.Fatal("the Lua runtime miscompiles a chained call in a generic-for header, " +
-			"which breaks 255 of 621 upstream modules.\n" +
-			"Apply patches/gopher-lua-generic-for.patch to a fork and add the replace " +
-			"directive described in docs/UPSTREAM.md.")
+	t.Run("gopher-lua", func(t *testing.T) {
+		if runtimeForInBug() {
+			t.Fatal("the Lua runtime miscompiles a chained call in a generic-for header, " +
+				"which breaks 255 of 621 upstream modules.\n" +
+				"Apply patches/gopher-lua-generic-for.patch to a fork and add the replace " +
+				"directive described in docs/UPSTREAM.md.")
+		}
+	})
+	// golua compiles this correctly without a patch.
+	t.Run("golua", func(t *testing.T) {
+		got, err := goluaResult(t, `
+local items = {'a','b','c'}
+local function makeIter()
+  local i = 0
+  return function() i = i + 1; return items[i] end
+end
+local obj = { Get = makeIter }
+local function maker() return obj end
+local n = 0
+for v in maker().Get() do n = n + 1 end
+result = n`)
+		if err != nil || got != "3" {
+			t.Fatalf("got %q, %v; want 3", got, err)
+		}
+	})
+}
+
+// goluaResult runs src in a golua runtime built for modules and returns the
+// global result as text.
+func goluaResult(t *testing.T, src string) (string, error) {
+	t.Helper()
+	r := newLuaRuntime(io.Discard, filepath.Join(t.TempDir(), "lua"))
+	chunk, err := r.CompileAndLoadLuaChunk("test", []byte(src), rt.TableValue(r.GlobalEnv()))
+	if err != nil {
+		return "", err
 	}
+	if _, err := rt.Call1(r.MainThread(), rt.FunctionValue(chunk)); err != nil {
+		return "", err
+	}
+	s, _ := r.GlobalEnv().Get(rt.StringValue("result")).ToString()
+	return s, nil
 }
 
 // TestRuntimeLuaBasics pins the other runtime behaviours the host relies on, so
@@ -63,13 +101,22 @@ func TestRuntimeLuaBasics(t *testing.T) {
 		{"one-based tables", `local t = {"a","b"} result = t[1] .. t[2]`, "ab"},
 	}
 	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
+		t.Run(c.name+"/gopher-lua", func(t *testing.T) {
 			L := lua.NewState()
 			defer L.Close()
 			if err := L.DoString(c.src); err != nil {
 				t.Fatal(err)
 			}
 			if got := lua.LVAsString(L.GetGlobal("result")); got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
+		t.Run(c.name+"/golua", func(t *testing.T) {
+			got, err := goluaResult(t, c.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
 		})

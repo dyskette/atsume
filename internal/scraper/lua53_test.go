@@ -16,14 +16,15 @@ import (
 // is not a mystery.
 func requireLua53(t *testing.T) {
 	t.Helper()
-	if _, err := runLua(t, "return 1 & 1"); err != nil {
+	if _, err := runLua(t, luaRuntimes[0], "return 1 & 1"); err != nil {
 		t.Skip("gopher-lua here has no bitwise operators; " +
 			"apply patches/gopher-lua-lua53-operators.patch to the fork in go.mod")
 	}
 }
 
-// runLua evaluates a chunk and returns what it assigned to RESULT.
-func runLua(t *testing.T, body string) (string, error) {
+// runLua evaluates a chunk in a module loaded by lr and returns what it
+// assigned to RESULT.
+func runLua(t *testing.T, lr luaRuntime, body string) (string, error) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "Bits.lua")
 	src := `
@@ -39,12 +40,12 @@ end
 		t.Fatal(err)
 	}
 	h := &Host{LuaDir: luaDir(t)}
-	r, err := h.Open(context.Background(), path, "", "")
+	r, err := lr.open(h, context.Background(), path, "", "")
 	if err != nil {
 		return "", err
 	}
 	defer r.Close()
-	return r.L.GetGlobal("RESULT").String(), nil
+	return r.testGlobal("RESULT"), nil
 }
 
 // TestLua53Operators pins the operators the fork adds to gopher-lua.
@@ -56,9 +57,12 @@ end
 //
 // If this test starts failing, the likely cause is a gopher-lua bump that
 // dropped patches/gopher-lua-lua53-operators.patch.
+//
+// Under golua the same expectations hold, except where the fork's single
+// number type cannot follow Lua: floor division of a float yields a float,
+// which reads "3.0". Those cases are listed in goluaWant.
 func TestLua53Operators(t *testing.T) {
-	requireLua53(t)
-
+	goluaWant := map[string]string{"floor division of floats": "3.0"}
 	cases := []struct{ name, body, want string }{
 		{"and", "return 0xF0 & 0x3C", "48"},
 		{"or", "return 0xF0 | 0x0F", "255"},
@@ -101,17 +105,26 @@ func TestLua53Operators(t *testing.T) {
 		},
 	}
 
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, err := runLua(t, c.body)
-			if err != nil {
-				t.Fatalf("%v", err)
-			}
-			if got != c.want {
-				t.Errorf("got %s, want %s", got, c.want)
-			}
-		})
-	}
+	eachRuntime(t, func(t *testing.T, lr luaRuntime) {
+		if lr.name == "gopher-lua" {
+			requireLua53(t)
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				want := c.want
+				if w, ok := goluaWant[c.name]; ok && lr.name == "golua" {
+					want = w
+				}
+				got, err := runLua(t, lr, c.body)
+				if err != nil {
+					t.Fatalf("%v", err)
+				}
+				if got != want {
+					t.Errorf("got %s, want %s", got, want)
+				}
+			})
+		}
+	})
 }
 
 // TestLua53OperatorsRefuseWhatTheyCannotRepresent covers the one place this
@@ -131,7 +144,7 @@ func TestLua53OperatorsRefuseWhatTheyCannotRepresent(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := runLua(t, c.body)
+			_, err := runLua(t, luaRuntimes[0], c.body)
 			if err == nil {
 				t.Fatal("want an error rather than a wrong answer")
 			}
@@ -147,8 +160,30 @@ func TestLua53OperatorsRefuseWhatTheyCannotRepresent(t *testing.T) {
 		"return 1 << 63", // exactly representable, so it is allowed
 		"return 0x7FFFFFFF ~ 0x12345678",
 	} {
-		if _, err := runLua(t, body); err != nil {
+		if _, err := runLua(t, luaRuntimes[0], body); err != nil {
 			t.Errorf("%s: %v", body, err)
 		}
+	}
+}
+
+// TestLua53OperatorsUseRealIntegers is TestLua53OperatorsRefuseWhatTheyCannotRepresent
+// under golua, which has Lua's 64-bit integers: the values the fork has to
+// refuse come out right. Only a fractional operand still fails, as in Lua.
+func TestLua53OperatorsUseRealIntegers(t *testing.T) {
+	golua := luaRuntimes[1]
+	for body, want := range map[string]string{
+		"return (1 << 53) + 1 | 1":   "9007199254740993",
+		"return 2^60 & 0xFF":         "0",
+		"return 1 << 63":             "-9223372036854775808",
+		"return 0xFFFFFFFF & 0xFFFF": "65535",
+	} {
+		got, err := runLua(t, golua, body)
+		if err != nil || got != want {
+			t.Errorf("%s: got %q, %v; want %s", body, got, err, want)
+		}
+	}
+	if _, err := runLua(t, golua, "return 1.5 & 1"); err == nil ||
+		!strings.Contains(err.Error(), "no integer representation") {
+		t.Errorf("a fractional operand: got %v, want an error", err)
 	}
 }
