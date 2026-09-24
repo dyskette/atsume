@@ -117,6 +117,30 @@ func TestComicInfoNumberFormats(t *testing.T) {
 	}
 }
 
+// TestComicInfoNumberKeepsSeasonsInOrder covers series whose episodes restart
+// each season: the number must sort S1 before S2 whatever the episode, which
+// is what Komga orders a series by.
+func TestComicInfoNumberKeepsSeasonsInOrder(t *testing.T) {
+	cases := map[string]string{
+		"[Season 1] Ep. 0":          "1.000",
+		"[Season 2] Ep. 1":          "2.001",
+		"[Season 3] Ep. 150":        "3.150",
+		"Season 2 Chapter 10":       "2.010",
+		"[Season 1] Ep. 12.5":       "12.5", // a fraction cannot be folded in
+		"[Season 1] Ep. 1200":       "1200", // nor a fourth digit
+		"Vol.2 Chapter 15":          "15",   // real volumes carry numbers on
+		"Season 2 Vol.4 Chapter 30": "30",   // an explicit volume wins
+		"Chapter 7":                 "7",
+		"Oneshot":                   "0",
+	}
+	for name, want := range cases {
+		ch := ParseChapter("Tower of God", name)
+		if got := BuildComicInfo(SeriesMeta{Title: "Tower of God"}, ch, 1).Number; got != want {
+			t.Errorf("%q: Number = %q, want %q", name, got, want)
+		}
+	}
+}
+
 // TestWriteCBZIncludesMetadata covers the file landing where a reader looks.
 func TestWriteCBZIncludesMetadata(t *testing.T) {
 	ch := ParseChapter("1/2 Prince", "Chapter 1")

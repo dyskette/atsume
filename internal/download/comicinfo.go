@@ -75,7 +75,7 @@ func BuildComicInfo(s SeriesMeta, c Chapter, pages int) *ComicInfo {
 		XSD:       "http://www.w3.org/2001/XMLSchema",
 		Title:     strings.TrimSpace(c.Name),
 		Series:    strings.TrimSpace(s.Title),
-		Number:    comicInfoNumber(c.Number),
+		Number:    chapterSortNumber(c),
 		Summary:   strings.TrimSpace(s.Summary),
 		Writer:    strings.TrimSpace(s.Authors),
 		Penciller: strings.TrimSpace(s.Artists),
@@ -88,6 +88,29 @@ func BuildComicInfo(s SeriesMeta, c Chapter, pages int) *ComicInfo {
 	}
 	info.Notes = comicInfoNotes(s)
 	return info
+}
+
+// chapterSortNumber is the ComicInfo number for c.
+//
+// Komga orders a series by this number alone, falling back to the file name
+// only to break ties, and the name sorts by chapter before volume. A series
+// whose episodes restart each season — WebToons names them "[Season 2] Ep. 1"
+// — therefore reads S1E1, S2E1, S3E1, S1E2 unless the season is part of the
+// number, so a season chapter's number is "2.001": season, then the episode
+// padded as in the file name. Checked against Komga, which then keeps each
+// season together and in order.
+//
+// A real volume needs none of this, since chapter numbers carry on across
+// volumes. An episode the scheme cannot order, one with a fraction or past
+// 999, keeps its plain number rather than a misleading one.
+func chapterSortNumber(c Chapter) string {
+	if seasonNum.MatchString(c.Name) && !volumeNum.MatchString(c.Name) && c.Volume != "" &&
+		len(c.Number) == 3 && strings.Trim(c.Number, "0123456789") == "" {
+		if season, err := strconv.Atoi(c.Volume); err == nil {
+			return strconv.Itoa(season) + "." + c.Number
+		}
+	}
+	return comicInfoNumber(c.Number)
 }
 
 // comicInfoNumber renders a chapter number the way the format expects.
