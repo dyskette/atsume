@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	lua "github.com/yuin/gopher-lua"
+	rt "github.com/arnodel/golua/runtime"
 	"golang.org/x/net/publicsuffix"
 )
 
@@ -170,7 +170,10 @@ func (h *HTTP) Reset() {
 	h.ResultCode = 0
 }
 
-func (h *HTTP) bind(L *lua.LState) lua.LValue {
+// bind exposes the client as HTTP. Every request method checks the
+// runner's context first, so a cancelled scrape ends at its next request
+// instead of carrying on with failed ones.
+func (h *HTTP) bind(r *rt.Runtime, checkContext func(*rt.Thread)) rt.Value {
 	f := newFields("atsume.HTTP")
 	f.str["MimeType"] = &h.MimeType
 	f.str["UserAgent"] = &h.UserAgent
@@ -180,42 +183,54 @@ func (h *HTTP) bind(L *lua.LState) lua.LValue {
 	f.boolean["Terminated"] = &h.Terminated
 	f.list["Headers"] = h.Headers
 	f.list["Cookies"] = h.Cookies
+	f.getter["Document"] = func(t *rt.Thread) rt.Value { return pushDocument(t.Runtime, h.Document) }
 
-	f.getter["Document"] = func(L *lua.LState) lua.LValue { return pushDocument(L, h.Document) }
-
-	f.methods["GET"] = func(L *lua.LState) int {
-		L.Push(lua.LBool(h.do(http.MethodGet, L.CheckString(1), "")))
-		return 1
+	// request adapts a request method: URL first, then an optional body.
+	request := func(method string, before func()) goFn {
+		return goFn{2, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			checkContext(t)
+			u, err := checkString(c, 0)
+			if err != nil {
+				return nil, err
+			}
+			body := ""
+			if method == http.MethodPost {
+				if body, err = optString(c, 1, ""); err != nil {
+					return nil, err
+				}
+			}
+			if before != nil {
+				before()
+			}
+			return c.PushingNext1(t.Runtime, rt.BoolValue(h.do(method, u, body))), nil
+		}}
 	}
-	f.methods["POST"] = func(L *lua.LState) int {
+	f.methods["GET"] = request(http.MethodGet, nil)
+	f.methods["POST"] = request(http.MethodPost, func() {
 		if h.MimeType == "" {
 			h.MimeType = "application/x-www-form-urlencoded"
 		}
-		L.Push(lua.LBool(h.do(http.MethodPost, L.CheckString(1), L.OptString(2, ""))))
-		return 1
-	}
-	f.methods["HEAD"] = func(L *lua.LState) int {
-		L.Push(lua.LBool(h.do(http.MethodHead, L.CheckString(1), "")))
-		return 1
-	}
-	// XHR is a GET that announces itself as an in-page request; several modules
-	// rely on the server varying its response on this header.
-	f.methods["XHR"] = func(L *lua.LState) int {
+	})
+	f.methods["HEAD"] = request(http.MethodHead, nil)
+	// XHR is a GET that announces itself as an in-page request; several
+	// modules rely on the server varying its response on this header.
+	f.methods["XHR"] = request(http.MethodGet, func() {
 		h.Headers.SetValue("X-Requested-With", "XMLHttpRequest")
-		L.Push(lua.LBool(h.do(http.MethodGet, L.CheckString(1), "")))
-		return 1
-	}
-	f.methods["Reset"] = func(L *lua.LState) int { h.Reset(); return 0 }
-	f.methods["ResetBasic"] = func(L *lua.LState) int { h.Reset(); return 0 }
-	f.methods["ClearCookies"] = func(L *lua.LState) int { h.Cookies.Clear(); return 0 }
-	f.methods["GetCookies"] = func(L *lua.LState) int {
-		L.Push(lua.LString(strings.Join(h.Cookies.All(), "; ")))
-		return 1
-	}
-	f.methods["AddServerCookies"] = func(L *lua.LState) int {
-		h.Cookies.Add(L.CheckString(2))
-		return 0
-	}
-	f.methods["SetProxy"] = func(L *lua.LState) int { return 0 } // proxying is host policy
-	return f.push(L)
+	})
+	f.methods["Reset"] = noResult(0, func(*rt.GoCont) error { h.Reset(); return nil })
+	f.methods["ResetBasic"] = noResult(0, func(*rt.GoCont) error { h.Reset(); return nil })
+	f.methods["ClearCookies"] = noResult(0, func(*rt.GoCont) error { h.Cookies.Clear(); return nil })
+	f.methods["GetCookies"] = goFn{0, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		return c.PushingNext1(t.Runtime, rt.StringValue(strings.Join(h.Cookies.All(), "; "))), nil
+	}}
+	// The cookie is the second argument, as upstream's signature has it.
+	f.methods["AddServerCookies"] = noResult(2, func(c *rt.GoCont) error {
+		s, err := checkString(c, 1)
+		if err == nil {
+			h.Cookies.Add(s)
+		}
+		return err
+	})
+	f.methods["SetProxy"] = noResult(0, func(*rt.GoCont) error { return nil }) // proxying is host policy
+	return f.push(r)
 }

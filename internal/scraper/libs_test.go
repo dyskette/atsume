@@ -30,11 +30,11 @@ func scrambledPNG(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-func runGoluaLibs(t *testing.T, luaDir string, doc []byte, src string) (string, bool) {
+func runLibs(t *testing.T, luaDir string, doc []byte, src string) (string, bool) {
 	t.Helper()
-	r := newLuaRuntime(io.Discard, luaDir)
+	r := newLuaRuntime(io.Discard, luaDir, nil)
 	preloadLibs(r, luaDir)
-	r.GlobalEnv().Set(rt.StringValue("DOC"), pushGoluaDocument(r, &Document{data: doc}))
+	r.GlobalEnv().Set(rt.StringValue("DOC"), pushDocument(r, &Document{data: doc}))
 	chunk, err := r.CompileAndLoadLuaChunk("test", []byte(src), rt.TableValue(r.GlobalEnv()))
 	if err != nil {
 		t.Fatalf("compile %q: %v", src, err)
@@ -47,10 +47,10 @@ func runGoluaLibs(t *testing.T, luaDir string, doc []byte, src string) (string, 
 	return s, true
 }
 
-// TestGoluaLibsMatchGopher runs the image puzzle, watermark and JavaScript
-// libraries through both runtimes and requires the same results.
 const libsSnippetsPrefix = `local p = require('fmd.imagepuzzle').Create(2, 2) `
 
+// libsSnippets exercise the image puzzle, watermark and JavaScript
+// libraries; libsWant holds what each must produce.
 var libsSnippets = map[string]string{
 	"puzzle fields":          libsSnippetsPrefix + `return p.HorBlock .. p.VerBlock .. p.Multiply .. #p.Matrix .. p.Matrix[0] .. p.Matrix[3] .. tostring(p.Matrix[4])`,
 	"puzzle New alias":       `return tostring(#require('fmd.imagepuzzle').New(3, 2).Matrix)`,
@@ -71,8 +71,8 @@ var libsSnippets = map[string]string{
 }
 
 // libsWant is what each libsSnippets entry must return, or whether it must
-// fail. The values were taken from the gopher-lua bindings the golua ones
-// replaced, so modules see no difference.
+// fail. The values were taken from the gopher-lua bindings these replaced,
+// so modules see no difference.
 var libsWant = map[string]struct {
 	want  string
 	fails bool
@@ -100,7 +100,7 @@ func TestLibs(t *testing.T) {
 	for name, src := range libsSnippets {
 		t.Run(name, func(t *testing.T) {
 			w := libsWant[name]
-			got, ok := runGoluaLibs(t, luaDir, scrambledPNG(t), src)
+			got, ok := runLibs(t, luaDir, scrambledPNG(t), src)
 			if ok == w.fails {
 				t.Fatalf("ok=%v %q, want it to fail=%v", ok, got, w.fails)
 			}

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
@@ -33,7 +32,7 @@ func writeTree(t *testing.T, files map[string]string) string {
 	return filepath.Join(root, "lua")
 }
 
-func TestGoluaOpen(t *testing.T) {
+func TestOpen(t *testing.T) {
 	const bom = "\xEF\xBB\xBF"
 	luaDir := writeTree(t, map[string]string{
 		"templates/Shared.lua": `
@@ -67,7 +66,7 @@ function Fail() error('broken on purpose') end`,
 	h := &Host{LuaDir: luaDir}
 	file := filepath.Join(luaDir, "modules", "Example.lua")
 
-	r, err := h.openGolua(context.Background(), file, "example", "https://two.example")
+	r, err := h.Open(context.Background(), file, "example", "https://two.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +119,7 @@ function Fail() error('broken on purpose') end`,
 		t.Errorf("a failing handler should name itself and keep the message, got %v", err)
 	}
 
-	if _, err := h.openGolua(context.Background(), file, "Nope", ""); err == nil ||
+	if _, err := h.Open(context.Background(), file, "Nope", ""); err == nil ||
 		!strings.Contains(err.Error(), `declares no website named "Nope"`) {
 		t.Errorf("unknown site: got %v", err)
 	}
@@ -143,14 +142,14 @@ function Swallow() cancel(); pcall(poll); return 'looks fine' end
 function Stubborn() cancel(); while true do pcall(poll) end end
 function Fine() RAN = true; return 'fine' end`
 
-func openLoop(t *testing.T, ctx context.Context) (*goluaRunner, error) {
+func openLoop(t *testing.T, ctx context.Context) (*Runner, error) {
 	t.Helper()
 	luaDir := writeTree(t, map[string]string{"modules/Loop.lua": loopModule})
 	h := &Host{LuaDir: luaDir}
-	return h.openGolua(ctx, filepath.Join(luaDir, "modules", "Loop.lua"), "", "")
+	return h.Open(ctx, filepath.Join(luaDir, "modules", "Loop.lua"), "", "")
 }
 
-func TestGoluaCPULimit(t *testing.T) {
+func TestCPULimit(t *testing.T) {
 	r, err := openLoop(t, context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -166,22 +165,22 @@ func TestGoluaCPULimit(t *testing.T) {
 	}
 }
 
-func TestGoluaCancellation(t *testing.T) {
+func TestCancellation(t *testing.T) {
 	// withCancel opens a runner whose Lua can cancel its own context, and
 	// poll, which stands in for a binding such as HTTP that checks on entry.
-	withCancel := func(t *testing.T) (*goluaRunner, context.Context) {
+	withCancel := func(t *testing.T) (*Runner, context.Context) {
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
 		r, err := openLoop(t, ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		env := r.r.GlobalEnv()
-		setGoFunc(r.r, env, "cancel", func(th *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		env := r.lua.GlobalEnv()
+		setGoFunc(r.lua, env, "cancel", func(th *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 			cancel()
 			return c.Next(), nil
 		}, 0, false)
-		setGoFunc(r.r, env, "poll", func(th *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		setGoFunc(r.lua, env, "poll", func(th *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 			r.checkContext(th)
 			return c.Next(), nil
 		}, 0, false)
@@ -197,7 +196,7 @@ func TestGoluaCancellation(t *testing.T) {
 		if _, err := r.call("OnCheckSite"); !errors.Is(err, context.Canceled) {
 			t.Errorf("got %v, want context.Canceled", err)
 		}
-		if !r.r.GlobalEnv().Get(rt.StringValue("RAN")).IsNil() {
+		if !r.lua.GlobalEnv().Get(rt.StringValue("RAN")).IsNil() {
 			t.Error("a handler ran after cancellation")
 		}
 		if _, err := openLoop(t, ctx); !errors.Is(err, context.Canceled) {
@@ -221,7 +220,7 @@ func TestGoluaCancellation(t *testing.T) {
 	})
 }
 
-// cpuHeadroom is how many times the heaviest real handler call goluaCPULimit
+// cpuHeadroom is how many times the heaviest real handler call luaCPULimit
 // must allow, and jsonHeadroom how many times a 1 MB pure-Lua JSON decode.
 // Below either, a slow but legitimate handler could be killed.
 const (
@@ -229,25 +228,32 @@ const (
 	jsonHeadroom = 10
 )
 
-// TestGoluaCPULimitHeadroom runs every golden and recorded case under golua,
+// TestCPULimitHeadroom runs every golden and recorded case,
 // the closest thing to real scrapes the suite has, plus the heaviest thing a
 // module commonly does in Lua itself: decoding a large JSON response with
 // upstream's utils/json. The limit must leave room above both.
-func TestGoluaCPULimitHeadroom(t *testing.T) {
+func TestCPULimitHeadroom(t *testing.T) {
 	dir := luaDir(t)
-	var runners []*goluaRunner
-	onGoluaOpen = func(r *goluaRunner) { runners = append(runners, r) }
-	defer func() { onGoluaOpen = nil }()
-
-	t.Run("golden", TestGolden)
-	t.Run("recorded", TestRecorded)
+	var runners []*Runner
+	for _, c := range goldenCases {
+		t.Run("golden/"+c.name, func(t *testing.T) { runners = append(runners, runGoldenCase(t, dir, c)) })
+	}
+	root := filepath.Join("testdata", "recorded")
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		if e.IsDir() {
+			t.Run("recorded/"+e.Name(), func(t *testing.T) {
+				runners = append(runners, runRecordedCase(t, root, dir, e.Name(), false))
+			})
+		}
+	}
 	var peak uint64
 	for _, r := range runners {
 		peak = max(peak, r.peakCPU)
 	}
 	t.Logf("%d runners; heaviest call used %d ticks, %.0fx below the limit",
-		len(runners), peak, float64(goluaCPULimit)/float64(max(peak, 1)))
-	if peak*cpuHeadroom > goluaCPULimit {
+		len(runners), peak, float64(luaCPULimit)/float64(max(peak, 1)))
+	if peak*cpuHeadroom > luaCPULimit {
 		t.Errorf("the limit is less than %dx the heaviest handler call", cpuHeadroom)
 	}
 
@@ -265,7 +271,7 @@ func TestGoluaCPULimitHeadroom(t *testing.T) {
 function Init() local m = NewWebsiteModule(); m.Name = 'Json'; m.OnGetInfo = 'GetInfo' end
 function GetInfo() return #require('utils.json').decode(DATA).data end`})
 	h := &Host{LuaDir: dir}
-	r, err := h.openGolua(context.Background(), filepath.Join(mod, "modules", "Json.lua"), "", "")
+	r, err := h.Open(context.Background(), filepath.Join(mod, "modules", "Json.lua"), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,76 +280,25 @@ function GetInfo() return #require('utils.json').decode(DATA).data end`})
 		t.Fatalf("decoding: %v, %v", v, err)
 	}
 	t.Logf("decoding %d bytes of JSON used %d ticks, %.0fx below the limit",
-		b.Len(), r.peakCPU, float64(goluaCPULimit)/float64(r.peakCPU))
-	if r.peakCPU*jsonHeadroom > goluaCPULimit {
+		b.Len(), r.peakCPU, float64(luaCPULimit)/float64(r.peakCPU))
+	if r.peakCPU*jsonHeadroom > luaCPULimit {
 		t.Errorf("the limit is less than %dx a 1 MB JSON decode", jsonHeadroom)
 	}
 }
 
-// goluaCompileFailures are the upstream files that Lua 5.5 rejects because
-// they assign to a for loop's control variable. GroupLe is a template, so the
-// eight modules that require it fail with it.
-var goluaCompileFailures = []string{
+// lua55Rejects are the upstream modules Lua 5.5 rejects because they assign to
+// a for loop's control variable. GroupLe is a template, so the eight modules
+// that require it fail with it. TestLoadAllModules pins the list; it shrinks
+// when FMD2 fixes the two files.
+var lua55Rejects = []string{
 	"AllHentai", "LeerCapitulo", "MintManga", "ReadManga", "RuMIX",
 	"SeiManga", "SelfMangaRU", "UsagiOne", "Zazaza",
 }
 
-// TestGoluaDeclarationsMatchGopher loads every upstream module with both
-// runtimes and requires them to declare the same sites, handlers and options.
-func TestGoluaDeclarationsMatchGopher(t *testing.T) {
-	dir := luaDir(t)
-	reg := NewRegistry("", "")
-	if err := reg.Use(filepath.Dir(dir), "test"); err != nil {
-		t.Fatal(err)
-	}
-	h := &Host{LuaDir: dir}
-	ctx := context.Background()
-
-	var goluaOnly []string
-	matched := 0
-	for _, m := range reg.Modules() {
-		g, gErr := h.Open(ctx, m.File, "", "")
-		n, nErr := h.openGolua(ctx, m.File, "", "")
-		switch {
-		case gErr != nil && nErr != nil:
-			continue // fails in both, such as MangaPlus needing the C protobuf library
-		case gErr != nil:
-			t.Errorf("%s: loads with golua but not gopher-lua: %v", m.Name, gErr)
-			continue
-		case nErr != nil:
-			if !strings.Contains(nErr.Error(), "constant variable") {
-				t.Errorf("%s: loads with gopher-lua but not golua: %v", m.Name, nErr)
-			}
-			goluaOnly = append(goluaOnly, m.Name)
-			g.Close()
-			continue
-		}
-		if !reflect.DeepEqual(g.Sites(), n.sites) {
-			for i := range g.Sites() {
-				if i < len(n.sites) && !reflect.DeepEqual(g.Sites()[i], n.sites[i]) {
-					t.Errorf("%s: declarations differ\ngopher-lua %+v\n     golua %+v", m.Name, g.Sites()[i], n.sites[i])
-				}
-			}
-			if len(g.Sites()) != len(n.sites) {
-				t.Errorf("%s: gopher-lua declares %d sites, golua %d", m.Name, len(g.Sites()), len(n.sites))
-			}
-		} else {
-			matched++
-		}
-		g.Close()
-	}
-
-	sort.Strings(goluaOnly)
-	if !reflect.DeepEqual(goluaOnly, goluaCompileFailures) {
-		t.Errorf("modules Lua 5.5 rejects:\n got %v\nwant %v", goluaOnly, goluaCompileFailures)
-	}
-	t.Logf("%d module files declare the same sites in both runtimes", matched)
-}
-
-// TestGoluaHTTPStopsOnCancel checks the HTTP binding's side of cancellation:
+// TestHTTPStopsOnCancel checks the HTTP binding's side of cancellation:
 // a handler that keeps requesting pages ends at its next request once the
 // context is done, instead of looping over failed requests.
-func TestGoluaHTTPStopsOnCancel(t *testing.T) {
+func TestHTTPStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	requests := 0
@@ -366,7 +321,7 @@ end`})
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("ok")), Request: r}, nil
 	})}
-	r, err := h.openGolua(ctx, filepath.Join(luaDir, "modules", "Pager.lua"), "", "")
+	r, err := h.Open(ctx, filepath.Join(luaDir, "modules", "Pager.lua"), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,3 +336,15 @@ end`})
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// testGlobal reads a global as text, and testCall runs an event's handler and
+// reports only whether it failed; tests use them to look inside a runner.
+func (r *Runner) testGlobal(name string) string {
+	s, _ := r.lua.GlobalEnv().Get(rt.StringValue(name)).ToString()
+	return s
+}
+
+func (r *Runner) testCall(event string) error {
+	_, err := r.call(event)
+	return err
+}

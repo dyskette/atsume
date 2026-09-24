@@ -264,13 +264,13 @@ end
 	}
 	defer r.Close()
 
-	if got := r.L.GetGlobal("COUNT").String(); got != "1" {
+	if got := r.testGlobal("COUNT"); got != "1" {
 		t.Fatalf("LoadTemplate returned %s, want 1", got)
 	}
 	if err := r.AfterImageSaved(path); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.L.GetGlobal("REMOVED").String(); got != "true" {
+	if got := r.testGlobal("REMOVED"); got != "true" {
 		t.Errorf("RemoveWatermark returned %s", got)
 	}
 	f, _ := os.Open(path)

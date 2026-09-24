@@ -21,16 +21,17 @@ const queryPage = `<html><head><title> The  Title </title>
 
 const queryJSON = `{"data":{"title":"From JSON","chapters":[{"id":10,"name":"One"},{"id":11,"name":"Two"}]}}`
 
-// runGoluaQuery runs src with the golua bindings and builtins.
-func runGoluaQuery(t *testing.T, src string) (string, bool) {
+// runQuery runs src with the document, query and node bindings and the
+// builtins.
+func runQuery(t *testing.T, src string) (string, bool) {
 	t.Helper()
-	r := newLuaRuntime(io.Discard, filepath.Join(t.TempDir(), "lua"))
-	registerGoluaBuiltins(r, t.Context())
+	r := newLuaRuntime(io.Discard, filepath.Join(t.TempDir(), "lua"), nil)
+	registerBuiltins(r, t.Context())
 	env := r.GlobalEnv()
-	env.Set(rt.StringValue("DOC"), pushGoluaDocument(r, &Document{data: []byte(queryPage)}))
-	env.Set(rt.StringValue("JSON"), pushGoluaDocument(r, &Document{data: []byte(queryJSON)}))
-	env.Set(rt.StringValue("LINKS"), pushGoluaStrings(r, NewStrings()))
-	env.Set(rt.StringValue("NAMES"), pushGoluaStrings(r, NewStrings()))
+	env.Set(rt.StringValue("DOC"), pushDocument(r, &Document{data: []byte(queryPage)}))
+	env.Set(rt.StringValue("JSON"), pushDocument(r, &Document{data: []byte(queryJSON)}))
+	env.Set(rt.StringValue("LINKS"), pushStrings(r, NewStrings()))
+	env.Set(rt.StringValue("NAMES"), pushStrings(r, NewStrings()))
 	chunk, err := r.CompileAndLoadLuaChunk("test", []byte(src), rt.TableValue(env))
 	if err != nil {
 		t.Fatalf("compile %q: %v", src, err)
@@ -43,10 +44,10 @@ func runGoluaQuery(t *testing.T, src string) (string, bool) {
 	return s, true
 }
 
-// TestGoluaQueryMatchesGopher runs each snippet through both runtimes and
-// requires the same result, and the same success or failure.
 const querySnippetsPrefix = `local x = CreateTXQuery(DOC) `
 
+// querySnippets exercise the document, query and node bindings and the
+// builtins; queryWant holds what each must produce.
 var querySnippets = map[string]string{
 	// Document
 	"document to string": `return DOC.ToString():sub(1, 6)`,
@@ -121,8 +122,8 @@ var querySnippets = map[string]string{
 }
 
 // queryWant is what each querySnippets entry must return, or whether it must
-// fail. The values were taken from the gopher-lua bindings the golua ones
-// replaced, so modules see no difference.
+// fail. The values were taken from the gopher-lua bindings these replaced,
+// so modules see no difference.
 var queryWant = map[string]struct {
 	want  string
 	fails bool
@@ -194,7 +195,7 @@ func TestQuery(t *testing.T) {
 	for name, src := range querySnippets {
 		t.Run(name, func(t *testing.T) {
 			w := queryWant[name]
-			got, ok := runGoluaQuery(t, src)
+			got, ok := runQuery(t, src)
 			if ok == w.fails {
 				t.Fatalf("ok=%v %q, want it to fail=%v", ok, got, w.fails)
 			}

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
-	lua "github.com/yuin/gopher-lua"
 )
 
 // jsTimeout bounds one ExecJS call.
@@ -269,24 +268,4 @@ func (j *jsRuntime) resolve(name string) (string, error) {
 		return "", fmt.Errorf("require(%q): %w", name, err)
 	}
 	return full, nil
-}
-
-// duktapeLoader registers fmd.duktape, the name the modules use for the
-// JavaScript engine regardless of which engine backs it.
-func duktapeLoader(luaDir string) lua.LGFunction {
-	rt := newJSRuntime(luaDir)
-	return func(L *lua.LState) int {
-		L.Push(L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
-			"ExecJS": func(L *lua.LState) int {
-				out, err := rt.Exec(L.CheckString(1))
-				if err != nil {
-					L.RaiseError("%s", err.Error())
-					return 0
-				}
-				L.Push(lua.LString(out))
-				return 1
-			},
-		}))
-		return 1
-	}
 }

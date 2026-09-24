@@ -1,6 +1,8 @@
 package scraper
 
-import lua "github.com/yuin/gopher-lua"
+import (
+	rt "github.com/arnodel/golua/runtime"
+)
 
 // MangaInfo is the MANGAINFO object: the result of a module's GetInfo handler.
 type MangaInfo struct {
@@ -20,22 +22,6 @@ type MangaInfo struct {
 // NewMangaInfo returns an empty MANGAINFO with its lists allocated.
 func NewMangaInfo() *MangaInfo {
 	return &MangaInfo{ChapterLinks: NewStrings(), ChapterNames: NewStrings()}
-}
-
-func (m *MangaInfo) bind(L *lua.LState) lua.LValue {
-	f := newFields("atsume.MangaInfo")
-	f.str["URL"] = &m.URL
-	f.str["Title"] = &m.Title
-	f.str["AltTitles"] = &m.AltTitles
-	f.str["CoverLink"] = &m.CoverLink
-	f.str["Authors"] = &m.Authors
-	f.str["Artists"] = &m.Artists
-	f.str["Genres"] = &m.Genres
-	f.str["Status"] = &m.Status
-	f.str["Summary"] = &m.Summary
-	f.list["ChapterLinks"] = m.ChapterLinks
-	f.list["ChapterNames"] = m.ChapterNames
-	return f.push(L)
 }
 
 // Task is the TASK object: the page list a module builds for one chapter.
@@ -61,7 +47,30 @@ func NewTask() *Task {
 	}
 }
 
-func (t *Task) bind(L *lua.LState) lua.LValue {
+// updateList is the UPDATELIST object. Only the directory page counter and the
+// status callback are used by modules.
+type updateList struct {
+	CurrentDirectoryPageNumber int
+	onStatus                   func(string)
+}
+
+func (m *MangaInfo) bind(r *rt.Runtime) rt.Value {
+	f := newFields("atsume.MangaInfo")
+	f.str["URL"] = &m.URL
+	f.str["Title"] = &m.Title
+	f.str["AltTitles"] = &m.AltTitles
+	f.str["CoverLink"] = &m.CoverLink
+	f.str["Authors"] = &m.Authors
+	f.str["Artists"] = &m.Artists
+	f.str["Genres"] = &m.Genres
+	f.str["Status"] = &m.Status
+	f.str["Summary"] = &m.Summary
+	f.list["ChapterLinks"] = m.ChapterLinks
+	f.list["ChapterNames"] = m.ChapterNames
+	return f.push(r)
+}
+
+func (t *Task) bind(r *rt.Runtime) rt.Value {
 	f := newFields("atsume.Task")
 	f.str["Link"] = &t.Link
 	f.num["PageNumber"] = &t.PageNumber
@@ -71,24 +80,21 @@ func (t *Task) bind(L *lua.LState) lua.LValue {
 	f.list["FileNames"] = t.FileNames
 	f.list["ChapterLinks"] = t.ChapterLinks
 	f.list["ChapterNames"] = t.ChapterNames
-	return f.push(L)
+	return f.push(r)
 }
 
-// updateList is the UPDATELIST object. Only the directory page counter and the
-// status callback are used by modules.
-type updateList struct {
-	CurrentDirectoryPageNumber int
-	onStatus                   func(string)
-}
-
-func (u *updateList) bind(L *lua.LState) lua.LValue {
+func (u *updateList) bind(r *rt.Runtime) rt.Value {
 	f := newFields("atsume.UpdateList")
 	f.num["CurrentDirectoryPageNumber"] = &u.CurrentDirectoryPageNumber
-	f.methods["UpdateStatusText"] = func(L *lua.LState) int {
-		if u.onStatus != nil {
-			u.onStatus(L.CheckString(1))
+	f.methods["UpdateStatusText"] = goFn{1, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		s, err := checkString(c, 0)
+		if err != nil {
+			return nil, err
 		}
-		return 0
-	}
-	return f.push(L)
+		if u.onStatus != nil {
+			u.onStatus(s)
+		}
+		return c.Next(), nil
+	}}
+	return f.push(r)
 }

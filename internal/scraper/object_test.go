@@ -20,11 +20,11 @@ type record struct {
 
 func newRecord() *record { return &record{Title: "t", Page: 1, Links: NewStrings()} }
 
-// runGoluaFields runs src against a record bound with the golua helper.
-func runGoluaFields(t *testing.T, rec *record, src string) (string, bool) {
+// runFields runs src against a record bound with the fields helper.
+func runFields(t *testing.T, rec *record, src string) (string, bool) {
 	t.Helper()
-	r := newLuaRuntime(io.Discard, filepath.Join(t.TempDir(), "lua"))
-	f := newGoluaFields("test.Record")
+	r := newLuaRuntime(io.Discard, filepath.Join(t.TempDir(), "lua"), nil)
+	f := newFields("test.Record")
 	f.str["Title"] = &rec.Title
 	f.num["Page"] = &rec.Page
 	f.boolean["Done"] = &rec.Done
@@ -52,9 +52,8 @@ func runGoluaFields(t *testing.T, rec *record, src string) (string, bool) {
 	return s, true
 }
 
-// TestGoluaFieldsMatchGopher runs each snippet through both helpers and
-// requires the same result, the same success or failure, and the same Go
-// state afterwards.
+// fieldsSnippets exercise the fields helper and the Strings binding it
+// exposes lists through; fieldsWant holds what each must produce.
 var fieldsSnippets = map[string]string{
 	"read string":             `return OBJ.Title`,
 	"number to string field":  `OBJ.Title = 5; return OBJ.Title`,
@@ -94,8 +93,8 @@ var fieldsSnippets = map[string]string{
 }
 
 // fieldsExpect is what a fieldsSnippets entry must return and leave behind in
-// the bound record. The values were taken from the gopher-lua bindings the
-// golua ones replaced, so modules see no difference.
+// the bound record. The values were taken from the gopher-lua bindings these
+// replaced, so modules see no difference.
 type fieldsExpect struct {
 	want          string
 	fails         bool
@@ -148,7 +147,7 @@ func TestFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			w := fieldsWant[name]
 			rec := newRecord()
-			got, ok := runGoluaFields(t, rec, src)
+			got, ok := runFields(t, rec, src)
 			if ok == w.fails {
 				t.Fatalf("ok=%v %q, want it to fail=%v", ok, got, w.fails)
 			}
@@ -164,8 +163,8 @@ func TestFields(t *testing.T) {
 	}
 }
 
-func TestGoluaFieldsMethodIsStable(t *testing.T) {
-	got, ok := runGoluaFields(t, newRecord(), `return tostring(OBJ.Twice == OBJ.Twice)`)
+func TestFieldsMethodIsStable(t *testing.T) {
+	got, ok := runFields(t, newRecord(), `return tostring(OBJ.Twice == OBJ.Twice)`)
 	if !ok || got != "true" {
 		t.Errorf("reading a method twice should give the same function, got %q", got)
 	}

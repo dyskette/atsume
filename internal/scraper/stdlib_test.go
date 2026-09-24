@@ -14,7 +14,13 @@ import (
 // as a string.
 func evalStd(t *testing.T, root, src string) (string, error) {
 	t.Helper()
-	r := newLuaRuntime(io.Discard, filepath.Join(root, "lua"))
+	return evalStdWritable(t, root, nil, src)
+}
+
+// evalStdWritable is evalStd with a writable file, as OnAfterImageSaved gets.
+func evalStdWritable(t *testing.T, root string, writable func() string, src string) (string, error) {
+	t.Helper()
+	r := newLuaRuntime(io.Discard, filepath.Join(root, "lua"), writable)
 	chunk, err := r.CompileAndLoadLuaChunk("test", []byte(src), rt.TableValue(r.GlobalEnv()))
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -197,6 +203,80 @@ func TestLuaRuntimeRequire(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "module '"+name+"' not found") {
 			t.Errorf("require %q: got %v, want not found", name, err)
 		}
+	}
+}
+
+func TestLuaRuntimeWritesOnlyTheImageFile(t *testing.T) {
+	root := t.TempDir()
+	img := filepath.Join(t.TempDir(), "0001.jpg")
+	other := filepath.Join(t.TempDir(), "other.jpg")
+	for _, p := range []string{img, other} {
+		if err := os.WriteFile(p, []byte("ORIGINAL"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current := img
+	writable := func() string { return current }
+	read := func(p string) string {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	run := func(src string) string {
+		t.Helper()
+		got, err := evalStdWritable(t, root, writable, src)
+		if err != nil {
+			t.Fatalf("%s: %v", src, err)
+		}
+		return got
+	}
+
+	// Readable during the hook, though it lies outside the checkout.
+	if got := run(`return io.open(` + luaQuote(img) + `, 'rb'):read('a')`); got != "ORIGINAL" {
+		t.Errorf("reading the page: %q", got)
+	}
+
+	// Replaced in place, the way upstream's contract for the hook allows.
+	run(`local f = io.open(` + luaQuote(img) + `, 'wb'); f:write('ED', 'IT'):write(1); f:close()`)
+	if got := read(img); got != "EDIT1" {
+		t.Errorf("after w: %q", got)
+	}
+	run(`local f = io.open(` + luaQuote(img) + `, 'a'); f:write('+'); f:close()`)
+	if got := read(img); got != "EDIT1+" {
+		t.Errorf("after a: %q", got)
+	}
+
+	// Nothing is saved without close, so an abandoned edit leaves the page.
+	run(`local f = io.open(` + luaQuote(img) + `, 'w'); f:write('LOST')`)
+	if got := read(img); got != "EDIT1+" {
+		t.Errorf("an unclosed file was saved: %q", got)
+	}
+
+	for _, src := range []string{
+		// any other file stays read-only
+		`local f, err = io.open(` + luaQuote(other) + `, 'w'); return tostring(f) .. ' ' .. err`,
+		// as does a mode that reads and writes
+		`local f, err = io.open(` + luaQuote(img) + `, 'r+'); return tostring(f) .. ' ' .. err`,
+		// and writing to a file opened for reading fails as in Lua
+		`local f = io.open(` + luaQuote(img) + `); local ok, err = f:write('x'); return tostring(ok) .. ' ' .. err`,
+	} {
+		if got := run(src); !strings.HasPrefix(got, "nil ") {
+			t.Errorf("%s: got %q, want a nil result", src, got)
+		}
+	}
+
+	// Once the hook is over, the page is out of reach again.
+	current = ""
+	for _, mode := range []string{"w", "r"} {
+		src := `local f, err = io.open(` + luaQuote(img) + `, '` + mode + `'); return tostring(f) .. ' ' .. err`
+		if got := run(src); !strings.HasPrefix(got, "nil ") {
+			t.Errorf("opening with %q after the hook: %q", mode, got)
+		}
+	}
+	if read(other) != "ORIGINAL" {
+		t.Error("the other file changed")
 	}
 }
 

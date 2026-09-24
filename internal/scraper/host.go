@@ -1,16 +1,15 @@
 package scraper
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
-	lua "github.com/yuin/gopher-lua"
+	rt "github.com/arnodel/golua/runtime"
 )
 
 // Host loads website modules from a checkout of the FMD2 lua tree.
@@ -30,37 +29,6 @@ type Host struct {
 	Solver *Flaresolverr
 }
 
-// Runner is one module bound to one Lua state.
-//
-// A state is not safe for concurrent use and the module API is built on
-// globals (URL, LINKS, MANGAINFO), so each scrape takes its own Runner. The
-// worker pool owns the concurrency; a Runner is single-threaded by contract.
-type Runner struct {
-	L *lua.LState
-	// mod is the website this runner is scraping; sites is everything the
-	// file declared, because one file is not one website.
-	mod   *Module
-	sites []*Module
-	http  *HTTP
-
-	mangaInfo *MangaInfo
-	task      *Task
-	links     *Strings
-	names     *Strings
-	update    *updateList
-	options   map[string]lua.LValue
-	// storage backs MODULE.Storage, a per-module key/value scratchpad that some
-	// templates consult to decide between parsing strategies.
-	storage map[string]string
-	// account backs MODULE.Account. Credentials are not implemented yet, so it
-	// reports Enabled=false and login handlers decline cleanly instead of
-	// faulting on a nil field.
-	account *Account
-	// directoryIndex backs MODULE.CurrentDirectoryIndex, which multi-category
-	// sites read to decide which listing to walk.
-	directoryIndex int
-}
-
 // Account mirrors the credential record FMD2 exposes as MODULE.Account.
 type Account struct {
 	Enabled  bool
@@ -68,120 +36,6 @@ type Account struct {
 	Password string
 	Cookies  string
 	Status   int
-}
-
-func (a *Account) bind(L *lua.LState) lua.LValue {
-	f := newFields("atsume.Account")
-	f.boolean["Enabled"] = &a.Enabled
-	f.str["Username"] = &a.Username
-	f.str["Password"] = &a.Password
-	f.str["Cookies"] = &a.Cookies
-	f.num["Status"] = &a.Status
-	return f.push(L)
-}
-
-// Open loads a module file and prepares a state for one of the websites it
-// declares.
-//
-// A file is not a website. Twenty-eight of them declare several, either
-// genuinely different sites — E-Hentai and ExHentai share a file and only one
-// of them takes a login — or mirrors of one site under a dozen domains. Site
-// selects by declared name; an empty name takes the first declaration, and
-// rootURL picks between mirrors that share a name. Everything the file
-// declares is kept, so a caller can ask what else is in there.
-func (h *Host) Open(ctx context.Context, moduleFile, site, rootURL string) (*Runner, error) {
-	L := lua.NewState(lua.Options{SkipOpenLibs: false})
-	L.SetContext(ctx)
-
-	r := &Runner{
-		L:         L,
-		http:      NewHTTP(ctx, h.Limiter, h.Transport, h.Solver),
-		mangaInfo: NewMangaInfo(),
-		task:      NewTask(),
-		links:     NewStrings(),
-		names:     NewStrings(),
-		update:    &updateList{},
-		options:   map[string]lua.LValue{},
-		storage:   map[string]string{},
-		account:   &Account{Status: asUnknown},
-	}
-
-	// `require 'templates.Madara'` resolves against the checkout; the ?/init.lua
-	// entry is unused by FMD2 but costs nothing and matches Lua convention.
-	pkg := L.GetGlobal("package").(*lua.LTable)
-	L.SetField(pkg, "path", lua.LString(
-		filepath.Join(h.LuaDir, "?.lua")+";"+filepath.Join(h.LuaDir, "?", "init.lua")))
-
-	registerDocument(L)
-	registerImagePuzzle(L)
-	registerStrings(L)
-	registerValues(L)
-	registerQuery(L)
-	registerNode(L)
-	registerNodeList(L)
-	registerBuiltins(L)
-	registerLibs(L, h.LuaDir)
-
-	L.SetGlobal("HTTP", r.http.bind(L))
-	L.SetGlobal("MANGAINFO", r.mangaInfo.bind(L))
-	L.SetGlobal("TASK", r.task.bind(L))
-	L.SetGlobal("LINKS", pushStrings(L, r.links))
-	L.SetGlobal("NAMES", pushStrings(L, r.names))
-	L.SetGlobal("UPDATELIST", r.update.bind(L))
-	L.SetGlobal("PAGENUMBER", lua.LNumber(1))
-
-	// Real modules populate the table NewWebsiteModule returns and fall off the
-	// end of Init() without returning it, despite what LUA-REFERENCE.md shows.
-	// Capture the tables here so either shape works.
-	//
-	// Each declaration collects its own options. They used to share one slice,
-	// so a file declaring two websites showed both sites' settings on each of
-	// them — the same dropdown, twice.
-	type declaration struct {
-		tbl  *lua.LTable
-		opts []Option
-	}
-	var decls []*declaration
-	L.SetGlobal("NewWebsiteModule", L.NewFunction(func(L *lua.LState) int {
-		d := &declaration{}
-		d.tbl = newWebsiteModule(L, &d.opts, r.storage)
-		decls = append(decls, d)
-		L.Push(d.tbl)
-		return 1
-	}))
-
-	if err := doModuleFile(L, moduleFile); err != nil {
-		L.Close()
-		return nil, fmt.Errorf("load %s: %w", moduleFile, err)
-	}
-	if err := L.CallByParam(lua.P{Fn: L.GetGlobal("Init"), NRet: 1, Protect: true}); err != nil {
-		L.Close()
-		return nil, fmt.Errorf("Init %s: %w", moduleFile, err)
-	}
-	// A module that returns its table from Init() is the documented shape, and
-	// a handful do; it is the same single declaration either way.
-	if tbl, _ := L.Get(-1).(*lua.LTable); tbl != nil && len(decls) == 0 {
-		decls = append(decls, &declaration{tbl: tbl})
-	}
-	L.Pop(1)
-	if len(decls) == 0 {
-		L.Close()
-		return nil, fmt.Errorf("%s: Init never called NewWebsiteModule", moduleFile)
-	}
-
-	for _, d := range decls {
-		r.sites = append(r.sites, readModule(d.tbl, d.opts, moduleFile))
-	}
-	r.mod = selectSite(r.sites, site, rootURL)
-	if r.mod == nil {
-		L.Close()
-		return nil, fmt.Errorf("%s declares no website named %q", moduleFile, site)
-	}
-	for _, o := range r.mod.Options {
-		r.options[o.Name] = luaOptionValue(o.Default)
-	}
-	L.SetGlobal("MODULE", r.bindModule(L))
-	return r, nil
 }
 
 // selectSite picks the declaration a caller asked for.
@@ -212,34 +66,250 @@ func selectSite(sites []*Module, name, rootURL string) *Module {
 	return matched[0]
 }
 
+// Entry is one manga in a site's directory listing.
+type Entry struct {
+	Link string
+	Name string
+}
+
+// Runner is one module bound to one Lua runtime.
+//
+// A runtime is not safe for concurrent use and the module API is built on
+// globals (URL, LINKS, MANGAINFO), so each scrape takes its own Runner. The
+// worker pool owns the concurrency; a Runner is single-threaded by contract.
+type Runner struct {
+	lua *rt.Runtime
+	// ctx stops the runner: no Lua call starts once it is done, and bindings
+	// end the running call through checkContext.
+	ctx context.Context
+	// cpuLimit caps the VM ticks of each call; see luaCPULimit. peakCPU is
+	// the most any one call has used, which is how the limit is calibrated.
+	cpuLimit uint64
+	peakCPU  uint64
+	// mod is the website this runner is scraping; sites is everything the
+	// file declared, because one file is not one website.
+	mod   *Module
+	sites []*Module
+	http  *HTTP
+
+	mangaInfo *MangaInfo
+	task      *Task
+	links     *Strings
+	names     *Strings
+	update    *updateList
+	options   map[string]rt.Value
+	// storage backs MODULE.Storage, a per-module key/value scratchpad that some
+	// templates consult to decide between parsing strategies.
+	storage map[string]string
+	// account backs MODULE.Account. Until SetAccount supplies credentials it
+	// reports Enabled=false, so login handlers decline cleanly instead of
+	// faulting on a nil field.
+	account *Account
+	// directoryIndex backs MODULE.CurrentDirectoryIndex, which multi-category
+	// sites read to decide which listing to walk.
+	directoryIndex int
+	// imageFile is the page OnAfterImageSaved is editing, the one file io.open
+	// may write; it is empty at any other time.
+	imageFile string
+}
+
+// luaCPULimit caps the VM ticks one call into a module may use: loading its
+// file, Init, or a handler. golua runs roughly 140 million ticks a second of
+// pure Lua, so this is about seven seconds of it; time spent in Go (HTTP
+// waits, XPath) costs nothing.
+//
+// Measured under golua: the heaviest call in the golden and recorded tests
+// uses about 52 thousand ticks, and decoding 1.1 MB of JSON with upstream's
+// pure-Lua utils/json about 45 million. The limit leaves room for a response
+// twenty times that size, and still stops a runaway loop within seconds.
+// TestCPULimitHeadroom keeps both margins.
+const luaCPULimit = 1_000_000_000
+
+// Open loads a module file and prepares a runtime for one of the websites it
+// declares.
+//
+// A file is not a website. Twenty-eight of them declare several, either
+// genuinely different sites — E-Hentai and ExHentai share a file and only one
+// of them takes a login — or mirrors of one site under a dozen domains. Site
+// selects by declared name; an empty name takes the first declaration, and
+// rootURL picks between mirrors that share a name. Everything the file
+// declares is kept, so a caller can ask what else is in there.
+func (h *Host) Open(ctx context.Context, moduleFile, site, rootURL string) (*Runner, error) {
+	var r *Runner
+	vm := newLuaRuntime(os.Stdout, h.LuaDir, func() string { return r.imageFile })
+	r = &Runner{
+		lua:       vm,
+		ctx:       ctx,
+		cpuLimit:  luaCPULimit,
+		http:      NewHTTP(ctx, h.Limiter, h.Transport, h.Solver),
+		mangaInfo: NewMangaInfo(),
+		task:      NewTask(),
+		links:     NewStrings(),
+		names:     NewStrings(),
+		update:    &updateList{},
+		options:   map[string]rt.Value{},
+		storage:   map[string]string{},
+		account:   &Account{Status: asUnknown},
+	}
+	env := vm.GlobalEnv()
+	preloadLibs(vm, h.LuaDir)
+	registerBuiltins(vm, ctx)
+	for name, v := range map[string]rt.Value{
+		"HTTP":       r.http.bind(vm, r.checkContext),
+		"MANGAINFO":  r.mangaInfo.bind(vm),
+		"TASK":       r.task.bind(vm),
+		"LINKS":      pushStrings(vm, r.links),
+		"NAMES":      pushStrings(vm, r.names),
+		"UPDATELIST": r.update.bind(vm),
+		"PAGENUMBER": rt.IntValue(1),
+	} {
+		env.Set(rt.StringValue(name), v)
+	}
+
+	// Real modules populate the table NewWebsiteModule returns and fall off the
+	// end of Init() without returning it, despite what LUA-REFERENCE.md shows.
+	// Capture the tables here so either shape works.
+	//
+	// Each declaration collects its own options. They used to share one slice,
+	// so a file declaring two websites showed both sites' settings on each of
+	// them — the same dropdown, twice.
+	type declaration struct {
+		tbl  *rt.Table
+		opts []Option
+	}
+	var decls []*declaration
+	setGoFunc(vm, env, "NewWebsiteModule", func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		d := &declaration{}
+		d.tbl = newWebsiteModule(t.Runtime, &d.opts, r.storage)
+		decls = append(decls, d)
+		return c.PushingNext1(t.Runtime, rt.TableValue(d.tbl)), nil
+	}, 0, true)
+
+	if err := r.protect(func(t *rt.Thread) error { return doModuleFile(t, moduleFile) }); err != nil {
+		return nil, fmt.Errorf("load %s: %w", moduleFile, err)
+	}
+	var ret rt.Value
+	if err := r.protect(func(t *rt.Thread) (err error) {
+		ret, err = rt.Call1(t, env.Get(rt.StringValue("Init")))
+		return err
+	}); err != nil {
+		return nil, fmt.Errorf("Init %s: %w", moduleFile, err)
+	}
+	// A module that returns its table from Init() is the documented shape, and
+	// a handful do; it is the same single declaration either way.
+	if tbl, ok := ret.TryTable(); ok && len(decls) == 0 {
+		decls = append(decls, &declaration{tbl: tbl})
+	}
+	if len(decls) == 0 {
+		return nil, fmt.Errorf("%s: Init never called NewWebsiteModule", moduleFile)
+	}
+
+	for _, d := range decls {
+		r.sites = append(r.sites, readModule(d.tbl, d.opts, moduleFile))
+	}
+	r.mod = selectSite(r.sites, site, rootURL)
+	if r.mod == nil {
+		return nil, fmt.Errorf("%s declares no website named %q", moduleFile, site)
+	}
+	for _, o := range r.mod.Options {
+		r.options[o.Name] = luaValueOf(o.Default)
+	}
+	env.Set(rt.StringValue("MODULE"), r.bindModule())
+	return r, nil
+}
+
 // doModuleFile loads and runs a module file.
 //
-// It does not use L.DoFile because a number of upstream modules are saved with
-// a UTF-8 BOM, which gopher-lua's lexer rejects as an invalid token on line 1.
-// Stripping it costs nothing and recovers those modules.
-func doModuleFile(L *lua.LState, path string) error {
+// LoadFromSourceOrCode with stripComment skips a UTF-8 byte-order mark and a
+// leading "#" line, as Lua's own luaL_loadfile does. Seventeen upstream
+// modules start with a byte-order mark. Only text is accepted: a module file
+// is never a precompiled chunk.
+func doModuleFile(t *rt.Thread, path string) error {
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	src = bytes.TrimPrefix(src, []byte{0xEF, 0xBB, 0xBF})
-
-	fn, err := L.Load(bytes.NewReader(src), path)
+	chunk, err := t.LoadFromSourceOrCode(path, src, "t", rt.TableValue(t.GlobalEnv()), true)
 	if err != nil {
 		return err
 	}
-	L.Push(fn)
-	return L.PCall(0, lua.MultRet, nil)
+	_, err = rt.Call1(t, rt.FunctionValue(chunk))
+	return err
 }
 
-// Close releases the Lua state.
-func (r *Runner) Close() { r.L.Close() }
+// protect runs one call into the module under the CPU limit, and not at all
+// once ctx is done.
+//
+// golua cannot be interrupted from another goroutine, so cancellation takes
+// effect at the next binding that calls checkContext, or at the CPU limit for
+// code that calls none. When ctx is done by the time the call returns, the
+// error wraps ctx.Err() even if the module caught the termination and
+// returned normally, so callers can tell a shutdown from a module fault and
+// never take a cancelled call's result as real.
+func (r *Runner) protect(f func(t *rt.Thread) error) error {
+	if err := r.ctx.Err(); err != nil {
+		return err
+	}
+	t := r.lua.MainThread()
+	used, err := t.CallContext(rt.RuntimeContextDef{
+		HardLimits: rt.RuntimeResources{Cpu: r.cpuLimit},
+	}, func() error { return f(t) })
+	if used != nil {
+		r.peakCPU = max(r.peakCPU, used.UsedResources().Cpu)
+	}
+	if r.ctx.Err() != nil {
+		return fmt.Errorf("stopped: %w", r.ctx.Err())
+	}
+	var term rt.ContextTerminationError
+	if errors.As(err, &term) {
+		return fmt.Errorf("%w; the module ran too long without returning", err)
+	}
+	return err
+}
+
+// checkContext ends the running call when ctx is done. Bindings that can be
+// reached in a loop, above all HTTP, call it on entry.
+//
+// golua runs pcall in a nested context, so a termination raised inside a
+// pcall ends only that pcall. Upstream modules use pcall solely around JSON
+// decoding, never around a binding in a loop, so in practice the call ends at
+// the next binding; a loop that did catch it still stops at the CPU limit.
+func (r *Runner) checkContext(t *rt.Thread) {
+	if err := r.ctx.Err(); err != nil {
+		t.TerminateContext("%v", err)
+	}
+}
+
+// call invokes the Lua function bound to an event and returns its result.
+func (r *Runner) call(event string) (rt.Value, error) {
+	name, ok := r.mod.Handler(event)
+	if !ok {
+		return rt.NilValue, fmt.Errorf("module %s has no %s handler", r.mod.Name, event)
+	}
+	fn := r.lua.GlobalEnv().Get(rt.StringValue(name))
+	if fn.IsNil() {
+		return rt.NilValue, fmt.Errorf("module %s declares %s=%q but defines no such function",
+			r.mod.Name, event, name)
+	}
+	var v rt.Value
+	if err := r.protect(func(t *rt.Thread) (err error) {
+		v, err = rt.Call1(t, fn)
+		return err
+	}); err != nil {
+		return rt.NilValue, fmt.Errorf("%s/%s: %w", r.mod.Name, name, err)
+	}
+	return v, nil
+}
+
+// Close releases the runner. A golua runtime holds nothing that needs an
+// explicit release, but callers close every runner they open, so a resource
+// added later has somewhere to be freed.
+func (r *Runner) Close() {}
 
 // Module returns the loaded module's metadata.
 func (r *Runner) Module() *Module { return r.mod }
 
-// Sites returns every website the module file declares, in the order it
-// declared them.
+// Sites returns every website the module file declared.
 func (r *Runner) Sites() []*Module { return r.sites }
 
 // SetAccount supplies credentials for a module that implements OnLogin.
@@ -264,9 +334,6 @@ func (r *Runner) TotalDirectories() int {
 	return r.mod.TotalDirectory
 }
 
-// SetOption overrides a module-declared setting before a handler runs.
-func (r *Runner) SetOption(name string, v lua.LValue) { r.options[name] = v }
-
 // SetOptionString stores an override from its text form, converting it to the
 // type the module declared. A checkbox read back as the string "true" would be
 // truthy either way, but a spin edit compared with a number would not.
@@ -280,15 +347,15 @@ func (r *Runner) SetOptionString(name, value string) {
 	}
 	switch kind {
 	case OptionCheckBox:
-		r.options[name] = lua.LBool(value == "1" || strings.EqualFold(value, "true"))
+		r.options[name] = rt.BoolValue(value == "1" || strings.EqualFold(value, "true"))
 	case OptionSpinEdit, OptionComboBox:
 		if n, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
-			r.options[name] = lua.LNumber(n)
+			r.options[name] = rt.IntValue(int64(n))
 			return
 		}
-		r.options[name] = lua.LString(value)
+		r.options[name] = rt.StringValue(value)
 	default:
-		r.options[name] = lua.LString(value)
+		r.options[name] = rt.StringValue(value)
 	}
 }
 
@@ -299,68 +366,9 @@ func (r *Runner) Options() []Option { return r.mod.Options }
 // use to report progress while walking a long directory.
 func (r *Runner) OnStatus(fn func(string)) { r.update.onStatus = fn }
 
-func (r *Runner) bindModule(L *lua.LState) lua.LValue {
-	f := newFields("atsume.Module")
-	f.str["ID"] = &r.mod.ID
-	f.str["Name"] = &r.mod.Name
-	f.str["RootURL"] = &r.mod.RootURL
-	f.str["Category"] = &r.mod.Category
-	f.num["TotalDirectory"] = &r.mod.TotalDirectory
-	f.boolean["AccountSupport"] = &r.mod.AccountSupport
-	f.methods["GetOption"] = func(L *lua.LState) int {
-		v, ok := r.options[L.CheckString(1)]
-		if !ok || v == nil {
-			L.Push(lua.LNil)
-		} else {
-			L.Push(v)
-		}
-		return 1
-	}
-	f.num["CurrentDirectoryIndex"] = &r.directoryIndex
-	f.getter["Storage"] = func(L *lua.LState) lua.LValue { return pushStorage(L, r.storage) }
-	f.getter["Account"] = func(L *lua.LState) lua.LValue { return r.account.bind(L) }
-	f.getter["ActiveConnectionCount"] = func(L *lua.LState) lua.LValue { return lua.LNumber(1) }
-
-	// Cookie management is delegated to the HTTP object's jar; these exist
-	// because a handful of modules reset cookies through MODULE rather than HTTP.
-	f.methods["ClearCookies"] = func(L *lua.LState) int {
-		r.http.Cookies.Clear()
-		return 0
-	}
-	f.methods["RemoveCookies"] = func(L *lua.LState) int {
-		r.http.Cookies.Clear()
-		return 0
-	}
-	f.methods["AddServerCookies"] = func(L *lua.LState) int {
-		r.http.Cookies.Add(L.CheckString(2))
-		return 0
-	}
-	return f.push(L)
-}
-
-// call invokes the Lua function bound to an event and returns its result.
-func (r *Runner) call(event string) (lua.LValue, error) {
-	name, ok := r.mod.Handler(event)
-	if !ok {
-		return nil, fmt.Errorf("module %s has no %s handler", r.mod.Name, event)
-	}
-	fn := r.L.GetGlobal(name)
-	if fn == lua.LNil {
-		return nil, fmt.Errorf("module %s declares %s=%q but defines no such function",
-			r.mod.Name, event, name)
-	}
-	if err := r.L.CallByParam(lua.P{Fn: fn, NRet: 1, Protect: true}); err != nil {
-		return nil, fmt.Errorf("%s/%s: %w", r.mod.Name, name, err)
-	}
-	v := r.L.Get(-1)
-	r.L.Pop(1)
-	return v, nil
-}
-
-// Entry is one manga in a site's directory listing.
-type Entry struct {
-	Link string
-	Name string
+// setGlobal sets a global the next handler reads, such as URL.
+func (r *Runner) setGlobal(name string, v rt.Value) {
+	r.lua.GlobalEnv().Set(rt.StringValue(name), v)
 }
 
 // GetNameAndLink runs OnGetNameAndLink for one directory page. page is 0-based,
@@ -368,13 +376,13 @@ type Entry struct {
 func (r *Runner) GetNameAndLink(page int) ([]Entry, error) {
 	r.links.Clear()
 	r.names.Clear()
-	r.L.SetGlobal("URL", lua.LNumber(page))
+	r.setGlobal("URL", rt.IntValue(int64(page)))
 
 	v, err := r.call("OnGetNameAndLink")
 	if err != nil {
 		return nil, err
 	}
-	if code := int(lua.LVAsNumber(v)); code == netProblem {
+	if truncInt(v) == netProblem {
 		return nil, fmt.Errorf("%s: network problem listing page %d from %s (last status %d)",
 			r.mod.Name, page+1, r.mod.RootURL, r.http.ResultCode)
 	}
@@ -397,15 +405,11 @@ func (r *Runner) GetDirectoryPageNumber() (int, error) {
 	if _, ok := r.mod.Handler("OnGetDirectoryPageNumber"); !ok {
 		return 1, nil
 	}
-	r.L.SetGlobal("PAGENUMBER", lua.LNumber(1))
+	r.setGlobal("PAGENUMBER", rt.IntValue(1))
 	if _, err := r.call("OnGetDirectoryPageNumber"); err != nil {
 		return 0, err
 	}
-	n := int(lua.LVAsNumber(r.L.GetGlobal("PAGENUMBER")))
-	if n < 1 {
-		n = 1
-	}
-	return n, nil
+	return max(truncInt(r.lua.GlobalEnv().Get(rt.StringValue("PAGENUMBER"))), 1), nil
 }
 
 // GetInfo runs OnGetInfo for one manga URL.
@@ -413,13 +417,13 @@ func (r *Runner) GetInfo(mangaURL string) (*MangaInfo, error) {
 	r.mangaInfo.ChapterLinks.Clear()
 	r.mangaInfo.ChapterNames.Clear()
 	r.mangaInfo.URL = mangaURL
-	r.L.SetGlobal("URL", lua.LString(mangaURL))
+	r.setGlobal("URL", rt.StringValue(mangaURL))
 
 	v, err := r.call("OnGetInfo")
 	if err != nil {
 		return nil, err
 	}
-	switch int(lua.LVAsNumber(v)) {
+	switch truncInt(v) {
 	case netProblem:
 		return nil, fmt.Errorf("%s: network problem fetching %s (last status %d)",
 			r.mod.Name, mangaURL, r.http.ResultCode)
@@ -442,13 +446,13 @@ func (r *Runner) GetPageNumber(chapterURL string) ([]string, error) {
 	r.task.PageLinks.Clear()
 	r.task.PageContainerLinks.Clear()
 	r.task.Link = chapterURL
-	r.L.SetGlobal("URL", lua.LString(chapterURL))
+	r.setGlobal("URL", rt.StringValue(chapterURL))
 
 	v, err := r.call("OnGetPageNumber")
 	if err != nil {
 		return nil, err
 	}
-	if !lua.LVAsBool(v) {
+	if !rt.Truth(v) {
 		return nil, fmt.Errorf("%s: could not read pages for %s (last status %d)",
 			r.mod.Name, chapterURL, r.http.ResultCode)
 	}
@@ -472,12 +476,10 @@ func (r *Runner) BeforeDownloadImage(imageURL string) (map[string]string, error)
 		return nil, nil
 	}
 	r.http.Headers.Clear()
-	r.L.SetGlobal("URL", lua.LString(imageURL))
-
+	r.setGlobal("URL", rt.StringValue(imageURL))
 	if _, err := r.call("OnBeforeDownloadImage"); err != nil {
 		return nil, err
 	}
-
 	headers := map[string]string{}
 	for _, raw := range r.http.Headers.All() {
 		if k, v, ok := strings.Cut(raw, "="); ok {
@@ -494,16 +496,14 @@ func (r *Runner) BeforeDownloadImage(imageURL string) (map[string]string, error)
 // result is taken from HTTP.Document rather than fetched again by the host.
 func (r *Runner) DownloadImage(imageURL string) ([]byte, error) {
 	r.http.Document.Set(nil)
-	r.L.SetGlobal("URL", lua.LString(imageURL))
-
+	r.setGlobal("URL", rt.StringValue(imageURL))
 	v, err := r.call("OnDownloadImage")
 	if err != nil {
 		return nil, err
 	}
-	if !lua.LVAsBool(v) {
+	if !rt.Truth(v) {
 		return nil, fmt.Errorf("%s: module declined to download %s", r.mod.Name, imageURL)
 	}
-
 	data := r.http.Document.Bytes()
 	if len(data) == 0 {
 		return nil, fmt.Errorf("%s: module returned no image data for %s", r.mod.Name, imageURL)
@@ -523,23 +523,21 @@ func (r *Runner) Login() (bool, error) {
 	if !r.account.Enabled {
 		return false, fmt.Errorf("module %s has no credentials configured", r.mod.Name)
 	}
-
 	v, err := r.call("OnLogin")
 	if err != nil {
 		return false, err
 	}
-	ok := lua.LVAsBool(v)
 	if r.account.Status == asInvalid {
 		return false, fmt.Errorf("module %s rejected the credentials", r.mod.Name)
 	}
-	return ok, nil
+	return rt.Truth(v), nil
 }
 
 // AccountStatus reports the state the module recorded during login.
 func (r *Runner) AccountStatus() int { return r.account.Status }
 
-// AfterImageSaved runs the module's OnAfterImageSaved handler against a file on
-// disk.
+// AfterImageSaved runs the module's OnAfterImageSaved handler against a file
+// on disk.
 //
 // FMD2 writes each page out before packing, so the handler is given a path and
 // edits the file in place — removing a watermark, for instance. atsume keeps
@@ -549,7 +547,55 @@ func (r *Runner) AfterImageSaved(path string) error {
 	if !r.HasHandler("OnAfterImageSaved") {
 		return nil
 	}
-	r.L.SetGlobal("FILENAME", lua.LString(path))
+	r.setGlobal("FILENAME", rt.StringValue(path))
+	r.imageFile = path
+	defer func() { r.imageFile = "" }()
 	_, err := r.call("OnAfterImageSaved")
 	return err
+}
+
+// bind exposes the account as MODULE.Account.
+func (a *Account) bind(r *rt.Runtime) rt.Value {
+	f := newFields("atsume.Account")
+	f.boolean["Enabled"] = &a.Enabled
+	f.str["Username"] = &a.Username
+	f.str["Password"] = &a.Password
+	f.str["Cookies"] = &a.Cookies
+	f.num["Status"] = &a.Status
+	return f.push(r)
+}
+
+// bindModule exposes the selected site as MODULE.
+func (r *Runner) bindModule() rt.Value {
+	f := newFields("atsume.Module")
+	f.str["ID"] = &r.mod.ID
+	f.str["Name"] = &r.mod.Name
+	f.str["RootURL"] = &r.mod.RootURL
+	f.str["Category"] = &r.mod.Category
+	f.num["TotalDirectory"] = &r.mod.TotalDirectory
+	f.boolean["AccountSupport"] = &r.mod.AccountSupport
+	f.num["CurrentDirectoryIndex"] = &r.directoryIndex
+	f.methods["GetOption"] = goFn{1, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+		name, err := checkString(c, 0)
+		if err != nil {
+			return nil, err
+		}
+		return c.PushingNext1(t.Runtime, r.options[name]), nil
+	}}
+	f.getter["Storage"] = func(t *rt.Thread) rt.Value { return pushStorage(r.storage) }
+	f.getter["Account"] = func(t *rt.Thread) rt.Value { return r.account.bind(t.Runtime) }
+	f.getter["ActiveConnectionCount"] = func(t *rt.Thread) rt.Value { return rt.IntValue(1) }
+
+	// Cookie management is delegated to the HTTP object's jar; these exist
+	// because a handful of modules reset cookies through MODULE rather than HTTP.
+	f.methods["ClearCookies"] = noResult(0, func(*rt.GoCont) error { r.http.Cookies.Clear(); return nil })
+	f.methods["RemoveCookies"] = noResult(0, func(*rt.GoCont) error { r.http.Cookies.Clear(); return nil })
+	f.methods["AddServerCookies"] = noResult(2, func(c *rt.GoCont) error {
+		s, err := checkString(c, 1)
+		if err == nil {
+			r.http.Cookies.Add(s)
+		}
+		return err
+	})
+	return f.push(r.lua)
 }

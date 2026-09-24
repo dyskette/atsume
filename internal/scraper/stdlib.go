@@ -36,7 +36,10 @@ import (
 //
 // Every Go function exposed here is declared CPU-safe (see setGoFunc), so a
 // handler can run under a CPU limit.
-func newLuaRuntime(stdout io.Writer, luaDir string) *rt.Runtime {
+//
+// writable, when not nil, names the one file a module may write, or "" for
+// none; see ioTable.
+func newLuaRuntime(stdout io.Writer, luaDir string, writable func() string) *rt.Runtime {
 	root := filepath.Dir(luaDir)
 	r := rt.New(stdout)
 	for _, l := range []packagelib.Loader{
@@ -48,7 +51,7 @@ func newLuaRuntime(stdout io.Writer, luaDir string) *rt.Runtime {
 		mathlib.LibLoader,
 		utf8lib.LibLoader,
 		oslib.LibLoader,
-		{Name: "io", Load: func(r *rt.Runtime) (rt.Value, func()) { return rt.TableValue(ioTable(r, root)), nil }},
+		{Name: "io", Load: func(r *rt.Runtime) (rt.Value, func()) { return rt.TableValue(ioTable(r, root, writable)), nil }},
 	} {
 		l.Run(r)
 	}
@@ -172,13 +175,17 @@ func narrowOS(r *rt.Runtime, os *rt.Table) {
 	refuse("rename")
 }
 
-// ioTable builds a read-only io library confined to root.
+// ioTable builds an io library that reads within root and writes one file.
 //
 // Only io.open and io.lines are provided, since those are all the modules
-// read with. Opening for writing fails with nil and a message, as a read-only
-// filesystem would: MangaDex's legacy-ID cache and the Node.js helper are the
-// only writers, and neither can do its job in atsume anyway.
-func ioTable(r *rt.Runtime, root string) *rt.Table {
+// use. The one file outside root that may be read, and the only one that may
+// be written, is the one writable names: the page the host hands
+// OnAfterImageSaved as FILENAME, which upstream's contract lets the handler
+// edit in place. Any other write fails with nil and
+// a message, as a read-only filesystem would; MangaDex's legacy-ID cache and
+// the Node.js helper are the only other writers, and neither can do its job
+// in atsume anyway.
+func ioTable(r *rt.Runtime, root string, writable func() string) *rt.Table {
 	meta := luaFileMeta()
 	pkg := rt.NewTable()
 	setGoFunc(r, pkg, "open", func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
@@ -193,9 +200,13 @@ func ioTable(r *rt.Runtime, root string) *rt.Table {
 			}
 		}
 		if strings.ContainsAny(mode, "wa+") {
-			return c.PushingNext(t.Runtime, rt.NilValue, rt.StringValue(name+": read-only file system")), nil
+			f, err := openForWriting(name, mode, writable)
+			if err != nil {
+				return c.PushingNext(t.Runtime, rt.NilValue, rt.StringValue(err.Error())), nil
+			}
+			return c.PushingNext1(t.Runtime, rt.UserDataValue(rt.NewUserData(f, meta))), nil
 		}
-		data, err := readInRoot(root, name)
+		data, err := readFile(root, name, writable)
 		if err != nil {
 			return c.PushingNext(t.Runtime, rt.NilValue, rt.StringValue(err.Error())), nil
 		}
@@ -207,7 +218,7 @@ func ioTable(r *rt.Runtime, root string) *rt.Table {
 		if err != nil {
 			return nil, err
 		}
-		data, err := readInRoot(root, name)
+		data, err := readFile(root, name, writable)
 		if err != nil {
 			return nil, err
 		}
@@ -218,6 +229,28 @@ func ioTable(r *rt.Runtime, root string) *rt.Table {
 		return c.PushingNext1(t.Runtime, rt.FunctionValue(next)), nil
 	}, 1, false)
 	return pkg
+}
+
+// readFile reads name: the writable file directly, anything else through
+// readInRoot.
+func readFile(root, name string, writable func() string) ([]byte, error) {
+	if isWritable(name, writable) {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", name, err)
+		}
+		return data, nil
+	}
+	return readInRoot(root, name)
+}
+
+// isWritable reports whether name is the file writable currently names.
+func isWritable(name string, writable func() string) bool {
+	if writable == nil {
+		return false
+	}
+	target := writable()
+	return target != "" && filepath.Clean(name) == filepath.Clean(target)
 }
 
 // readInRoot reads name, resolved against root when relative. os.OpenInRoot
@@ -242,12 +275,36 @@ func readInRoot(root, name string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// luaFile is a file opened by io.open. The content is read up front: module
-// files are small, and it keeps no descriptor open between handler calls.
+// openForWriting opens name for writing if it is the file writable names.
+// "w" replaces the file and "a" appends to it; a mode combining reading and
+// writing ("r+", "w+") is refused, since no module needs one.
+func openForWriting(name, mode string, writable func() string) (*luaFile, error) {
+	if !isWritable(name, writable) || strings.Contains(mode, "+") {
+		return nil, fmt.Errorf("%s: read-only file system", name)
+	}
+	target := filepath.Clean(name)
+	f := &luaFile{path: target}
+	if strings.HasPrefix(mode, "a") {
+		data, err := os.ReadFile(target)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%s: %v", name, err)
+		}
+		f.data = data
+	}
+	return f, nil
+}
+
+// luaFile is a file opened by io.open. A file opened for reading is read up
+// front: module files are small, and it keeps no descriptor open between
+// handler calls. A file opened for writing collects what is written and
+// saves it on close, so a handler that never closes it leaks nothing and
+// leaves the file as it was.
 type luaFile struct {
 	data   []byte
 	pos    int
 	closed bool
+	// path is set for a file opened for writing: where close saves data.
+	path string
 }
 
 // luaFileMeta builds the metatable for io.open's files. Each runtime gets its
@@ -260,12 +317,18 @@ func luaFileMeta() *rt.Table {
 	}
 	set("read", 1, fileRead)
 	set("lines", 1, fileLines)
+	set("write", 1, fileWrite)
 	set("close", 1, func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 		f, err := toLuaFile(c)
 		if err != nil {
 			return nil, err
 		}
 		f.closed = true
+		if f.path != "" {
+			if err := os.WriteFile(f.path, f.data, 0o644); err != nil {
+				return c.PushingNext(t.Runtime, rt.NilValue, rt.StringValue(err.Error())), nil
+			}
+		}
 		return c.PushingNext1(t.Runtime, rt.BoolValue(true)), nil
 	})
 	meta := rt.NewTable()
@@ -325,6 +388,28 @@ func fileRead(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 		}
 	}
 	return next, nil
+}
+
+// fileWrite implements file:write: each string or number argument is added to
+// the file, which is returned so calls can chain, as in Lua.
+func fileWrite(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+	f, err := toLuaFile(c)
+	if err != nil {
+		return nil, err
+	}
+	if f.path == "" {
+		return c.PushingNext(t.Runtime, rt.NilValue, rt.StringValue("file not opened for writing")), nil
+	}
+	for i, v := range c.Etc() {
+		switch v.Type() {
+		case rt.StringType, rt.IntType, rt.FloatType:
+			s, _ := v.ToString()
+			f.data = append(f.data, s...)
+		default:
+			return nil, fmt.Errorf("bad argument #%d to 'write' (string expected, got %s)", i+1, v.TypeName())
+		}
+	}
+	return c.PushingNext1(t.Runtime, c.Arg(0)), nil
 }
 
 func fileLines(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {

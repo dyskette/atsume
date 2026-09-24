@@ -1,6 +1,10 @@
 package scraper
 
-import lua "github.com/yuin/gopher-lua"
+import (
+	"fmt"
+
+	rt "github.com/arnodel/golua/runtime"
+)
 
 // Document wraps a response body.
 //
@@ -36,64 +40,74 @@ func (d *Document) String() string {
 
 const documentTypeName = "atsume.Document"
 
-func registerDocument(L *lua.LState) {
-	mt := L.NewTypeMetatable(documentTypeName)
-	L.SetField(mt, "__index", L.NewFunction(func(L *lua.LState) int {
-		d := L.CheckUserData(1).Value.(*Document)
-		switch L.CheckString(2) {
-		case "ToString":
-			L.Push(L.NewFunction(func(L *lua.LState) int {
-				L.Push(lua.LString(d.String()))
-				return 1
-			}))
-		case "Size":
-			L.Push(lua.LNumber(len(d.data)))
-		default:
-			L.Push(lua.LNil)
+// pushDocument wraps an existing Document. The same pointer is shared
+// with Go, so a module rewriting it is visible to the caller afterwards.
+func pushDocument(r *rt.Runtime, d *Document) rt.Value {
+	meta := typeMeta(r, documentTypeName, func() *rt.Table {
+		size := func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			d, err := toDocument(c)
+			if err != nil {
+				return nil, err
+			}
+			return c.PushingNext1(t.Runtime, rt.IntValue(int64(len(d.Bytes())))), nil
 		}
-		return 1
-	}))
-	L.SetField(mt, "__tostring", L.NewFunction(func(L *lua.LState) int {
-		L.Push(lua.LString(L.CheckUserData(1).Value.(*Document).String()))
-		return 1
-	}))
-	L.SetField(mt, "__len", L.NewFunction(func(L *lua.LState) int {
-		L.Push(lua.LNumber(len(L.CheckUserData(1).Value.(*Document).data)))
-		return 1
-	}))
+		mt := rt.NewTable()
+		mt.Set(rt.StringValue("__index"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			d, err := toDocument(c)
+			if err != nil {
+				return nil, err
+			}
+			key, err := checkString(c, 1)
+			if err != nil {
+				return nil, err
+			}
+			var v rt.Value
+			switch key {
+			case "ToString":
+				v = luaMethod(key, 0, func(t *rt.Thread, c *rt.GoCont) (rt.Value, error) {
+					return rt.StringValue(d.String()), nil
+				})
+			case "Size":
+				v = rt.IntValue(int64(len(d.Bytes())))
+			}
+			return c.PushingNext1(t.Runtime, v), nil
+		}, "__index", 2, false)))
+		mt.Set(rt.StringValue("__tostring"), rt.FunctionValue(newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
+			d, err := toDocument(c)
+			if err != nil {
+				return nil, err
+			}
+			return c.PushingNext1(t.Runtime, rt.StringValue(d.String())), nil
+		}, "__tostring", 1, false)))
+		mt.Set(rt.StringValue("__len"), rt.FunctionValue(newGoFunc(size, "__len", 1, false)))
+		return mt
+	})
+	return rt.UserDataValue(rt.NewUserData(d, meta))
 }
 
-// pushDocument wraps an existing Document. The same pointer is shared with Go,
-// so a module rewriting it is visible to the caller afterwards.
-func pushDocument(L *lua.LState, d *Document) lua.LValue {
-	ud := L.NewUserData()
-	ud.Value = d
-	L.SetMetatable(ud, L.GetTypeMetatable(documentTypeName))
-	return ud
-}
-
-// documentArg returns the Document at argument n, or nil when it is not one.
-func documentArg(L *lua.LState, n int) *Document {
-	ud, ok := L.Get(n).(*lua.LUserData)
-	if !ok {
-		return nil
+func toDocument(c *rt.GoCont) (*Document, error) {
+	if d := documentArg(c, 0); d != nil {
+		return d, nil
 	}
-	d, _ := ud.Value.(*Document)
-	return d
+	return nil, fmt.Errorf("bad argument #1 (Document expected, got %s)", c.Arg(0).TypeName())
 }
 
-// argText reads a text argument that may arrive either as a Lua string or as a
-// Document, which is how modules pass HTTP.Document around.
-func argText(L *lua.LState, n int) string {
-	switch v := L.Get(n).(type) {
-	case lua.LString:
-		return string(v)
-	case *lua.LUserData:
-		if d, ok := v.Value.(*Document); ok {
-			return d.String()
-		}
-	case lua.LNumber:
-		return v.String()
+// documentArg returns the Document at argument n, or nil when it is not
+// one.
+func documentArg(c *rt.GoCont, n int) *Document {
+	if u, ok := c.Arg(n).TryUserData(); ok {
+		d, _ := u.Value().(*Document)
+		return d
 	}
-	return ""
+	return nil
+}
+
+// argText reads a text argument that may arrive as a Lua string, a
+// number, or a Document, which is how modules pass HTTP.Document around.
+// Anything else reads as "".
+func argText(c *rt.GoCont, n int) string {
+	if d := documentArg(c, n); d != nil {
+		return d.String()
+	}
+	return luaString(c.Arg(n))
 }
