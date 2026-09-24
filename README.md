@@ -138,7 +138,6 @@ from one, may be committed to this repository. See [docs/MODULES.md](docs/MODULE
 ## Development
 
 ```sh
-make tools     # install templ
 make dev       # live reload on :8080
 make check     # gofmt, vet, tests, stale-codegen check
 make corpus    # upstream drift check against a fresh FMD2 clone
