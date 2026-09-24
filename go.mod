@@ -6,6 +6,7 @@ require (
 	github.com/a-h/templ v0.3.906
 	github.com/antchfx/htmlquery v1.3.6
 	github.com/antchfx/xpath v1.3.8
+	github.com/arnodel/golua v0.3.0
 	github.com/bodgit/sevenzip v1.6.5
 	github.com/dop251/goja v0.0.0-20260917113740-793a2a65c13b
 	github.com/pressly/goose/v3 v3.28.0
@@ -19,7 +20,6 @@ require (
 require (
 	github.com/a-h/parse v0.0.0-20250122154542-74294addb73e // indirect
 	github.com/andybalholm/brotli v1.2.3 // indirect
-	github.com/arnodel/golua v0.3.0 // indirect
 	github.com/arnodel/strftime v0.1.6 // indirect
 	github.com/bodgit/plumbing v1.3.0 // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
