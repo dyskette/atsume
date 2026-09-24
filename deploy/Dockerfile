@@ -5,12 +5,13 @@ FROM docker.io/library/golang:1.27-alpine AS build
 RUN apk add --no-cache git
 WORKDIR /src
 
+# go.mod pins templ as a tool, so this layer caches it with every other
+# dependency and go tool runs the same version the Makefile does.
 COPY go.mod go.sum ./
 RUN go mod download
-RUN go install github.com/a-h/templ/cmd/templ@v0.3.906
 
 COPY . .
-RUN templ generate && \
+RUN go tool templ generate && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/atsume ./cmd/atsume
 
 # Runtime: git is required because website modules are fetched at run time
