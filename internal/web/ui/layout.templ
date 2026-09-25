@@ -13,6 +13,7 @@ templ Layout(title string) {
 			<title>{ title } — atsume</title>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
+			<script src="/static/live.js"></script>
 			<script src="/static/htmx-sse.js"></script>
 		</head>
 		<body hx-ext="sse" sse-connect="/events">
