@@ -409,7 +409,9 @@ h2 .count { color: var(--muted); font-weight: 400; }
 .filters .n { margin-left: 0.3rem; opacity: 0.8; font-variant-numeric: tabular-nums; }
 a.sort { padding: 0.5rem 0.8rem; border: 1px solid var(--line); color: var(--text); }
 
-.chapter-panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
+/* No overflow: hidden for the corners, which would cut off the last row's
+   menu; the end rows are rounded instead, for the downloading tint. */
+.chapter-panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .rows.chapters { margin: 0; }
 .rows.chapters li {
 	margin: 0;
@@ -421,6 +423,8 @@ a.sort { padding: 0.5rem 0.8rem; border: 1px solid var(--line); color: var(--tex
 	background: none;
 }
 .rows.chapters li:has(progress) { background: rgb(122 162 247 / 0.07); }
+.rows.chapters li:first-child { border-top-left-radius: 9px; border-top-right-radius: 9px; }
+.chapter-panel > .rows:last-child li:last-child { border-bottom: 0; border-bottom-left-radius: 9px; border-bottom-right-radius: 9px; }
 .chapter .state {
 	display: flex;
 	align-items: center;
