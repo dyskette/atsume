@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -43,6 +44,8 @@ type App struct {
 	catalogue catalogueCache
 	// files keeps concurrent downloads from writing the same library file.
 	files fileClaims
+	// active is the chapter downloads running now.
+	active activeDownloads
 	// started is when this process came up, which is what tells a scheduler
 	// that has never run apart from one that started a moment ago.
 	started time.Time
@@ -431,6 +434,7 @@ func (a *App) fetchPages(ctx context.Context, r *scraper.Runner, ch store.Chapte
 		}
 
 		pages = append(pages, page)
+		a.active.progress(ch.ID, i+1, len(urls))
 		a.Bus.Publish(jobs.Event{
 			Kind: "chapter-progress", ChapterID: ch.ID, SeriesID: ch.SeriesID,
 			State: store.ChapterDownloading, Done: i + 1, Total: len(urls),
@@ -572,9 +576,23 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 		return err
 	}
 
+	// The download runs under its own context so it can be cancelled alone.
+	// Bookkeeping after a cancel uses the job's context, which is still live.
+	jobCtx := ctx
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	a.active.start(ch.ID, cancel)
+	defer a.active.finish(ch.ID)
+
 	// Record the failure on the chapter as well as the job, so the UI can show
-	// why a specific chapter is stuck without the operator reading logs.
+	// why a specific chapter is stuck without the operator reading logs. A
+	// cancelled download is not a failure: the chapter goes back to not
+	// downloaded, and the job completes so it is not retried.
 	fail := func(err error) error {
+		if errors.Is(context.Cause(ctx), errCancelled) {
+			slog.Info("download cancelled", "series", series.Title, "chapter", ch.Name)
+			return a.resetChapter(jobCtx, ch.ID)
+		}
 		_ = a.Store.SetChapterState(ctx, ch.ID, store.ChapterFailed, "", err.Error(), 0)
 		a.Bus.Publish(jobs.Event{
 			Kind: "chapter-updated", ChapterID: ch.ID, SeriesID: ch.SeriesID,
@@ -604,11 +622,15 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 	if len(pageURLs) == 0 {
 		return fail(fmt.Errorf("module returned no pages for %s", ch.URL))
 	}
+	a.active.progress(ch.ID, 0, len(pageURLs))
 
 	pages, err := a.fetchPages(ctx, r, ch, pageURLs)
 	if err != nil {
 		return fail(err)
 	}
+	// With every page in, the chapter is written even if a cancel arrives
+	// now: stopping here would throw finished work away.
+	ctx = jobCtx
 
 	target := download.Chapter{
 		Series: series.Title, Name: ch.Name, Number: ch.Number, Volume: ch.Volume,
