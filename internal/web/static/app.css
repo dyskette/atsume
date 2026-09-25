@@ -243,63 +243,146 @@ footer .bar {
 }
 
 /* ── Series page ─────────────────────────────────────────────────────────
-   Cover, identity and state first; the description is a disclosure at the
-   bottom rather than the largest thing above the fold. */
+   One page for a series in every state: identity, then its two real actions
+   and the line saying where it stands, then the chapters. */
 .series-head {
 	display: flex;
-	gap: 1.5rem;
+	gap: 1.75rem;
 	align-items: flex-start;
 	margin-bottom: 2rem;
 }
 .series-meta { flex: 1; min-width: 0; }
-.series-meta h1 { margin-bottom: 0.3rem; }
+.series-meta h1 { margin: 0.35rem 0 0.5rem; font-size: 2rem; line-height: 1.2; }
 
+.cover-wrap { position: relative; flex: none; }
 .cover {
+	display: block;
 	width: 11rem;
-	flex: none;
 	aspect-ratio: 2 / 3;
 	object-fit: cover;
 	border-radius: 10px;
 	border: 1px solid var(--line);
-	background: var(--panel);
+	background: var(--panel-hi);
 }
+.in-library {
+	position: absolute;
+	top: 0.5rem;
+	left: 0.5rem;
+	padding: 0.1rem 0.55rem;
+	border-radius: 999px;
+	border: 1px solid var(--line);
+	background: var(--bg);
+	color: var(--text);
+	font-size: 0.78rem;
+}
+.in-library::first-letter { color: var(--ok); }
 
-/* What the reader has, in their terms — the answer the page exists to give. */
-.have {
-	margin: 0.6rem 0 0;
-	font-size: 0.95rem;
+.meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.3rem 0.6rem;
+	margin: 0;
+	color: var(--muted);
+	font-size: 0.85rem;
+}
+/* Inline-block, so a link's underline does not run under the separator. */
+.meta > * + *::before { content: "·"; display: inline-block; margin-right: 0.6rem; color: var(--muted); text-decoration: none; }
+.meta .state::first-letter { text-transform: uppercase; }
+.meta .site + *::before { content: none; }
+.meta .site {
+	padding: 0.1rem 0.5rem;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--panel-hi);
 	color: var(--text);
 }
 
-.dest { margin-top: 0.9rem; font-size: 0.82rem; }
-.dest code { color: var(--muted); }
-
-/* Following is a state with one available change, not a button among actions. */
-.follow {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 1rem;
-	flex-wrap: wrap;
-	margin-top: 1rem;
-	padding: 0.7rem 0.9rem;
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; list-style: none; padding: 0; margin: 0 0 0.8rem; }
+.chips li {
+	padding: 0.05rem 0.6rem;
 	border: 1px solid var(--line);
-	border-left: 3px solid var(--line);
-	border-radius: 8px;
-	background: var(--panel);
+	border-radius: 999px;
+	font-size: 0.8rem;
+}
+
+.summary { margin: 0; color: var(--muted); }
+.summary.clamp {
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+button.link.more { color: var(--accent); padding: 0; }
+
+#series-actions .actions { margin: 1.1rem 0 0.6rem; }
+#series-actions button.primary { background: var(--accent); color: var(--bg); font-weight: 600; }
+#series-actions button.primary:hover { color: var(--bg); filter: brightness(1.08); }
+button.following { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+button.following:hover { border-color: var(--err); color: var(--err); }
+
+.hint { margin: 0; }
+
+/* Where the series stands. The dot is green while followed. */
+.status {
+	margin: 0;
 	color: var(--muted);
 	font-size: 0.9rem;
 }
-.follow.on { border-left-color: var(--ok); }
-
-.description { margin-top: 2.5rem; }
-.description summary {
-	cursor: pointer;
-	color: var(--muted);
-	padding: 0.4rem 0;
+.status .dot {
+	display: inline-block;
+	width: 0.5rem;
+	height: 0.5rem;
+	margin-right: 0.45rem;
+	border-radius: 50%;
+	background: var(--muted);
+	vertical-align: 0.05em;
 }
-.description summary:hover { color: var(--text); }
-.description .summary { margin-top: 0.5rem; }
+.status.on .dot { background: var(--ok); }
+.status button.link { color: var(--accent); padding: 0; }
+
+/* The ⋯ menu for what is rarely needed. */
+.menu { position: relative; }
+.menu summary {
+	list-style: none;
+	cursor: pointer;
+	padding: 0.35rem 0.8rem;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	color: var(--text);
+}
+.menu summary::-webkit-details-marker { display: none; }
+.menu[open] summary, .menu summary:hover { border-color: var(--accent); color: var(--accent); }
+.menu-items {
+	position: absolute;
+	z-index: 10;
+	top: calc(100% + 0.35rem);
+	left: 0;
+	min-width: 16rem;
+	display: flex;
+	flex-direction: column;
+	padding: 0.35rem;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+}
+.menu-items a, .menu-items button {
+	padding: 0.4rem 0.6rem;
+	border: 0;
+	border-radius: 6px;
+	text-align: left;
+	color: var(--text);
+	text-decoration: none;
+	font-size: 0.9rem;
+}
+.menu-items a:hover, .menu-items button:hover { background: var(--panel-hi); color: var(--text); }
+.menu-items .danger-text { color: var(--err); }
+.menu-items .danger-text:hover { color: var(--err); }
+.menu-items .dest { margin: 0; padding: 0.4rem 0.6rem; font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; }
+.menu-items .dest code { color: var(--text); }
+
+h2 .count { color: var(--muted); font-weight: 400; }
 
 @media (max-width: 40rem) {
 	.series-head { flex-direction: column; }

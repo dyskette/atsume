@@ -28,6 +28,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /modules/{name}/test-login", s.handleTestLogin)
 	mux.HandleFunc("POST /modules/{name}/recheck", s.handleRecheck)
 
+	mux.HandleFunc("POST /modules/{name}/series/follow", s.handleFollowFromPage)
+	mux.HandleFunc("POST /modules/{name}/series/download", s.handleDownloadFromPage)
+
 	mux.HandleFunc("POST /series", s.handleTrackSeries)
 	mux.HandleFunc("GET /series/{id}", s.handleSeries)
 	mux.HandleFunc("GET /series/{id}/cover", s.handleCover)
