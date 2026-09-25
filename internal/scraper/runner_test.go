@@ -56,6 +56,7 @@ function Init()
 		m.AddOptionCheckBox('paid', 'Show paid chapters', false)
 		m.AddOptionSpinEdit('delay', 'Delay', 1.0)
 		m.AddOptionComboBox('lang', 'Language', {'en', 'es'}, 1)
+		m.AddOptionComboBox('svr', 'Server', 'Main\nSecondary\r\nCompress', 0)
 		m.AddOptionEdit('token', 'Token')
 		m.Storage['mode'] = 2
 	end
@@ -85,6 +86,7 @@ function Fail() error('broken on purpose') end`,
 			{Kind: OptionCheckBox, Name: "paid", Caption: "Show paid chapters", Default: false},
 			{Kind: OptionSpinEdit, Name: "delay", Caption: "Delay", Default: int64(1)},
 			{Kind: OptionComboBox, Name: "lang", Caption: "Language", Items: []string{"en", "es"}, Default: int64(1)},
+			{Kind: OptionComboBox, Name: "svr", Caption: "Server", Items: []string{"Main", "Secondary", "Compress"}, Default: int64(0)},
 			{Kind: OptionEditBox, Name: "token", Caption: "Token", Default: nil},
 		},
 	}
