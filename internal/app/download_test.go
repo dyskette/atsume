@@ -85,8 +85,10 @@ func TestDownloadChapterOfLeavesNothingWhenItFails(t *testing.T) {
 	a, st, ctx := newTestApp(t, srv.URL, &config.Config{})
 
 	for name, c := range map[string]struct{ series, chapter string }{
-		"the site does not answer": {srv.URL + "/manga/missing/", srv.URL + "/manga/missing/chapter-1/"},
-		"the chapter is not on it": {srv.URL + "/manga/grow/", srv.URL + "/manga/grow/chapter-9/"},
+		// The template reads a page that is not a series as one with no
+		// chapters, so this fails for want of the chapter.
+		"the address is not a series": {srv.URL + "/manga/missing/", srv.URL + "/manga/missing/chapter-1/"},
+		"the chapter is not on it":    {srv.URL + "/manga/grow/", srv.URL + "/manga/grow/chapter-9/"},
 	} {
 		if _, err := a.DownloadChapterOf(ctx, "TestMadara", c.series, c.chapter); err == nil {
 			t.Errorf("%s: want an error", name)
@@ -255,5 +257,45 @@ func TestCancelQueuedChapter(t *testing.T) {
 	}
 	if c, _ := st.GetChapter(ctx, ids[1]); c.State != store.ChapterPending {
 		t.Errorf("the cancelled chapter is %q after resuming", c.State)
+	}
+}
+
+// TestSaveFromThePage covers following and downloading everything from a
+// series' page: either stores the series with its chapters before returning,
+// followed or saved, so the page it leads to is complete.
+func TestSaveFromThePage(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(3)
+	srv := growingSite(t, &chapters)
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{})
+
+	id, err := a.SaveAndDownloadAll(ctx, "TestMadara", srv.URL+"/manga/grow/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := st.GetSeries(ctx, id); s.Subscribed {
+		t.Error("downloading everything should save the series, not follow it")
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, id)
+		done := 0
+		for _, c := range chs {
+			if c.State == store.ChapterDone {
+				done++
+			}
+		}
+		return len(chs) == 3 && done == 3
+	}, "all three chapters to download")
+
+	// Following from the page turns following on for the series just saved.
+	followed, err := a.SaveAndFollow(ctx, "TestMadara", srv.URL+"/manga/grow/")
+	if err != nil || followed != id {
+		t.Fatalf("follow: %d, %v; want %d", followed, err, id)
+	}
+	if s, _ := st.GetSeries(ctx, id); !s.Subscribed {
+		t.Error("following from the page should follow the series")
+	}
+	if all, _ := st.ListSeries(ctx); len(all) != 1 {
+		t.Errorf("%d series in the library, want 1", len(all))
 	}
 }

@@ -672,19 +672,18 @@ func (a *App) Preview(ctx context.Context, module, seriesURL string) (*scraper.M
 	return r.GetInfo(seriesURL)
 }
 
-// DownloadChapterOf queues one chapter of a series and returns the series ID.
+// saveSeries puts a series in the library, followed or not, and returns its
+// ID and whether it was new.
 //
-// A series not yet in the library is added as saved, not followed: keeping a
-// chapter is a reason to have the series, not to have every new chapter
-// downloaded. Its details and chapter list are fetched and stored on the
-// spot, since the chapter has to exist before it can be queued, and the
-// series is removed again if that fails, so a failed click leaves nothing
-// behind.
-func (a *App) DownloadChapterOf(ctx context.Context, moduleKey, seriesURL, chapterURL string) (int64, error) {
+// A new series has its details and chapter list fetched and stored on the
+// spot, so the page it leads to shows them at once, and it is removed again
+// if that fails, so a failed click leaves nothing behind. A series already
+// saved is left as it is, except that follow turns following on.
+func (a *App) saveSeries(ctx context.Context, moduleKey, seriesURL string, follow bool) (int64, bool, error) {
 	key := a.ResolveModule(ctx, moduleKey)
 	r, err := a.openModuleRaw(ctx, key)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	mod := r.Module()
 	moduleID, moduleName := mod.ID, mod.Name
@@ -692,8 +691,48 @@ func (a *App) DownloadChapterOf(ctx context.Context, moduleKey, seriesURL, chapt
 
 	id, created, err := a.Store.EnsureSeries(ctx, store.Series{
 		ModuleID: moduleID, ModuleKey: key, ModuleName: moduleName,
-		URL: seriesURL, Title: seriesURL, Subscribed: false,
+		URL: seriesURL, Title: seriesURL, Subscribed: follow,
 	})
+	if err != nil {
+		return 0, false, err
+	}
+	if created {
+		if err := a.refresh(ctx, key, seriesURL); err != nil {
+			_ = a.Store.DeleteSeries(ctx, id)
+			return 0, false, err
+		}
+	} else if follow {
+		if err := a.Store.SetSubscribed(ctx, id, true); err != nil {
+			return id, false, err
+		}
+	}
+	return id, created, nil
+}
+
+// SaveAndFollow follows a series from its page, storing it and its chapters
+// before returning so the page it leads to is complete.
+func (a *App) SaveAndFollow(ctx context.Context, moduleKey, seriesURL string) (int64, error) {
+	id, _, err := a.saveSeries(ctx, moduleKey, seriesURL, true)
+	return id, err
+}
+
+// SaveAndDownloadAll queues every chapter of a series not yet downloaded,
+// saving it to the library, not followed, if it is not there.
+func (a *App) SaveAndDownloadAll(ctx context.Context, moduleKey, seriesURL string) (int64, error) {
+	id, _, err := a.saveSeries(ctx, moduleKey, seriesURL, false)
+	if err != nil {
+		return 0, err
+	}
+	_, err = a.EnqueueAllPending(ctx, id)
+	return id, err
+}
+
+// DownloadChapterOf queues one chapter of a series and returns the series ID.
+//
+// A series not yet in the library is saved, not followed: keeping a chapter
+// is a reason to have the series, not to have every new chapter downloaded.
+func (a *App) DownloadChapterOf(ctx context.Context, moduleKey, seriesURL, chapterURL string) (int64, error) {
+	id, created, err := a.saveSeries(ctx, moduleKey, seriesURL, false)
 	if err != nil {
 		return 0, err
 	}
@@ -703,25 +742,21 @@ func (a *App) DownloadChapterOf(ctx context.Context, moduleKey, seriesURL, chapt
 	if err != nil {
 		return id, err
 	}
-	if chID == 0 {
-		// A new series has no chapters yet, and a known one may list the
-		// chapter only since its last check.
-		if err := a.refresh(ctx, key, seriesURL); err != nil {
-			if created {
-				_ = a.Store.DeleteSeries(ctx, id)
-			}
-			return 0, err
+	if chID == 0 && !created {
+		// A known series may list the chapter only since its last check.
+		if err := a.refresh(ctx, a.ResolveModule(ctx, moduleKey), seriesURL); err != nil {
+			return id, err
 		}
 		if chID, err = a.Store.ChapterIDByURL(ctx, id, chapterURL); err != nil {
 			return id, err
 		}
-		if chID == 0 {
-			if created {
-				_ = a.Store.DeleteSeries(ctx, id)
-				id = 0
-			}
-			return id, fmt.Errorf("the site lists no chapter at %s", chapterURL)
+	}
+	if chID == 0 {
+		if created {
+			_ = a.Store.DeleteSeries(ctx, id)
+			id = 0
 		}
+		return id, fmt.Errorf("the site lists no chapter at %s", chapterURL)
 	}
 	return id, a.EnqueueDownload(ctx, chID)
 }
