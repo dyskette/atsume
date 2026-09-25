@@ -33,7 +33,7 @@ func scrambledPNG(t *testing.T) []byte {
 func runLibs(t *testing.T, luaDir string, doc []byte, src string) (string, bool) {
 	t.Helper()
 	r := newLuaRuntime(io.Discard, luaDir, nil)
-	preloadLibs(r, luaDir)
+	preloadLibs(r, luaDir, nil)
 	r.GlobalEnv().Set(rt.StringValue("DOC"), pushDocument(r, &Document{data: doc}))
 	chunk, err := r.CompileAndLoadLuaChunk("test", []byte(src), rt.TableValue(r.GlobalEnv()))
 	if err != nil {
@@ -52,22 +52,23 @@ const libsSnippetsPrefix = `local p = require('fmd.imagepuzzle').Create(2, 2) `
 // libsSnippets exercise the image puzzle, watermark and JavaScript
 // libraries; libsWant holds what each must produce.
 var libsSnippets = map[string]string{
-	"puzzle fields":          libsSnippetsPrefix + `return p.HorBlock .. p.VerBlock .. p.Multiply .. #p.Matrix .. p.Matrix[0] .. p.Matrix[3] .. tostring(p.Matrix[4])`,
-	"puzzle New alias":       `return tostring(#require('fmd.imagepuzzle').New(3, 2).Matrix)`,
-	"puzzle set matrix":      libsSnippetsPrefix + `p.Matrix[0] = 3; p.Matrix[3] = 0; return p.Matrix[0] .. p.Matrix[3]`,
-	"puzzle set float index": libsSnippetsPrefix + `p.Matrix[1.9] = 2; return p.Matrix[1] .. p.Matrix[2]`,
-	"puzzle out of range":    libsSnippetsPrefix + `p.Matrix[4] = 1`,
-	"puzzle negative index":  libsSnippetsPrefix + `return tostring(p.Matrix[-1])`,
-	"puzzle multiply":        libsSnippetsPrefix + `p.Multiply = 2; return tostring(p.Multiply)`,
-	"puzzle unknown field":   libsSnippetsPrefix + `p.Nope = 1; return tostring(p.Nope)`,
-	"descramble in place":    libsSnippetsPrefix + `p.Matrix[0] = 3; p.Matrix[3] = 0; p.DeScramble(DOC, DOC); return DOC.Size .. require('fmd.crypto').SHA256Hex(DOC.ToString())`,
-	"descramble one stream":  libsSnippetsPrefix + `p.DeScramble(DOC)`,
-	"descramble not image":   libsSnippetsPrefix + `local q = require('fmd.imagepuzzle').Create(1, 1); q.DeScramble(p, p)`,
-	"js arithmetic":          `return require('fmd.duktape').ExecJS('1 + 1')`,
-	"js modern syntax":       `return require('fmd.duktape').ExecJS('[1, 2, 3].map(x => x * 2).join(",")')`,
-	"js string":              `return require('fmd.duktape').ExecJS('"a" + "b"')`,
-	"js error":               `return require('fmd.duktape').ExecJS('throw new Error("broken")')`,
-	"watermark, no dir":      `local w = require 'fmd.mangafoxwatermark'; return w.LoadTemplate('/nonexistent') .. tostring(w.RemoveWatermark('/tmp/none.png', true))`,
+	"puzzle fields":           libsSnippetsPrefix + `return p.HorBlock .. p.VerBlock .. p.Multiply .. #p.Matrix .. p.Matrix[0] .. p.Matrix[3] .. tostring(p.Matrix[4])`,
+	"puzzle New alias":        `return tostring(#require('fmd.imagepuzzle').New(3, 2).Matrix)`,
+	"puzzle set matrix":       libsSnippetsPrefix + `p.Matrix[0] = 3; p.Matrix[3] = 0; return p.Matrix[0] .. p.Matrix[3]`,
+	"puzzle set float index":  libsSnippetsPrefix + `p.Matrix[1.9] = 2; return p.Matrix[1] .. p.Matrix[2]`,
+	"puzzle out of range":     libsSnippetsPrefix + `p.Matrix[4] = 1`,
+	"puzzle negative index":   libsSnippetsPrefix + `return tostring(p.Matrix[-1])`,
+	"puzzle multiply":         libsSnippetsPrefix + `p.Multiply = 2; return tostring(p.Multiply)`,
+	"puzzle unknown field":    libsSnippetsPrefix + `p.Nope = 1; return tostring(p.Nope)`,
+	"descramble in place":     libsSnippetsPrefix + `p.Matrix[0] = 3; p.Matrix[3] = 0; p.DeScramble(DOC, DOC); return DOC.Size .. require('fmd.crypto').SHA256Hex(DOC.ToString())`,
+	"descramble one stream":   libsSnippetsPrefix + `p.DeScramble(DOC)`,
+	"descramble not image":    libsSnippetsPrefix + `local q = require('fmd.imagepuzzle').Create(1, 1); q.DeScramble(p, p)`,
+	"js arithmetic":           `return require('fmd.duktape').ExecJS('1 + 1')`,
+	"js modern syntax":        `return require('fmd.duktape').ExecJS('[1, 2, 3].map(x => x * 2).join(",")')`,
+	"js string":               `return require('fmd.duktape').ExecJS('"a" + "b"')`,
+	"js error":                `return require('fmd.duktape').ExecJS('throw new Error("broken")')`,
+	"watermark, no dir":       `return require('fmd.mangafoxwatermark').LoadTemplate('/nonexistent')`,
+	"watermark, not the page": `require('fmd.mangafoxwatermark').RemoveWatermark('/tmp/none.png', true)`,
 }
 
 // libsWant is what each libsSnippets entry must return, or whether it must
@@ -77,22 +78,23 @@ var libsWant = map[string]struct {
 	want  string
 	fails bool
 }{
-	"descramble in place":    {"9739f5e578136aad7cbb9e7a70b52f34022e3798334d164ff470a495a21eeda407", false},
-	"descramble not image":   {"", true},
-	"descramble one stream":  {"", true},
-	"js arithmetic":          {"2", false},
-	"js error":               {"", true},
-	"js modern syntax":       {"2,4,6", false},
-	"js string":              {"ab", false},
-	"puzzle New alias":       {"6", false},
-	"puzzle fields":          {"221403nil", false},
-	"puzzle multiply":        {"2", false},
-	"puzzle negative index":  {"nil", false},
-	"puzzle out of range":    {"", true},
-	"puzzle set float index": {"22", false},
-	"puzzle set matrix":      {"30", false},
-	"puzzle unknown field":   {"nil", false},
-	"watermark, no dir":      {"0false", false},
+	"descramble in place":     {"9739f5e578136aad7cbb9e7a70b52f34022e3798334d164ff470a495a21eeda407", false},
+	"descramble not image":    {"", true},
+	"descramble one stream":   {"", true},
+	"js arithmetic":           {"2", false},
+	"js error":                {"", true},
+	"js modern syntax":        {"2,4,6", false},
+	"js string":               {"ab", false},
+	"puzzle New alias":        {"6", false},
+	"puzzle fields":           {"221403nil", false},
+	"puzzle multiply":         {"2", false},
+	"puzzle negative index":   {"nil", false},
+	"puzzle out of range":     {"", true},
+	"puzzle set float index":  {"22", false},
+	"puzzle set matrix":       {"30", false},
+	"puzzle unknown field":    {"nil", false},
+	"watermark, no dir":       {"0", false},
+	"watermark, not the page": {"", true},
 }
 
 func TestLibs(t *testing.T) {

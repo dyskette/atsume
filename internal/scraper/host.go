@@ -152,7 +152,7 @@ func (h *Host) Open(ctx context.Context, moduleFile, site, rootURL string) (*Run
 		account:   &Account{Status: asUnknown},
 	}
 	env := vm.GlobalEnv()
-	preloadLibs(vm, h.LuaDir)
+	preloadLibs(vm, h.LuaDir, func() string { return r.imageFile })
 	registerBuiltins(vm, ctx)
 	for name, v := range map[string]rt.Value{
 		"HTTP":       r.http.bind(vm, r.checkContext),
