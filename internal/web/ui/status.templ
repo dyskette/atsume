@@ -1,30 +1,39 @@
 package ui
 
-import (
-	"fmt"
-
-	"github.com/dyskette/atsume/internal/store"
-)
+import "fmt"
 
 // QueueStatus is the persistent status line.
 //
 // It is the only element on every page, so its job is ambient awareness: is
-// anything happening, and is anything wrong. A word that never changes — which
-// is what "idle" was — occupies that space without earning it.
-templ QueueStatus(q store.QueueStatus) {
-	<span id="queue-status" sse-swap="queue" hx-swap="outerHTML" class="queue">
-		if q.Busy() {
+// anything happening, and is anything wrong. While busy it shows the combined
+// progress of the running downloads, and the one control over all of them.
+//
+// It renders what goes inside the footer's #queue-status element.
+templ QueueStatus(v QueueView) {
+	switch {
+		case v.Paused:
+			<span class="dot paused"></span>
+			<span>{ queueText(v) }</span>
+		case v.Busy():
 			<span class="dot working"></span>
-			<span>{ queueBusyText(q) }</span>
-		} else if q.Failed > 0 {
+			<span>{ queueText(v) }</span>
+		case v.Failed > 0:
 			<span class="dot bad"></span>
 			<span>Nothing in progress</span>
-		} else {
+		default:
 			<span class="dot"></span>
 			<span>Nothing in progress</span>
-		}
-		if q.Failed > 0 {
-			<a class="failed-link" href="/">{ fmt.Sprintf("%d failed", q.Failed) }</a>
-		}
-	</span>
+	}
+	if v.Total > 0 {
+		<progress value={ fmt.Sprintf("%d", v.Done) } max={ fmt.Sprintf("%d", v.Total) }></progress>
+		<span class="pages">{ fmt.Sprintf("%d / %d pages", v.Done, v.Total) }</span>
+	}
+	if v.Failed > 0 {
+		<a class="failed-link" href="/">{ fmt.Sprintf("%d failed", v.Failed) }</a>
+	}
+	if v.Paused {
+		<button type="button" class="push" hx-post="/queue/resume" hx-target="#queue-status" hx-swap="innerHTML">Resume</button>
+	} else if v.Busy() {
+		<button type="button" class="push" hx-post="/queue/pause" hx-target="#queue-status" hx-swap="innerHTML">Pause all</button>
+	}
 }

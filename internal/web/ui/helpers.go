@@ -74,17 +74,36 @@ func passwordPlaceholder(s *app.ModuleSettings) string {
 	return ""
 }
 
-// queueBusyText says what is happening in the fewest words that are still
+// QueueView is what the footer shows: the chapters in flight, whether the
+// queue is paused, and how many pages the running downloads have in.
+type QueueView struct {
+	store.QueueStatus
+	Paused      bool
+	Done, Total int
+}
+
+// queueText says what is happening in the fewest words that are still
 // specific: a count alone reads as a number with no verb.
-func queueBusyText(q store.QueueStatus) string {
-	switch {
-	case q.Downloading > 0 && q.Queued > 0:
-		return fmt.Sprintf("Downloading %d, %d waiting", q.Downloading, q.Queued)
-	case q.Downloading > 0:
-		return fmt.Sprintf("Downloading %d", q.Downloading)
-	default:
-		return fmt.Sprintf("%d waiting to download", q.Queued)
+func queueText(v QueueView) string {
+	var parts []string
+	if v.Downloading > 0 {
+		if v.Paused {
+			parts = append(parts, fmt.Sprintf("%d finishing", v.Downloading))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d active", v.Downloading))
+		}
 	}
+	if v.Queued > 0 {
+		parts = append(parts, fmt.Sprintf("%d queued", v.Queued))
+	}
+	head := "Downloading"
+	if v.Paused {
+		head = "Paused"
+	}
+	if len(parts) == 0 {
+		return head
+	}
+	return head + " · " + strings.Join(parts, ", ")
 }
 
 // truncate shortens a message for inline display, keeping the full text in the

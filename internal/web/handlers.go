@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dyskette/atsume/internal/app"
+	"github.com/dyskette/atsume/internal/jobs"
 	"github.com/dyskette/atsume/internal/scraper"
 	"github.com/dyskette/atsume/internal/store"
 	"github.com/dyskette/atsume/internal/web/ui"
@@ -724,11 +725,36 @@ func (s *Server) handleCheckNow(w http.ResponseWriter, r *http.Request) {
 
 // handleQueue serves the status line, which the footer fetches on load.
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
-	q, err := s.App.Store.Queue(r.Context())
+	s.render(w, r, ui.QueueStatus(s.queueView(r.Context())))
+}
+
+// handlePauseQueue stops new downloads from starting; running ones finish.
+func (s *Server) handlePauseQueue(w http.ResponseWriter, r *http.Request) {
+	s.App.PauseQueue()
+	s.App.Bus.Publish(jobs.Event{Kind: "queue-updated"})
+	s.render(w, r, ui.QueueStatus(s.queueView(r.Context())))
+}
+
+// handleResumeQueue lets queued downloads start again.
+func (s *Server) handleResumeQueue(w http.ResponseWriter, r *http.Request) {
+	s.App.ResumeQueue()
+	s.App.Bus.Publish(jobs.Event{Kind: "queue-updated"})
+	s.render(w, r, ui.QueueStatus(s.queueView(r.Context())))
+}
+
+// queueView gathers what the footer shows. The counts come from the store,
+// the pages from the downloads running in this process.
+func (s *Server) queueView(ctx context.Context) ui.QueueView {
+	q, err := s.App.Store.Queue(ctx)
 	if err != nil {
 		slog.Error("queue status", "err", err)
 	}
-	s.render(w, r, ui.QueueStatus(q))
+	v := ui.QueueView{QueueStatus: q, Paused: s.App.QueuePaused()}
+	for _, p := range s.App.ActiveDownloads() {
+		v.Done += p.Done
+		v.Total += p.Total
+	}
+	return v
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

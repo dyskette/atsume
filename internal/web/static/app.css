@@ -555,7 +555,21 @@ h2.category .muted { font-size: 0.82rem; font-weight: 400; }
 
 /* The status line is the only element on every page; it earns that by saying
    whether anything is happening, not by displaying a constant. */
-.queue { display: inline-flex; align-items: center; gap: 0.5rem; }
+.queue { display: flex; flex: 1; align-items: center; gap: 0.5rem 0.8rem; flex-wrap: wrap; }
+.queue progress {
+	width: 10rem;
+	height: 0.3rem;
+	appearance: none;
+	border: 0;
+	border-radius: 999px;
+	background: var(--panel-hi);
+	overflow: hidden;
+}
+.queue progress::-webkit-progress-bar { background: var(--panel-hi); }
+.queue progress::-webkit-progress-value { background: var(--accent); }
+.queue progress::-moz-progress-bar { background: var(--accent); }
+.queue .pages { font-variant-numeric: tabular-nums; }
+.queue .push { margin-left: auto; font-size: 0.85rem; padding: 0.3rem 0.8rem; }
 .dot {
 	width: 0.5rem;
 	height: 0.5rem;
@@ -563,8 +577,9 @@ h2.category .muted { font-size: 0.82rem; font-weight: 400; }
 	background: var(--line);
 	flex: none;
 }
-.dot.working { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+.dot.working { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
 .dot.bad { background: var(--err); }
+.dot.paused { background: var(--warn); }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .dot.working { animation: none; } }
 

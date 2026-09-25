@@ -67,13 +67,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			// The status line is derived here rather than published by the
 			// worker: every event that matters to it is already on this
-			// stream, and recomputing once per page of a download would be
-			// a query per image.
-			if time.Since(lastStatus) > statusInterval {
+			// stream. Only page progress is throttled, since recomputing once
+			// per page would be a query per image; a chapter changing state
+			// always refreshes it, or a download finishing while the queue is
+			// paused would leave the footer saying it is still running.
+			if e.Kind != "chapter-progress" || time.Since(lastStatus) > statusInterval {
 				lastStatus = time.Now()
-				if q, err := s.App.Store.Queue(r.Context()); err == nil {
-					writeEvent(w, "queue", renderToString(r.Context(), ui.QueueStatus(q)))
-				}
+				writeEvent(w, "queue", renderToString(r.Context(), ui.QueueStatus(s.queueView(r.Context()))))
 			}
 			flusher.Flush()
 		}
@@ -109,16 +109,13 @@ func (s *Server) renderEvent(ctx context.Context, e jobs.Event) []sseEvent {
 		}
 		return out
 
-	case "series-updated":
+	case "series-updated", "queue-updated":
 		// The footer replaces its whole element with a "queue" event, so this
 		// sends the footer itself, refreshed now that a check has finished and
-		// may have queued downloads. Plain text here would remove the element
-		// and stop the footer updating until the page was reloaded.
-		q, err := s.App.Store.Queue(ctx)
-		if err != nil {
-			return nil
-		}
-		return []sseEvent{{"queue", renderToString(ctx, ui.QueueStatus(q))}}
+		// may have queued downloads, or the queue was paused or resumed. Plain
+		// text here would remove the element and stop the footer updating
+		// until the page was reloaded.
+		return []sseEvent{{"queue", renderToString(ctx, ui.QueueStatus(s.queueView(ctx)))}}
 
 	case "site-indexed":
 		// The status line reports itself while a read runs, so a reader
