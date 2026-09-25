@@ -33,7 +33,7 @@ EXPOSE 8080
 VOLUME ["/data", "/library"]
 
 # No HEALTHCHECK here: podman builds OCI images by default and ignores it with
-# a warning. Declare the check in whatever runs the image — the quadlet in
-# deploy/ does, with HealthCmd.
+# a warning. Declare the check in whatever runs the image; /healthz answers
+# 200 once the modules are loaded.
 
 ENTRYPOINT ["/usr/local/bin/atsume"]
