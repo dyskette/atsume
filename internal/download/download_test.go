@@ -97,7 +97,7 @@ func TestCandidates(t *testing.T) {
 	long := ParseChapter("Tower of God", "[Season 2] Ep. 1 "+strings.Repeat("長", 100))
 	c := long.Candidates(root, "k")
 	if !strings.Contains(c[1], "Tower of God - c001 (v02) - ") || !utf8.ValidString(c[1]) ||
-		utf8.RuneCountInString(filepath.Base(c[1])) > 120 {
+		len(filepath.Base(c[2])) > maxName {
 		t.Errorf("long name: %q", c[1])
 	}
 	if nameless := (Chapter{Series: "S", Number: "000"}).Candidates(root, "k"); len(nameless) != 2 {
@@ -116,6 +116,44 @@ func TestSanitize(t *testing.T) {
 	for _, c := range cases {
 		if got := Sanitize(c.in); got != c.want {
 			t.Errorf("Sanitize(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestSanitizeCutsOnCharacters covers a title longer than maxTitle: it must
+// shrink to fit without splitting a character, or the name on disk would not
+// be valid UTF-8.
+func TestSanitizeCutsOnCharacters(t *testing.T) {
+	for _, in := range []string{
+		strings.Repeat("進撃の巨人", 30),       // three bytes a character
+		"a" + strings.Repeat("進撃の巨人", 30), // and shifted off the boundary
+		strings.Repeat("😀", 60),           // four bytes a character
+		strings.Repeat("x", 199) + " yz",  // a cut landing on a space
+		strings.Repeat("x", 199) + ".yz",  // or on a dot, which Windows rejects last
+	} {
+		got := Sanitize(in)
+		if !utf8.ValidString(got) || len(got) > maxTitle || strings.HasSuffix(got, " ") || strings.HasSuffix(got, ".") {
+			t.Errorf("Sanitize(%.20q…) = %q (%d bytes)", in, got, len(got))
+		}
+		if !strings.HasPrefix(in, got) {
+			t.Errorf("Sanitize(%.20q…) should keep the start of the title, got %q", in, got)
+		}
+	}
+}
+
+// TestLongNamesFitTheFilesystem writes the longest names a chapter can ask
+// for, with a long CJK series title and chapter name, to show every
+// candidate stays within what the filesystem accepts.
+func TestLongNamesFitTheFilesystem(t *testing.T) {
+	root := t.TempDir()
+	ch := ParseChapter(strings.Repeat("進撃の巨人", 40), "[Season 12] Ep. 345.5 "+strings.Repeat("長い話", 60))
+	for _, path := range ch.Candidates(root, "key") {
+		name := filepath.Base(path)
+		if len(name) > maxName || !utf8.ValidString(name) {
+			t.Errorf("%d bytes, valid %v: %q", len(name), utf8.ValidString(name), name)
+		}
+		if err := WriteCBZ(path, []Page{{Data: []byte("x"), Ext: ".jpg"}}, nil); err != nil {
+			t.Errorf("writing %q: %v", name, err)
 		}
 	}
 }
