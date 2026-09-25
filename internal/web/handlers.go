@@ -231,10 +231,6 @@ func (s *Server) handleTrackSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The reply replaces whatever was pressed, in place.
-	if r.FormValue("context") == "page" {
-		s.render(w, r, ui.FollowedPrompt(id))
-		return
-	}
 	s.render(w, r, ui.Followed(name, id))
 }
 
@@ -325,7 +321,7 @@ func (s *Server) handleDownloadSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("queued chapters", "series", id, "count", n)
-	w.WriteHeader(http.StatusNoContent)
+	s.renderSeriesActions(w, r, id)
 }
 
 func (s *Server) handleDownloadChapter(w http.ResponseWriter, r *http.Request) {
@@ -418,18 +414,83 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A series in the library has one page, however it is reached.
+	tracked, err := s.App.Store.TrackedURLs(r.Context(), module)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if id, ok := tracked[seriesURL]; ok {
+		http.Redirect(w, r, fmt.Sprintf("/series/%d", id), http.StatusSeeOther)
+		return
+	}
+
 	info, err := s.App.Preview(r.Context(), module, seriesURL)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.Preview(ui.PreviewView{
-		Module:    module,
-		SeriesURL: seriesURL,
-		SiteURL:   s.App.SiteLink(r.Context(), module, seriesURL),
-		Info:      info,
-		Chapters:  info.ChapterLinks.Count(),
+	links, names := info.ChapterLinks.All(), info.ChapterNames.All()
+	listed := make([]ui.ListedChapter, 0, len(links))
+	for i, link := range links {
+		name := link
+		if i < len(names) {
+			name = names[i]
+		}
+		listed = append(listed, ui.ListedChapter{Name: name, URL: link})
+	}
+	// The page names the site as the module declares it, as it does for a
+	// series in the library, rather than by its file name.
+	siteName := module
+	if e, ok := s.App.SiteInfo(r.Context(), module); ok {
+		siteName = e.Site
+	}
+	s.render(w, r, ui.SeriesPage(ui.SeriesView{
+		Series: store.Series{
+			ModuleKey: module, ModuleName: siteName, URL: seriesURL,
+			Title: info.Title, CoverURL: info.CoverLink, Authors: info.Authors,
+			Artists: info.Artists, Genres: info.Genres, Status: info.Status, Summary: info.Summary,
+		},
+		Module:        module,
+		SeriesURL:     seriesURL,
+		Listed:        listed,
+		Destination:   s.App.SeriesDestination(info.Title),
+		SiteURL:       s.App.SiteLink(r.Context(), module, seriesURL),
+		CheckInterval: s.App.Cfg.CheckInterval,
 	}))
+}
+
+// handleFollowFromPage follows a series from its page. The series and its
+// chapters are stored before the reply, so the page it reloads into is
+// complete.
+func (s *Server) handleFollowFromPage(w http.ResponseWriter, r *http.Request) {
+	id, err := s.App.SaveAndFollow(r.Context(), r.PathValue("name"), r.FormValue("url"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.Header().Set("HX-Redirect", fmt.Sprintf("/series/%d", id))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDownloadFromPage downloads one chapter, or every chapter, of a series
+// not in the library, which saves it there without following it. The page
+// reloads as the library series.
+func (s *Server) handleDownloadFromPage(w http.ResponseWriter, r *http.Request) {
+	module, seriesURL := r.PathValue("name"), r.FormValue("url")
+	var id int64
+	var err error
+	if chapter := r.FormValue("chapter"); chapter != "" {
+		id, err = s.App.DownloadChapterOf(r.Context(), module, seriesURL, chapter)
+	} else {
+		id, err = s.App.SaveAndDownloadAll(r.Context(), module, seriesURL)
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.Header().Set("HX-Redirect", fmt.Sprintf("/series/%d", id))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handlePreviewCover proxies a cover for a series with no library row to key
@@ -536,8 +597,7 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	v := s.seriesView(r.Context(), series, chapters)
 	if r.URL.Query().Get("cancel") != "" {
-		s.render(w, r, ui.RemoveControl(v))
-		return
+		return // an empty reply clears the confirmation
 	}
 	s.render(w, r, ui.ConfirmRemove(v))
 }
@@ -586,7 +646,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.FollowControl(s.seriesView(r.Context(), series, chapters)))
+	s.render(w, r, ui.SeriesActions(s.seriesView(r.Context(), series, chapters)))
 }
 
 // handleCheckNow asks the scheduler for an immediate sweep.
@@ -615,4 +675,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		len(s.App.Registry.Modules()), s.App.Registry.Ref(),
 		s.App.Cfg.CheckInterval.String(),
 		stats["pending"], stats["running"], stats["failed"])
+}
+
+// renderSeriesActions re-renders a series' header actions after a change.
+func (s *Server) renderSeriesActions(w http.ResponseWriter, r *http.Request, id int64) {
+	series, err := s.App.Store.GetSeries(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	chapters, err := s.App.Store.ListChapters(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.SeriesActions(s.seriesView(r.Context(), series, chapters)))
 }

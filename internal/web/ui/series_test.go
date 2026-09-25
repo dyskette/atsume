@@ -32,56 +32,59 @@ func TestCountChapters(t *testing.T) {
 	}
 }
 
-func TestHaveLine(t *testing.T) {
+// TestStatusLine covers the line under a series' actions: what is
+// downloaded and on its way, and whether new chapters will be picked up.
+func TestStatusLine(t *testing.T) {
+	checked := sql.NullTime{Time: time.Now().Add(-12 * time.Minute), Valid: true}
 	cases := []struct {
 		name   string
+		series store.Series
+		every  time.Duration
 		states []string
 		want   string
 	}{
-		{"nothing known", nil, ""},
-		{"all downloaded", []string{store.ChapterDone}, "1 of 1 chapters downloaded"},
-		{
-			name:   "in progress and failed are called out",
-			states: []string{store.ChapterDone, store.ChapterDownloading, store.ChapterQueued, store.ChapterFailed},
-			want:   "1 of 4 chapters downloaded · 2 in progress · 1 failed",
-		},
+		{"saved", store.Series{ID: 1}, 6 * time.Hour,
+			[]string{store.ChapterDone, store.ChapterPending},
+			"In your library · 1 of 2 downloaded · not following"},
+		{"following, with work in progress", store.Series{ID: 1, Subscribed: true, CheckedAt: checked}, 6 * time.Hour,
+			[]string{store.ChapterDone, store.ChapterDownloading, store.ChapterDownloading, store.ChapterQueued, store.ChapterFailed},
+			"1 of 5 downloaded · 2 downloading · 1 queued · 1 failed · new chapters download automatically · checked 12m ago"},
+		{"following, never checked", store.Series{ID: 1, Subscribed: true}, 6 * time.Hour,
+			[]string{store.ChapterPending},
+			"0 of 1 downloaded · new chapters download automatically · not checked yet"},
+		// Following with checks switched off would be a promise the app is not
+		// keeping.
+		{"following, checks off", store.Series{ID: 1, Subscribed: true, CheckedAt: checked}, 0,
+			[]string{store.ChapterDone},
+			"1 of 1 downloaded · automatic checks are off"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			v := SeriesView{Chapters: chapters(c.states...)}
+			v := SeriesView{Series: c.series, CheckInterval: c.every, Chapters: chapters(c.states...)}
 			v.Counts = CountChapters(v.Chapters)
-			if got := v.HaveLine(); got != c.want {
-				t.Errorf("got %q, want %q", got, c.want)
+			if got := v.StatusLine(); got != c.want {
+				t.Errorf("got  %q\nwant %q", got, c.want)
 			}
 		})
 	}
 }
 
-// TestFollowLine covers the sentence that has to carry the whole contract:
-// what following does, and how often.
-func TestFollowLine(t *testing.T) {
-	following := store.Series{Subscribed: true}
-
-	v := SeriesView{Series: following, CheckInterval: 6 * time.Hour}
-	if got := v.FollowLine(); !strings.Contains(got, "every 6 hours") || !strings.Contains(got, "automatically") {
-		t.Errorf("following line = %q; it must say how often and that it downloads", got)
+// TestDownloadLabel covers the download button: all of them until something
+// is downloaded or on its way, then what remains.
+func TestDownloadLabel(t *testing.T) {
+	untracked := SeriesView{Listed: make([]ListedChapter, 124)}
+	if got := untracked.DownloadLabel(); got != "Download all 124" {
+		t.Errorf("untracked: %q", got)
 	}
-
-	v = SeriesView{Series: following, CheckInterval: time.Hour}
-	if got := v.FollowLine(); !strings.Contains(got, "every 1 hour") {
-		t.Errorf("singular interval = %q", got)
+	v := SeriesView{Series: store.Series{ID: 1}, Chapters: chapters(store.ChapterPending, store.ChapterPending)}
+	v.Counts = CountChapters(v.Chapters)
+	if got := v.DownloadLabel(); got != "Download all 2" {
+		t.Errorf("nothing downloaded: %q", got)
 	}
-
-	// Automatic checks switched off entirely — following on its own would be a
-	// promise the app is not keeping.
-	v = SeriesView{Series: following, CheckInterval: 0}
-	if got := v.FollowLine(); !strings.Contains(got, "switched off") {
-		t.Errorf("disabled line = %q", got)
-	}
-
-	v = SeriesView{Series: store.Series{Subscribed: false}, CheckInterval: 6 * time.Hour}
-	if got := v.FollowLine(); !strings.Contains(got, "Not following") {
-		t.Errorf("unfollowed line = %q", got)
+	v.Chapters = chapters(store.ChapterDone, store.ChapterQueued, store.ChapterPending, store.ChapterFailed)
+	v.Counts = CountChapters(v.Chapters)
+	if got := v.DownloadLabel(); got != "Download 2 remaining" {
+		t.Errorf("some downloaded: %q", got)
 	}
 }
 

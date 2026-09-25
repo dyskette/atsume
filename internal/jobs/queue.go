@@ -111,6 +111,42 @@ func (q *Queue) PendingOfKind(ctx context.Context, kind string) ([]json.RawMessa
 	return out, rows.Err()
 }
 
+// DeletePending removes the jobs of one kind that have not started and whose
+// payload has key set to value, and reports how many it removed. A job
+// already running is left alone; stopping it is the handler's business.
+func (q *Queue) DeletePending(ctx context.Context, kind, key string, value any) (int64, error) {
+	res, err := q.db.ExecContext(ctx,
+		`DELETE FROM jobs WHERE kind = ? AND state = 'pending' AND json_extract(payload, '$.' || ?) = ?`,
+		kind, key, value)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PendingInOrder returns the payloads of jobs of one kind waiting to start,
+// in the order workers will take them: those ready now by age, then those
+// waiting out a retry delay.
+func (q *Queue) PendingInOrder(ctx context.Context, kind string) ([]json.RawMessage, error) {
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT payload FROM jobs WHERE kind = ? AND state = 'pending'
+		 ORDER BY run_after > CURRENT_TIMESTAMP, id`, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []json.RawMessage
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		out = append(out, json.RawMessage(raw))
+	}
+	return out, rows.Err()
+}
+
 // Stats counts jobs by state, for the dashboard and /healthz.
 func (q *Queue) Stats(ctx context.Context) (map[string]int, error) {
 	rows, err := q.db.QueryContext(ctx, `SELECT state, COUNT(*) FROM jobs GROUP BY state`)

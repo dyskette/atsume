@@ -2,89 +2,176 @@ package ui
 
 import "fmt"
 
-// SeriesPage answers, in order: what is this, what do I have, what can I do,
-// and then the chapters. The description comes last, behind a disclosure — it
-// is the largest thing on the page and the least actionable, and letting it
-// lead pushed everything that mattered below the fold.
+// SeriesPage is one series, in the library or not. Being in the library is a
+// state of the series, not a different page, so the page is the same however
+// it was reached and only its controls follow the state: untracked, saved
+// (something downloaded, not followed) or followed.
 templ SeriesPage(v SeriesView) {
 	@Layout(v.Series.Title) {
 		<div class="series-head">
-			if v.Series.CoverURL != "" {
-				<img
-					class="cover"
-					src={ fmt.Sprintf("/series/%d/cover", v.Series.ID) }
-					alt={ "Cover of " + v.Series.Title }
-					loading="lazy"
-				/>
-			}
+			<div class="cover-wrap">
+				if v.CoverURL() != "" {
+					<img class="cover" src={ v.CoverURL() } alt={ "Cover of " + v.Series.Title } loading="lazy"/>
+				} else {
+					<div class="cover blank"></div>
+				}
+				if v.Tracked() {
+					<span class="in-library">✓ In library</span>
+				}
+			</div>
 			<div class="series-meta">
-				<h1>{ v.Series.Title }</h1>
-				<p class="muted">
-					{ v.Series.ModuleName }
+				<p class="meta">
+					<span class="site">{ v.Series.ModuleName }</span>
 					if v.Series.Status != "" {
-						{ " · " }{ v.Series.Status }
+						<span class="state">{ v.Series.Status }</span>
 					}
 					if v.Series.Authors != "" {
-						{ " · " }{ v.Series.Authors }
+						<span>{ v.Series.Authors }</span>
 					}
-					{ " · " }
-					<a href={ templ.SafeURL(v.SiteURL) } target="_blank" rel="noreferrer noopener">Open on site</a>
-					{ " · " }
-					<a href={ templ.SafeURL(v.SettingsURL()) }>Site settings</a>
+					<a href={ templ.SafeURL(v.SiteURL) } target="_blank" rel="noreferrer noopener">Open on { v.Series.ModuleName } ↗</a>
 				</p>
-				if v.HaveLine() != "" {
-					<p class="have">{ v.HaveLine() }</p>
+				<h1>{ v.Series.Title }</h1>
+				if len(v.Genres()) > 0 {
+					<ul class="chips">
+						for _, g := range v.Genres() {
+							<li>{ g }</li>
+						}
+					</ul>
 				}
-				<div class="actions">
-					if v.Counts.Waiting() > 0 {
-						<form hx-post={ fmt.Sprintf("/series/%d/download", v.Series.ID) } hx-swap="none">
-							<button type="submit" class="primary">
-								{ "Download " + Count(v.Counts.Waiting(), "chapter", "chapters") }
-							</button>
-						</form>
-					}
-					<form hx-post={ fmt.Sprintf("/series/%d/refresh", v.Series.ID) } hx-swap="none">
-						<button type="submit">Check for new chapters</button>
-					</form>
-				</div>
-				@FollowControl(v)
-				<p class="muted dest">
-					Chapters are written to <code>{ v.Destination }</code>
-				</p>
-				<div id="remove">
-					@RemoveControl(v)
-				</div>
+				if v.Series.Summary != "" {
+					<p class="summary clamp">{ v.Series.Summary }</p>
+					<button type="button" class="link more" onclick="this.previousElementSibling.classList.toggle('clamp'); this.textContent = this.textContent === 'More' ? 'Less' : 'More'">More</button>
+				}
+				@SeriesActions(v)
 			</div>
 		</div>
+		@chapterList(v)
+	}
+}
 
-		<div class="head">
-			<h2>
-				if v.Counts.Total > 0 {
-					{ fmt.Sprintf("Chapters (%d)", v.Counts.Total) }
-				} else {
-					Chapters
-				}
-			</h2>
+// SeriesActions is the part of the header that changes with the series'
+// state: its two real actions, the ⋯ menu for the rarely used ones, and the
+// line saying where the series stands. Following, unfollowing and queueing
+// swap it in place.
+templ SeriesActions(v SeriesView) {
+	<div id="series-actions">
+		<div class="actions">
+			@followButton(v)
+			if v.ToDownload() > 0 {
+				@downloadAllButton(v)
+			}
+			@seriesMenu(v)
 		</div>
-		if v.Counts.Total == 0 {
-			@chaptersEmpty(v)
+		if v.Tracked() {
+			<p class={ "status", templ.KV("on", v.Series.Subscribed) }>
+				<span class="dot"></span>
+				<span>{ v.StatusLine() }</span>
+				if v.Series.Subscribed {
+					{ " · " }
+					<button type="button" class="link" hx-post={ fmt.Sprintf("/series/%d/refresh", v.Series.ID) } hx-swap="none">Check now</button>
+				}
+			</p>
+			<div id="remove"></div>
+		} else {
+			<p class="muted hint">Follow to get new chapters automatically, or download any chapter to keep it.</p>
 		}
-		<ul class="rows chapters">
+	</div>
+}
+
+// followButton is Follow until the series is followed, then a Following
+// toggle that unfollows. Unfollowing keeps the series in the library.
+templ followButton(v SeriesView) {
+	if !v.Tracked() {
+		<form hx-post={ "/modules/" + v.Module + "/series/follow" }>
+			<input type="hidden" name="url" value={ v.SeriesURL }/>
+			<button type="submit" class="primary">+ Follow</button>
+		</form>
+	} else {
+		<form hx-post={ fmt.Sprintf("/series/%d/subscribe", v.Series.ID) } hx-target="#series-actions" hx-swap="outerHTML">
+			if v.Series.Subscribed {
+				<input type="hidden" name="on" value="0"/>
+				<button type="submit" class="following" title="Stop following; the series stays in your library">✓ Following</button>
+			} else {
+				<input type="hidden" name="on" value="1"/>
+				<button type="submit" class="primary">+ Follow</button>
+			}
+		</form>
+	}
+}
+
+// downloadAllButton queues every chapter not downloaded. A series not in the
+// library is saved first, which reloads the page as a library series.
+templ downloadAllButton(v SeriesView) {
+	if !v.Tracked() {
+		<form hx-post={ "/modules/" + v.Module + "/series/download" }>
+			<input type="hidden" name="url" value={ v.SeriesURL }/>
+			<button type="submit">↓ { v.DownloadLabel() }</button>
+		</form>
+	} else {
+		<form hx-post={ fmt.Sprintf("/series/%d/download", v.Series.ID) } hx-target="#series-actions" hx-swap="outerHTML">
+			<button type="submit">↓ { v.DownloadLabel() }</button>
+		</form>
+	}
+}
+
+// seriesMenu holds what is rarely needed, so the header keeps two actions.
+templ seriesMenu(v SeriesView) {
+	<details class="menu">
+		<summary aria-label="More actions">⋯</summary>
+		<div class="menu-items">
+			<a href={ templ.SafeURL(v.SettingsURL()) }>Site settings</a>
+			<p class="dest">Saved to <code>{ v.Destination }</code></p>
+			if v.Tracked() {
+				<button type="button" hx-post={ fmt.Sprintf("/series/%d/refresh", v.Series.ID) } hx-swap="none">Check now</button>
+				<button type="button" class="danger-text" hx-get={ fmt.Sprintf("/series/%d/remove", v.Series.ID) } hx-target="#remove" hx-swap="innerHTML">Remove from library</button>
+			}
+		</div>
+	</details>
+}
+
+// chapterList is the chapters as stored for a series in the library, or as
+// the site lists them for one that is not.
+templ chapterList(v SeriesView) {
+	<div class="head">
+		<h2>Chapters <span class="count">{ fmt.Sprintf("%d", v.ChapterTotal()) }</span></h2>
+	</div>
+	if v.ChapterTotal() == 0 {
+		if v.Tracked() {
+			@chaptersEmpty(v)
+		} else {
+			<div class="empty">
+				<strong>No chapters on { v.Series.ModuleName } yet</strong>
+				<p>
+					This series is listed but hasn’t published anything. Follow it and
+					atsume will download chapter 1 the moment it appears.
+				</p>
+			</div>
+		}
+	}
+	<ul class="rows chapters">
+		if v.Tracked() {
 			for _, c := range v.Chapters {
 				@ChapterRowState(c, v.Missing[c.ID])
 			}
-		</ul>
-
-		if v.Series.Summary != "" {
-			<details class="description">
-				<summary>Description</summary>
-				<p class="summary">{ v.Series.Summary }</p>
-				if v.Series.Genres != "" {
-					<p class="muted">{ v.Series.Genres }</p>
-				}
-			</details>
+		} else {
+			for _, c := range v.Listed {
+				@listedChapterRow(v, c)
+			}
 		}
-	}
+	</ul>
+}
+
+// listedChapterRow is a chapter of a series not in the library. Downloading
+// it saves the series, so the page reloads as a library series.
+templ listedChapterRow(v SeriesView, c ListedChapter) {
+	<li class="chapter">
+		<span class="title">{ c.Name }</span>
+		<form hx-post={ "/modules/" + v.Module + "/series/download" }>
+			<input type="hidden" name="url" value={ v.SeriesURL }/>
+			<input type="hidden" name="chapter" value={ c.URL }/>
+			<button type="submit" title="Download">↓</button>
+		</form>
+	</li>
 }
 
 // chaptersEmpty distinguishes "never checked" from "checked and found none",
@@ -100,42 +187,6 @@ templ chaptersEmpty(v SeriesView) {
 	</div>
 }
 
-// FollowControl states the standing arrangement and offers the one change to
-// it. It is deliberately not a button among the actions: following is a state,
-// not something you do, and mixing the two made the label read as a progress
-// report.
-templ FollowControl(v SeriesView) {
-	<div
-		id={ fmt.Sprintf("follow-%d", v.Series.ID) }
-		class={ "follow", templ.KV("on", v.Series.Subscribed) }
-	>
-		<span>{ v.FollowLine() }</span>
-		<form hx-post={ fmt.Sprintf("/series/%d/subscribe", v.Series.ID) } hx-swap="outerHTML" hx-target={ fmt.Sprintf("#follow-%d", v.Series.ID) }>
-			if v.Series.Subscribed {
-				<input type="hidden" name="on" value="0"/>
-				<button type="submit">Stop following</button>
-			} else {
-				<input type="hidden" name="on" value="1"/>
-				<button type="submit" class="primary">Follow</button>
-			}
-		</form>
-	</div>
-}
-
-// RemoveControl offers to forget the series. It is deliberately quiet and
-// last: it is the one thing on this page that cannot be undone.
-templ RemoveControl(v SeriesView) {
-	<p class="muted remove">
-		<button
-			type="button"
-			class="link"
-			hx-get={ fmt.Sprintf("/series/%d/remove", v.Series.ID) }
-			hx-target="#remove"
-			hx-swap="innerHTML"
-		>Remove from atsume</button>
-	</p>
-}
-
 // ConfirmRemove states exactly what removing does before it is done.
 //
 // The question a reader actually has is whether their files are about to go,
@@ -144,7 +195,7 @@ templ RemoveControl(v SeriesView) {
 templ ConfirmRemove(v SeriesView) {
 	<div class="confirm">
 		<p>
-			<strong>Remove { v.Series.Title } from atsume?</strong>
+			<strong>Remove { v.Series.Title } from your library?</strong>
 		</p>
 		<p class="muted">
 			atsume forgets the series and stops checking it.

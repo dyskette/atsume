@@ -120,16 +120,18 @@ func CleanTitle(s string) string {
 // came to need a manual refresh to show what had just been added.
 //
 // Existing rows are left alone: the listing knows only a title, and it must
-// not overwrite what a completed check has already found.
+// not overwrite what a completed check has already found. A new row takes
+// v.Subscribed: following a series creates it followed, downloading one of
+// its chapters creates it saved but not followed.
 func (s *Store) EnsureSeries(ctx context.Context, v Series) (int64, bool, error) {
 	const insert = `
 		INSERT INTO series (module_id, module_key, module_name, url, title, subscribed)
-		VALUES (?, ?, ?, ?, ?, 1)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (module_id, url) DO NOTHING
 		RETURNING id`
 	var id int64
 	err := s.DB.QueryRowContext(ctx, insert,
-		v.ModuleID, v.ModuleKey, v.ModuleName, v.URL, CleanTitle(v.Title)).Scan(&id)
+		v.ModuleID, v.ModuleKey, v.ModuleName, v.URL, CleanTitle(v.Title), v.Subscribed).Scan(&id)
 	if err == nil {
 		return id, true, nil
 	}
@@ -531,6 +533,18 @@ func (s *Store) SeriesDueForCheck(ctx context.Context, interval time.Duration, l
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// ChapterIDByURL returns the ID of a series' chapter at url, or 0 when the
+// series lists no such chapter.
+func (s *Store) ChapterIDByURL(ctx context.Context, seriesID int64, url string) (int64, error) {
+	var id int64
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT id FROM chapters WHERE series_id = ? AND url = ?`, seriesID, url).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
 }
 
 // SetSubscribed turns automatic checking for a series on or off.

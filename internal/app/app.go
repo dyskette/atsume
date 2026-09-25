@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -43,6 +44,8 @@ type App struct {
 	catalogue catalogueCache
 	// files keeps concurrent downloads from writing the same library file.
 	files fileClaims
+	// active is the chapter downloads running now.
+	active activeDownloads
 	// started is when this process came up, which is what tells a scheduler
 	// that has never run apart from one that started a moment ago.
 	started time.Time
@@ -240,13 +243,20 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return err
 	}
+	return a.refresh(ctx, p.Module, p.URL)
+}
 
-	r, err := a.openModule(ctx, p.Module)
+// refresh fetches a series' details and chapter list from its site and stores
+// them. The series row is created if it is not there, followed; an existing
+// row keeps whether it is followed.
+func (a *App) refresh(ctx context.Context, module, seriesURL string) error {
+	r, err := a.openModule(ctx, module)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
 
+	p := RefreshPayload{Module: module, URL: seriesURL}
 	info, err := r.GetInfo(p.URL)
 	if err != nil {
 		return err
@@ -424,6 +434,7 @@ func (a *App) fetchPages(ctx context.Context, r *scraper.Runner, ch store.Chapte
 		}
 
 		pages = append(pages, page)
+		a.active.progress(ch.ID, i+1, len(urls))
 		a.Bus.Publish(jobs.Event{
 			Kind: "chapter-progress", ChapterID: ch.ID, SeriesID: ch.SeriesID,
 			State: store.ChapterDownloading, Done: i + 1, Total: len(urls),
@@ -565,9 +576,23 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 		return err
 	}
 
+	// The download runs under its own context so it can be cancelled alone.
+	// Bookkeeping after a cancel uses the job's context, which is still live.
+	jobCtx := ctx
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	a.active.start(ch.ID, cancel)
+	defer a.active.finish(ch.ID)
+
 	// Record the failure on the chapter as well as the job, so the UI can show
-	// why a specific chapter is stuck without the operator reading logs.
+	// why a specific chapter is stuck without the operator reading logs. A
+	// cancelled download is not a failure: the chapter goes back to not
+	// downloaded, and the job completes so it is not retried.
 	fail := func(err error) error {
+		if errors.Is(context.Cause(ctx), errCancelled) {
+			slog.Info("download cancelled", "series", series.Title, "chapter", ch.Name)
+			return a.resetChapter(jobCtx, ch.ID)
+		}
 		_ = a.Store.SetChapterState(ctx, ch.ID, store.ChapterFailed, "", err.Error(), 0)
 		a.Bus.Publish(jobs.Event{
 			Kind: "chapter-updated", ChapterID: ch.ID, SeriesID: ch.SeriesID,
@@ -597,11 +622,15 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 	if len(pageURLs) == 0 {
 		return fail(fmt.Errorf("module returned no pages for %s", ch.URL))
 	}
+	a.active.progress(ch.ID, 0, len(pageURLs))
 
 	pages, err := a.fetchPages(ctx, r, ch, pageURLs)
 	if err != nil {
 		return fail(err)
 	}
+	// With every page in, the chapter is written even if a cancel arrives
+	// now: stopping here would throw finished work away.
+	ctx = jobCtx
 
 	target := download.Chapter{
 		Series: series.Title, Name: ch.Name, Number: ch.Number, Volume: ch.Volume,
@@ -643,6 +672,95 @@ func (a *App) Preview(ctx context.Context, module, seriesURL string) (*scraper.M
 	return r.GetInfo(seriesURL)
 }
 
+// saveSeries puts a series in the library, followed or not, and returns its
+// ID and whether it was new.
+//
+// A new series has its details and chapter list fetched and stored on the
+// spot, so the page it leads to shows them at once, and it is removed again
+// if that fails, so a failed click leaves nothing behind. A series already
+// saved is left as it is, except that follow turns following on.
+func (a *App) saveSeries(ctx context.Context, moduleKey, seriesURL string, follow bool) (int64, bool, error) {
+	key := a.ResolveModule(ctx, moduleKey)
+	r, err := a.openModuleRaw(ctx, key)
+	if err != nil {
+		return 0, false, err
+	}
+	mod := r.Module()
+	moduleID, moduleName := mod.ID, mod.Name
+	r.Close()
+
+	id, created, err := a.Store.EnsureSeries(ctx, store.Series{
+		ModuleID: moduleID, ModuleKey: key, ModuleName: moduleName,
+		URL: seriesURL, Title: seriesURL, Subscribed: follow,
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	if created {
+		if err := a.refresh(ctx, key, seriesURL); err != nil {
+			_ = a.Store.DeleteSeries(ctx, id)
+			return 0, false, err
+		}
+	} else if follow {
+		if err := a.Store.SetSubscribed(ctx, id, true); err != nil {
+			return id, false, err
+		}
+	}
+	return id, created, nil
+}
+
+// SaveAndFollow follows a series from its page, storing it and its chapters
+// before returning so the page it leads to is complete.
+func (a *App) SaveAndFollow(ctx context.Context, moduleKey, seriesURL string) (int64, error) {
+	id, _, err := a.saveSeries(ctx, moduleKey, seriesURL, true)
+	return id, err
+}
+
+// SaveAndDownloadAll queues every chapter of a series not yet downloaded,
+// saving it to the library, not followed, if it is not there.
+func (a *App) SaveAndDownloadAll(ctx context.Context, moduleKey, seriesURL string) (int64, error) {
+	id, _, err := a.saveSeries(ctx, moduleKey, seriesURL, false)
+	if err != nil {
+		return 0, err
+	}
+	_, err = a.EnqueueAllPending(ctx, id)
+	return id, err
+}
+
+// DownloadChapterOf queues one chapter of a series and returns the series ID.
+//
+// A series not yet in the library is saved, not followed: keeping a chapter
+// is a reason to have the series, not to have every new chapter downloaded.
+func (a *App) DownloadChapterOf(ctx context.Context, moduleKey, seriesURL, chapterURL string) (int64, error) {
+	id, created, err := a.saveSeries(ctx, moduleKey, seriesURL, false)
+	if err != nil {
+		return 0, err
+	}
+	// Chapter links are stored in the shape modules produce; see NormaliseLink.
+	chapterURL = scraper.NormaliseLink(chapterURL)
+	chID, err := a.Store.ChapterIDByURL(ctx, id, chapterURL)
+	if err != nil {
+		return id, err
+	}
+	if chID == 0 && !created {
+		// A known series may list the chapter only since its last check.
+		if err := a.refresh(ctx, a.ResolveModule(ctx, moduleKey), seriesURL); err != nil {
+			return id, err
+		}
+		if chID, err = a.Store.ChapterIDByURL(ctx, id, chapterURL); err != nil {
+			return id, err
+		}
+	}
+	if chID == 0 {
+		if created {
+			_ = a.Store.DeleteSeries(ctx, id)
+			id = 0
+		}
+		return id, fmt.Errorf("the site lists no chapter at %s", chapterURL)
+	}
+	return id, a.EnqueueDownload(ctx, chID)
+}
+
 // Follow records a series and queues the fetch of its details.
 //
 // The row is written here, not by the job, so that a series exists in the
@@ -662,12 +780,19 @@ func (a *App) Follow(ctx context.Context, moduleKey, seriesURL, title string) (i
 	if title == "" {
 		title = seriesURL
 	}
-	id, _, err := a.Store.EnsureSeries(ctx, store.Series{
+	id, created, err := a.Store.EnsureSeries(ctx, store.Series{
 		ModuleID: moduleID, ModuleKey: key, ModuleName: moduleName,
-		URL: seriesURL, Title: title,
+		URL: seriesURL, Title: title, Subscribed: true,
 	})
 	if err != nil {
 		return 0, err
+	}
+	// A series already in the library, saved by downloading a chapter of it,
+	// becomes followed.
+	if !created {
+		if err := a.Store.SetSubscribed(ctx, id, true); err != nil {
+			return id, err
+		}
 	}
 
 	if err := a.EnqueueRefresh(ctx, key, seriesURL); err != nil {

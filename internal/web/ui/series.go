@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dyskette/atsume/internal/store"
@@ -46,10 +47,21 @@ func CountChapters(chapters []store.Chapter) ChapterCounts {
 func (c ChapterCounts) Waiting() int { return c.Pending + c.Failed }
 
 // SeriesView is everything the series page renders.
+//
+// One page serves a series in every state. Series.ID is 0 for one not in the
+// library, which is shown from what its site returned just now: its chapters
+// are in Listed rather than Chapters, and Module and SeriesURL are what
+// following or downloading it needs.
 type SeriesView struct {
 	Series   store.Series
 	Chapters []store.Chapter
 	Counts   ChapterCounts
+	// Module is the site's module key and SeriesURL the series' address as
+	// the module gives it.
+	Module    string
+	SeriesURL string
+	// Listed is the chapter list of a series not in the library.
+	Listed []ListedChapter
 	// Destination is the directory chapters are written to.
 	Destination string
 	// SiteURL is the series' address on the site it came from. The stored
@@ -71,6 +83,106 @@ type SeriesView struct {
 	Missing map[int64]bool
 }
 
+// ListedChapter is a chapter as a site lists it, before it is stored.
+type ListedChapter struct {
+	Name string
+	URL  string
+}
+
+// Tracked reports whether the series is in the library, saved or followed.
+func (v SeriesView) Tracked() bool { return v.Series.ID != 0 }
+
+// ChapterTotal is how many chapters the series has.
+func (v SeriesView) ChapterTotal() int {
+	if v.Tracked() {
+		return v.Counts.Total
+	}
+	return len(v.Listed)
+}
+
+// CoverURL is where the cover is served from, or "" when there is none. A
+// series not in the library routes it through the site's preview-cover,
+// since image hosts refuse a Referer that is not their own.
+func (v SeriesView) CoverURL() string {
+	switch {
+	case v.Series.CoverURL == "":
+		return ""
+	case v.Tracked():
+		return fmt.Sprintf("/series/%d/cover", v.Series.ID)
+	default:
+		return fmt.Sprintf("/modules/%s/preview-cover?url=%s", v.Module, escapeQueryValue(v.Series.CoverURL))
+	}
+}
+
+// Genres splits the comma-separated genre list for display.
+func (v SeriesView) Genres() []string {
+	var out []string
+	for _, g := range strings.Split(v.Series.Genres, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// ToDownload is how many chapters the download button would queue.
+func (v SeriesView) ToDownload() int {
+	if !v.Tracked() {
+		return len(v.Listed)
+	}
+	return v.Counts.Waiting() + v.Gone()
+}
+
+// DownloadLabel names the download button: all of them while none is
+// downloaded or on its way, what remains once some are.
+func (v SeriesView) DownloadLabel() string {
+	c := v.Counts
+	if !v.Tracked() || c.Done-v.Gone()+c.Queued+c.Downloading == 0 {
+		return fmt.Sprintf("Download all %d", v.ToDownload())
+	}
+	return fmt.Sprintf("Download %d remaining", v.ToDownload())
+}
+
+// StatusLine states where a series in the library stands: what is downloaded
+// and on its way, and whether new chapters will be picked up. It ends where
+// the Check now link follows for a followed series.
+func (v SeriesView) StatusLine() string {
+	c := v.Counts
+	var parts []string
+	if !v.Series.Subscribed {
+		parts = append(parts, "In your library")
+	}
+	// A chapter whose file has gone is not downloaded, whatever the database
+	// recorded when it was.
+	parts = append(parts, fmt.Sprintf("%d of %d downloaded", c.Done-v.Gone(), c.Total))
+	if c.Downloading > 0 {
+		parts = append(parts, fmt.Sprintf("%d downloading", c.Downloading))
+	}
+	if c.Queued > 0 {
+		parts = append(parts, fmt.Sprintf("%d queued", c.Queued))
+	}
+	if c.Failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", c.Failed))
+	}
+	if n := v.Gone(); n > 0 {
+		parts = append(parts, Count(n, "file", "files")+" missing from disk")
+	}
+	switch {
+	case !v.Series.Subscribed:
+		parts = append(parts, "not following")
+	case v.CheckInterval <= 0:
+		parts = append(parts, "automatic checks are off")
+	default:
+		parts = append(parts, "new chapters download automatically")
+		if v.Series.CheckedAt.Valid {
+			parts = append(parts, "checked "+ago(v.Series.CheckedAt.Time))
+		} else {
+			parts = append(parts, "not checked yet")
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
 // Gone counts the chapters whose file has disappeared.
 func (v SeriesView) Gone() int { return len(v.Missing) }
 
@@ -83,40 +195,6 @@ func (v SeriesView) SettingsURL() string {
 	return "/modules/" + v.Series.Key() + "/settings"
 }
 
-// HaveLine states what the reader has, in the terms they care about.
-func (v SeriesView) HaveLine() string {
-	c := v.Counts
-	if c.Total == 0 {
-		return ""
-	}
-	// A chapter whose file has gone is not downloaded, whatever the database
-	// recorded when it was.
-	out := fmt.Sprintf("%d of %d chapters downloaded", c.Done-v.Gone(), c.Total)
-	if n := v.Gone(); n > 0 {
-		out += fmt.Sprintf(" · %s missing from disk", Count(n, "file", "files"))
-	}
-	if n := c.Downloading + c.Queued; n > 0 {
-		out += fmt.Sprintf(" · %d in progress", n)
-	}
-	if c.Failed > 0 {
-		out += fmt.Sprintf(" · %d failed", c.Failed)
-	}
-	return out
-}
-
-// FollowLine states the standing arrangement in full, because "following" on
-// its own does not say what it will do or how often.
-func (v SeriesView) FollowLine() string {
-	if !v.Series.Subscribed {
-		return "Not following. New chapters will not be picked up."
-	}
-	if v.CheckInterval <= 0 {
-		return "Following, but automatic checks are switched off. Use Check now."
-	}
-	return fmt.Sprintf("Following. New chapters are checked for every %s and downloaded automatically.",
-		humanDuration(v.CheckInterval))
-}
-
 // ChaptersEmptyReason explains an empty chapter list.
 //
 // Rendering a failure as an empty page is the worst thing this interface can
@@ -125,7 +203,7 @@ func (v SeriesView) FollowLine() string {
 func (v SeriesView) ChaptersEmptyReason() (headline, detail string) {
 	if !v.Series.CheckedAt.Valid {
 		return "Not checked yet",
-			"Press “Check for new chapters” to fetch the chapter list from " + v.Series.ModuleName + "."
+			"Use Check now in the ⋯ menu to fetch the chapter list from " + v.Series.ModuleName + "."
 	}
 	// A gated site answers normally and simply omits the chapters, so an empty
 	// list is the expected symptom of a missing account rather than a puzzle.
