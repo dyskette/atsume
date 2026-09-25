@@ -142,8 +142,8 @@ from one, may be committed to this repository. See [docs/MODULES.md](docs/MODULE
 
 ```sh
 make dev       # live reload on :8080
-make check     # gofmt, vet, tests, stale-codegen check
-make corpus    # upstream drift check against a fresh FMD2 clone
+make check     # gofmt, vet, tests, stale-codegen and vulnerability checks
+make corpus    # upstream drift checks against a fresh FMD2 clone
 ```
 
 `make corpus` reports how much of FMD2's XPath surface still translates to the

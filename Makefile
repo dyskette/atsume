@@ -22,14 +22,19 @@ build: generate ## build a static binary
 test: generate ## run the unit tests
 	go test ./...
 
-corpus: generate ## run the upstream drift check against a fresh FMD2 clone
+# The tests that need real modules (module loading, the golden templates, the
+# app end to end) find the clone TestCorpus makes, so running them nightly
+# shows whether upstream's current modules still work, not just their XPath.
+corpus: generate ## run the upstream drift checks against a fresh FMD2 clone
 	ATSUME_FETCH_CORPUS=1 go test ./internal/txquery/ -run TestCorpus -v
+	go test ./internal/scraper/ ./internal/app/
 
 check: generate ## everything CI runs
 	gofmt -l . | tee /dev/stderr | (! read)
 	git diff --exit-code
 	go vet ./...
 	go test ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 clean:
 	rm -rf bin
