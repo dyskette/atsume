@@ -83,14 +83,16 @@ func newWebsiteModule(r *rt.Runtime, opts *[]Option, storage map[string]string) 
 			}
 			defaultArg := 2
 			if kind == OptionComboBox {
-				// Only a table of items is read. The newline-separated string
-				// form some modules pass ('Auto\nOriginal') leaves Items
-				// empty, so those combo boxes offer no choices.
+				// Upstream takes the choices as text, one per line, which is
+				// how nearly every module passes them ('Main\nSecondary', or
+				// a list joined with '\r\n'); a table works too.
 				if items, ok := c.Arg(2).TryTable(); ok {
 					for i := int64(1); i <= items.Len(); i++ {
 						s, _ := items.Get(rt.IntValue(i)).ToString()
 						o.Items = append(o.Items, s)
 					}
+				} else if text, ok := c.Arg(2).TryString(); ok {
+					o.Items = splitLines(text)
 				}
 				defaultArg = 3
 			}
