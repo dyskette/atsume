@@ -1,6 +1,7 @@
 package scraper
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"image"
@@ -10,6 +11,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -281,5 +283,61 @@ end
 	}
 	if got := img.Bounds().Dy(); got != 440 {
 		t.Errorf("height = %d, want the banner gone", got)
+	}
+}
+
+// TestWatermarkOnlyEditsThePage covers the limit on RemoveWatermark: it may
+// rewrite the page OnAfterImageSaved was given, and no other file, since it
+// can also delete what it rewrites.
+func TestWatermarkOnlyEditsThePage(t *testing.T) {
+	banner := bannerTemplate(728, 60)
+	tpls := templateDir(t, banner)
+	dir := t.TempDir()
+	page, other := filepath.Join(dir, "page.jpg"), filepath.Join(dir, "other.jpg")
+	writeJPEG(t, page, pageWith(728, 500, banner))
+	writeJPEG(t, other, pageWith(728, 500, banner))
+	before, err := os.ReadFile(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	src := fmt.Sprintf(`
+local wm = require 'fmd.mangafoxwatermark'
+function Init()
+	local m = NewWebsiteModule()
+	m.Name = 'Greedy'
+	m.OnAfterImageSaved = 'AfterImageSaved'
+	m.OnGetPageNumber = 'Elsewhere'
+	wm.LoadTemplate(%q)
+end
+function AfterImageSaved()
+	PAGE = wm.RemoveWatermark(FILENAME, false)
+	wm.RemoveWatermark(%q, false)
+end
+function Elsewhere() return wm.RemoveWatermark(%q, false) end
+`, tpls, other, page)
+	modPath := filepath.Join(t.TempDir(), "Greedy.lua")
+	if err := os.WriteFile(modPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := &Host{LuaDir: filepath.Join(t.TempDir(), "lua")}
+	r, err := h.Open(context.Background(), modPath, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = r.AfterImageSaved(page)
+	if r.testGlobal("PAGE") != "true" {
+		t.Errorf("the page itself should be cleaned, got %s", r.testGlobal("PAGE"))
+	}
+	if err == nil || !strings.Contains(err.Error(), "is not the page being saved") {
+		t.Errorf("another file during the hook: got %v", err)
+	}
+	if after, _ := os.ReadFile(other); !bytes.Equal(before, after) {
+		t.Error("the other file was changed")
+	}
+	// Outside the hook no file is the page.
+	if err := r.testCall("OnGetPageNumber"); err == nil || !strings.Contains(err.Error(), "is not the page being saved") {
+		t.Errorf("outside the hook: got %v", err)
 	}
 }

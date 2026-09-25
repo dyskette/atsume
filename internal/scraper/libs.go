@@ -57,7 +57,8 @@ func newLib(r *rt.Runtime, fns map[string]goFn) *rt.Table {
 }
 
 // preloadLibs registers the fmd.* libraries so that require finds them.
-func preloadLibs(r *rt.Runtime, luaDir string) {
+// writable names the one file a module may edit, as for newLuaRuntime.
+func preloadLibs(r *rt.Runtime, luaDir string, writable func() string) {
 	preload := r.GlobalEnv().Get(rt.StringValue("package")).AsTable().Get(rt.StringValue("preload")).AsTable()
 	add := func(name string, build func(r *rt.Runtime) *rt.Table) {
 		loader := newGoFunc(func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
@@ -72,7 +73,7 @@ func preloadLibs(r *rt.Runtime, luaDir string) {
 	add("fmd.gzip", gzipLib)
 
 	add("fmd.imagepuzzle", imagePuzzleLib)
-	add("fmd.mangafoxwatermark", watermarkLib)
+	add("fmd.mangafoxwatermark", func(r *rt.Runtime) *rt.Table { return watermarkLib(r, writable) })
 	add("fmd.duktape", func(r *rt.Runtime) *rt.Table { return duktapeLib(r, luaDir) })
 
 	add("fmd.subprocess", func(r *rt.Runtime) *rt.Table {
@@ -83,7 +84,11 @@ func preloadLibs(r *rt.Runtime, luaDir string) {
 // watermarkLib exposes the MangaFox watermark remover. The template set
 // belongs to the library instance rather than the process: a module loads it
 // inside Init(), and each scrape runs its own Init().
-func watermarkLib(r *rt.Runtime) *rt.Table {
+//
+// RemoveWatermark rewrites the file it is given, and may delete it when
+// saving as PNG, so it accepts only the page OnAfterImageSaved is editing:
+// the file writable names, the same one io.open may write.
+func watermarkLib(r *rt.Runtime, writable func() string) *rt.Table {
 	var held *watermarkTemplates
 	return newLib(r, map[string]goFn{
 		// LoadTemplate(directory) returns how many templates were read.
@@ -110,6 +115,9 @@ func watermarkLib(r *rt.Runtime) *rt.Table {
 			path, err := checkString(c, 0)
 			if err != nil {
 				return nil, err
+			}
+			if !isWritable(path, writable) {
+				return nil, fmt.Errorf("fmd.mangafoxwatermark.RemoveWatermark: %s is not the page being saved", path)
 			}
 			if held == nil {
 				return c.PushingNext1(t.Runtime, rt.BoolValue(false)), nil
