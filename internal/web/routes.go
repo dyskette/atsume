@@ -44,6 +44,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /download", s.handleDownloadMany)
 
 	mux.HandleFunc("POST /chapters/{id}/download", s.handleDownloadChapter)
+	mux.HandleFunc("POST /chapters/{id}/cancel", s.handleCancelChapter)
 
 	mux.HandleFunc("GET /queue", s.handleQueue)
 	mux.HandleFunc("GET /events", s.handleEvents)

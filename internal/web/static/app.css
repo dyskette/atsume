@@ -316,8 +316,8 @@ footer .bar {
 button.link.more { color: var(--accent); padding: 0; }
 
 #series-actions .actions { margin: 1.1rem 0 0.6rem; }
-#series-actions button.primary { background: var(--accent); color: var(--bg); font-weight: 600; }
-#series-actions button.primary:hover { color: var(--bg); filter: brightness(1.08); }
+#series-actions button.primary, .empty button.primary { background: var(--accent); color: var(--bg); font-weight: 600; }
+#series-actions button.primary:hover, .empty button.primary:hover { color: var(--bg); filter: brightness(1.08); }
 button.following { border-color: var(--ok); color: var(--ok); font-weight: 600; }
 button.following:hover { border-color: var(--err); color: var(--err); }
 
@@ -384,8 +384,109 @@ button.following:hover { border-color: var(--err); color: var(--err); }
 
 h2 .count { color: var(--muted); font-weight: 400; }
 
+/* ── Chapter list ────────────────────────────────────────────────────────
+   Every row keeps one layout whatever its state: title, a status column of
+   fixed width, and one action slot, so rows do not shift as they change. */
+.list-head { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+.list-head h2 { margin: 0; flex: 1; }
+.filters {
+	display: flex;
+	padding: 0.2rem;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+}
+.filters a, a.sort {
+	padding: 0.3rem 0.7rem;
+	border-radius: 6px;
+	color: var(--muted);
+	text-decoration: none;
+	font-size: 0.85rem;
+	white-space: nowrap;
+}
+.filters a.on { background: var(--panel-hi); color: var(--text); }
+.filters a:hover, a.sort:hover { color: var(--text); }
+.filters .n { margin-left: 0.3rem; opacity: 0.8; font-variant-numeric: tabular-nums; }
+a.sort { padding: 0.5rem 0.8rem; border: 1px solid var(--line); color: var(--text); }
+
+.chapter-panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.rows.chapters { margin: 0; }
+.rows.chapters li {
+	margin: 0;
+	min-height: 3.6rem;
+	padding: 0.5rem 0.8rem 0.5rem 1.2rem;
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	border-radius: 0;
+	background: none;
+}
+.rows.chapters li:has(progress) { background: rgb(122 162 247 / 0.07); }
+.chapter .state {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 0.8rem;
+	width: 20rem;
+	font-size: 0.85rem;
+	font-variant-numeric: tabular-nums;
+}
+.chapter .state .label { color: var(--accent); }
+.chapter .state .pages { min-width: 4.5rem; text-align: right; color: var(--text); }
+.chapter .state .queued { color: var(--muted); }
+.chapter .state .ok { color: var(--ok); }
+.chapter .state .warn { color: var(--warn); }
+.chapter .state .err { color: var(--err); }
+.chapter progress {
+	width: 7.5rem;
+	height: 0.3rem;
+	appearance: none;
+	border: 0;
+	border-radius: 999px;
+	background: var(--panel-hi);
+	overflow: hidden;
+}
+.chapter progress::-webkit-progress-bar { background: var(--panel-hi); }
+.chapter progress::-webkit-progress-value { background: var(--accent); }
+.chapter progress::-moz-progress-bar { background: var(--accent); }
+.chapter .slot { flex: none; width: 2.5rem; display: flex; justify-content: center; }
+.chapter .slot form { margin: 0; }
+button.icon, .row-menu summary {
+	width: 2.4rem;
+	height: 2.4rem;
+	padding: 0;
+	display: grid;
+	place-items: center;
+	border-radius: 6px;
+}
+button.icon.quiet, .row-menu summary { border-color: transparent; color: var(--muted); }
+.row-menu { position: relative; }
+.row-menu summary { list-style: none; cursor: pointer; }
+.row-menu summary::-webkit-details-marker { display: none; }
+.row-menu summary:hover, .row-menu[open] summary { color: var(--accent); }
+.row-menu .menu-items { left: auto; right: 0; min-width: 11rem; }
+a.show-all { display: block; padding: 0.9rem; text-align: center; }
+
+.empty .empty-icon {
+	display: grid;
+	place-items: center;
+	width: 3.6rem;
+	height: 3.6rem;
+	margin: 0 auto 1rem;
+	border-radius: 50%;
+	background: var(--panel-hi);
+	font-size: 1.3rem;
+}
+.empty .empty-icon.accent { color: var(--accent); }
+.empty .empty-icon.ok { color: var(--ok); }
+.empty .actions.center { justify-content: center; margin: 1rem 0; }
+.empty .actions form { margin: 0; }
+.empty p.muted { font-size: 0.85rem; }
+.empty button.link { color: var(--accent); }
+
 @media (max-width: 40rem) {
 	.series-head { flex-direction: column; }
+	.chapter .state { width: auto; }
+	.chapter progress { width: 4rem; }
 	.cover { width: 8rem; }
 }
 
@@ -557,7 +658,7 @@ button.danger:hover { background: var(--panel-hi); border-color: var(--err); col
 
 /* A chapter whose file has left. The row is not a failure — the download
    worked — but the file is not there, and saying "done" would be a lie. */
-.chapter.missing .title { color: var(--muted); }
+.chapter .title.gone { color: var(--muted); }
 .rows.chapters button.link { color: var(--muted); }
 .rows.chapters button.link:hover { color: var(--accent); }
 

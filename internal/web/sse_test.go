@@ -22,13 +22,13 @@ func TestQueueEventsCarryTheFooter(t *testing.T) {
 	defer st.Close()
 	s := &Server{App: &app.App{Store: st}}
 
-	name, html := s.renderEvent(context.Background(), jobs.Event{
+	evs := s.renderEvent(context.Background(), jobs.Event{
 		Kind: "series-updated", SeriesID: 1, State: "done", Message: "Solo Leveling: 2 new chapters",
 	})
-	if name != "queue" {
-		t.Fatalf("event %q, want queue", name)
+	if len(evs) != 1 || evs[0].name != "queue" {
+		t.Fatalf("events %v, want one queue event", evs)
 	}
-	if !strings.Contains(html, `id="queue-status"`) {
+	if html := evs[0].html; !strings.Contains(html, `id="queue-status"`) {
 		t.Errorf("a queue event must carry the footer element, got %q", html)
 	}
 }

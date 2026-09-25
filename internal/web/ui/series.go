@@ -81,6 +81,14 @@ type SeriesView struct {
 	// longer there. The library directory belongs to whatever reads it, and
 	// a file can leave without atsume being told.
 	Missing map[int64]bool
+
+	// Rows holds each chapter's place in line or download progress.
+	Rows map[int64]RowState
+	// Filter, Oldest and ShowAll are how the chapter list is shown: which
+	// chapters, oldest or newest first, and all of them or the first few.
+	Filter  string
+	Oldest  bool
+	ShowAll bool
 }
 
 // ListedChapter is a chapter as a site lists it, before it is stored.

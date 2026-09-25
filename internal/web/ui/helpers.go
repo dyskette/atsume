@@ -38,25 +38,6 @@ func previewURL(module, link string) string {
 	return SiteURL(module, "/preview?url="+escapeQueryValue(link))
 }
 
-// stateLabel renders a chapter's state for display.
-func stateLabel(c store.Chapter) string {
-	switch c.State {
-	case store.ChapterDone:
-		if c.Pages > 0 {
-			return fmt.Sprintf("%d pages", c.Pages)
-		}
-		return "done"
-	case store.ChapterDownloading:
-		return "downloading"
-	case store.ChapterQueued:
-		return "queued"
-	case store.ChapterFailed:
-		return "failed"
-	default:
-		return "pending"
-	}
-}
-
 // lastChecked renders when a series was last looked at, which is the only
 // signal that automatic checking is actually running.
 func lastChecked(s store.Series) string {
@@ -114,14 +95,6 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
-}
-
-// Progress renders the live progress line swapped in over SSE.
-func Progress(done, total int) string {
-	if total == 0 {
-		return "downloading"
-	}
-	return fmt.Sprintf("%d/%d pages", done, total)
 }
 
 // Count renders a number with its noun, pluralised. Writing "1 chapter(s)"
