@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -24,8 +25,9 @@ type Pool struct {
 	// Enqueue also signals the pool directly, so this is only a safety net.
 	Idle time.Duration
 
-	wake chan struct{}
-	once sync.Once
+	wake   chan struct{}
+	once   sync.Once
+	paused atomic.Bool
 }
 
 // Notify wakes an idle worker, so a job enqueued from a web request starts
@@ -40,15 +42,35 @@ func (p *Pool) Notify() {
 
 func (p *Pool) init() {
 	p.once.Do(func() {
-		p.wake = make(chan struct{}, 1)
 		if p.Idle == 0 {
 			p.Idle = 5 * time.Second
 		}
 		if p.Workers < 1 {
 			p.Workers = 1
 		}
+		// Room for one signal per worker, so Resume can wake them all.
+		p.wake = make(chan struct{}, p.Workers)
 	})
 }
+
+// Pause stops workers taking new jobs. Jobs already running finish; queued
+// ones wait. It lasts until Resume or a restart.
+func (p *Pool) Pause() { p.paused.Store(true) }
+
+// Resume lets workers take jobs again and wakes them at once.
+func (p *Pool) Resume() {
+	p.init()
+	p.paused.Store(false)
+	for range p.Workers {
+		select {
+		case p.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// Paused reports whether the pool is paused.
+func (p *Pool) Paused() bool { return p.paused.Load() }
 
 // Run starts the workers and blocks until ctx is cancelled.
 func (p *Pool) Run(ctx context.Context) {
@@ -76,9 +98,12 @@ func (p *Pool) work(ctx context.Context, id int) {
 		if ctx.Err() != nil {
 			return
 		}
-		job, err := p.Queue.Claim(ctx)
-		if err != nil {
-			slog.Error("claim job", "worker", id, "err", err)
+		var job *Job
+		if !p.paused.Load() {
+			var err error
+			if job, err = p.Queue.Claim(ctx); err != nil {
+				slog.Error("claim job", "worker", id, "err", err)
+			}
 		}
 		if job == nil {
 			select {
