@@ -99,7 +99,15 @@ func (s *Server) renderEvent(ctx context.Context, e jobs.Event) (string, string)
 			renderToString(ctx, ui.ChapterRow(ch))
 
 	case "series-updated":
-		return "queue", e.Message
+		// The footer replaces its whole element with a "queue" event, so this
+		// sends the footer itself, refreshed now that a check has finished and
+		// may have queued downloads. Plain text here would remove the element
+		// and stop the footer updating until the page was reloaded.
+		q, err := s.App.Store.Queue(ctx)
+		if err != nil {
+			return "", ""
+		}
+		return "queue", renderToString(ctx, ui.QueueStatus(q))
 
 	case "site-indexed":
 		// The status line reports itself while a read runs, so a reader
