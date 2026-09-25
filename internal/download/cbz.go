@@ -47,9 +47,6 @@ func (c Chapter) Path(root string) string {
 	return filepath.Join(root, Sanitize(c.Series), c.Filename())
 }
 
-// maxLabel caps the chapter name added to a file name that needs one.
-const maxLabel = 80
-
 // Candidates lists the paths this chapter may be written to, preferred first.
 //
 // Two chapters can parse to the same number: seasons that restart their
@@ -63,22 +60,33 @@ const maxLabel = 80
 func (c Chapter) Candidates(root, key string) []string {
 	dir := filepath.Join(root, Sanitize(c.Series))
 	stem := strings.TrimSuffix(c.Filename(), ".cbz")
-	out := []string{filepath.Join(dir, stem+".cbz")}
-	label := ""
-	if strings.TrimSpace(c.Name) != "" {
-		label = " - " + truncateRunes(Sanitize(c.Name), maxLabel)
-		out = append(out, filepath.Join(dir, stem+label+".cbz"))
-	}
 	sum := sha256.Sum256([]byte(key))
-	return append(out, filepath.Join(dir, fmt.Sprintf("%s%s [%x].cbz", stem, label, sum[:4])))
+	hash := fmt.Sprintf(" [%x]", sum[:4])
+	out := []string{filepath.Join(dir, stem+".cbz")}
+
+	// The chapter's name gets whatever the file name has left under maxName
+	// once the stem, the hash and the extension are counted, so even the
+	// longest candidate fits. A name with no room left is skipped.
+	label := ""
+	if room := maxName - len(stem) - len(" - ") - len(hash) - len(".cbz"); room > 0 && strings.TrimSpace(c.Name) != "" {
+		if name := truncateBytes(Sanitize(c.Name), room); name != "" {
+			label = " - " + name
+			out = append(out, filepath.Join(dir, stem+label+".cbz"))
+		}
+	}
+	return append(out, filepath.Join(dir, stem+label+hash+".cbz"))
 }
 
-// truncateRunes shortens s to at most n runes, never splitting one.
-func truncateRunes(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
+// truncateBytes shortens s to at most n bytes without splitting a
+// character, so the result stays valid UTF-8.
+func truncateBytes(s string, n int) string {
+	if len(s) <= n {
 		return s
 	}
-	return strings.TrimSpace(string([]rune(s)[:n]))
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return strings.TrimSpace(s[:n])
 }
 
 // illegal matches the characters that are unsafe in a filename on either Linux
@@ -93,11 +101,16 @@ func Sanitize(s string) string {
 	if s == "" {
 		return "Unknown"
 	}
-	if len(s) > 200 {
-		s = strings.TrimSpace(s[:200])
-	}
-	return s
+	return strings.TrimRight(truncateBytes(s, maxTitle), ". ")
 }
+
+// maxTitle caps a sanitised title, in bytes, leaving room within maxName for
+// the rest of a chapter's file name.
+const maxTitle = 200
+
+// maxName is the longest file name, in bytes, that ext4, btrfs and most
+// other filesystems accept.
+const maxName = 255
 
 // WriteCBZ writes pages into a CBZ at path, with the metadata a library
 // server reads.
