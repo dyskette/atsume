@@ -13,7 +13,9 @@ templ Layout(title string) {
 			<title>{ title } — atsume</title>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
+			<script src="/static/live.js"></script>
 			<script src="/static/htmx-sse.js"></script>
+			<script src="/static/menu.js" defer></script>
 		</head>
 		<body hx-ext="sse" sse-connect="/events">
 			<header>
@@ -33,13 +35,15 @@ templ Layout(title string) {
 			<footer>
 				<div class="bar">
 					<!-- Fetches its own state on load so a page opened mid-download is
-					     correct immediately, then follows the stream. -->
+					     correct immediately, then follows the stream. Updates replace
+					     what is inside, never the element, which would miss an update
+					     sent before htmx listens on its replacement. -->
 					<span
 						id="queue-status"
 						class="queue"
 						hx-get="/queue"
 						hx-trigger="load"
-						hx-swap="outerHTML"
+						hx-swap="innerHTML"
 						sse-swap="queue"
 					></span>
 				</div>

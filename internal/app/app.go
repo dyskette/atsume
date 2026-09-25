@@ -582,6 +582,9 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	a.active.start(ch.ID, cancel)
+	// Each way out also leaves the registry before announcing the chapter's
+	// new state, so the pages shown for running downloads never include one
+	// that has already ended.
 	defer a.active.finish(ch.ID)
 
 	// Record the failure on the chapter as well as the job, so the UI can show
@@ -589,6 +592,7 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 	// cancelled download is not a failure: the chapter goes back to not
 	// downloaded, and the job completes so it is not retried.
 	fail := func(err error) error {
+		a.active.finish(ch.ID)
 		if errors.Is(context.Cause(ctx), errCancelled) {
 			slog.Info("download cancelled", "series", series.Title, "chapter", ch.Name)
 			return a.resetChapter(jobCtx, ch.ID)
@@ -645,6 +649,7 @@ func (a *App) downloadChapter(ctx context.Context, raw json.RawMessage) error {
 		return fail(err)
 	}
 
+	a.active.finish(ch.ID)
 	if err := a.Store.SetChapterState(ctx, ch.ID, store.ChapterDone, path, "", len(pages)); err != nil {
 		return err
 	}

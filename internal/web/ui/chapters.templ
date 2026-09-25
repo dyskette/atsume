@@ -1,0 +1,284 @@
+package ui
+
+import (
+	"fmt"
+
+	"github.com/dyskette/atsume/internal/store"
+)
+
+// chapterList is the chapter list of a series, filtered, sorted and limited,
+// or the empty state that explains why there is nothing to show.
+templ chapterList(v SeriesView) {
+	<div class="list-head">
+		<h2>Chapters <span class="count">{ fmt.Sprintf("%d", v.ChapterTotal()) }</span></h2>
+		if v.ChapterTotal() > 0 {
+			<nav class="filters" aria-label="Show chapters">
+				@filterTab(v, FilterAll, "All", v.ChapterTotal())
+				@filterTab(v, FilterDownloaded, "Downloaded", v.DownloadedCount())
+				@filterTab(v, FilterNotDownloaded, "Not downloaded", v.NotDownloadedCount())
+			</nav>
+			<a class="sort" href={ templ.SafeURL(v.ListURL(v.Filter, !v.Oldest, v.ShowAll)) }>
+				⇅
+				if v.Oldest {
+					Oldest first
+				} else {
+					Newest first
+				}
+			</a>
+		}
+	</div>
+	switch {
+		case v.ChapterTotal() == 0:
+			@noChapters(v)
+		case v.FilteredTotal() == 0 && v.Filter == FilterDownloaded:
+			@nothingDownloaded(v)
+		case v.FilteredTotal() == 0:
+			@caughtUp(v)
+		default:
+			<div class="chapter-panel">
+				<ul class="rows chapters">
+					if v.Tracked() {
+						for _, c := range v.VisibleChapters() {
+							@ChapterRow(c, v.Missing[c.ID], v.Rows[c.ID])
+						}
+					} else {
+						for _, c := range v.VisibleListed() {
+							@listedChapterRow(v, c)
+						}
+					}
+				</ul>
+				if v.Hidden() > 0 {
+					<a class="show-all" href={ templ.SafeURL(v.ListURL(v.Filter, v.Oldest, true)) }>
+						{ fmt.Sprintf("Show all %d chapters", v.FilteredTotal()) }
+					</a>
+				}
+			</div>
+	}
+}
+
+templ filterTab(v SeriesView, filter, label string, n int) {
+	<a class={ "tab", templ.KV("on", v.Filter == filter) } href={ templ.SafeURL(v.ListURL(filter, v.Oldest, false)) }>
+		{ label } <span class="n">{ fmt.Sprintf("%d", n) }</span>
+	</a>
+}
+
+// ChapterRow is one stored chapter. Every row keeps the same layout as the
+// chapter moves between states: the status sits in a fixed-width column and
+// the one action in a fixed slot, ↓ before download, ✕ while queued or
+// downloading, ⋯ once done, so rows do not shift as they change.
+//
+// Updates replace what is inside the row, never the row: a replaced row
+// misses any event sent before htmx listens on its successor, and a download's
+// last page and its "done" arrive together.
+templ ChapterRow(c store.Chapter, missing bool, st RowState) {
+	<li
+		id={ fmt.Sprintf("chapter-%d", c.ID) }
+		class="chapter"
+		sse-swap={ fmt.Sprintf("chapter-%d", c.ID) }
+		hx-swap="innerHTML"
+	>
+		@ChapterRowBody(c, missing, st)
+	</li>
+}
+
+// ChapterRowBody is what a chapter row holds, swapped in as it changes.
+templ ChapterRowBody(c store.Chapter, missing bool, st RowState) {
+	<span class={ "title", templ.KV("gone", missing) }>{ c.Name }</span>
+	<span class="state">
+		@rowStatus(c, missing, st)
+	</span>
+	<span class="slot">
+		@rowAction(c, missing)
+	</span>
+}
+
+// rowStatus says where a chapter stands. A queued chapter shows its place in
+// line and no page count, since how many pages it has is not known until its
+// page list is fetched; a running one shows "Fetching page list…" until then.
+templ rowStatus(c store.Chapter, missing bool, st RowState) {
+	switch {
+		case missing:
+			<span class="warn" title={ c.FilePath }>File is gone</span>
+		case c.State == store.ChapterDone:
+			<span class="ok">
+				if c.Pages > 0 {
+					{ fmt.Sprintf("✓ %d pages", c.Pages) }
+				} else {
+					✓ Downloaded
+				}
+			</span>
+		case c.State == store.ChapterDownloading && st.Total > 0:
+			<span class="label">Downloading</span>
+			<progress value={ fmt.Sprintf("%d", st.Done) } max={ fmt.Sprintf("%d", st.Total) }></progress>
+			<span class="pages">{ fmt.Sprintf("%d / %d", st.Done, st.Total) }</span>
+		case c.State == store.ChapterDownloading:
+			<span class="label">Fetching page list…</span>
+			<progress value="0" max="1"></progress>
+			<span class="pages"></span>
+		case c.State == store.ChapterQueued:
+			<span class="queued">{ st.QueueLabel() }</span>
+		case c.State == store.ChapterFailed:
+			<span class="err" title={ c.Error }>Failed</span>
+	}
+}
+
+// rowAction is the one action a chapter's state allows.
+templ rowAction(c store.Chapter, missing bool) {
+	switch {
+		case !missing && (c.State == store.ChapterQueued || c.State == store.ChapterDownloading):
+			<button type="button" class="icon quiet" title="Cancel" hx-post={ fmt.Sprintf("/chapters/%d/cancel", c.ID) } hx-target="closest li" hx-swap="innerHTML">✕</button>
+		case !missing && c.State == store.ChapterDone:
+			<details class="row-menu">
+				<summary class="icon" title="More">⋯</summary>
+				<div class="menu-items">
+					<button type="button" hx-post={ fmt.Sprintf("/chapters/%d/download", c.ID) } hx-target="closest li.chapter" hx-swap="innerHTML">Download again</button>
+				</div>
+			</details>
+		default:
+			<button type="button" class="icon" title="Download" hx-post={ fmt.Sprintf("/chapters/%d/download", c.ID) } hx-target="closest li" hx-swap="innerHTML">↓</button>
+	}
+}
+
+// listedChapterRow is a chapter of a series not in the library. Downloading
+// it saves the series, so the page reloads as a library series.
+templ listedChapterRow(v SeriesView, c ListedChapter) {
+	<li class="chapter">
+		<span class="title">{ c.Name }</span>
+		<span class="state"></span>
+		<span class="slot">
+			<form hx-post={ "/modules/" + v.Module + "/series/download" }>
+				<input type="hidden" name="url" value={ v.SeriesURL }/>
+				<input type="hidden" name="chapter" value={ c.URL }/>
+				<button type="submit" class="icon" title="Download">↓</button>
+			</form>
+		</span>
+	</li>
+}
+
+// noChapters explains an empty chapter list. For a series in the library it
+// tells an unchecked series from one that needs an account from one whose
+// site has published nothing, because each calls for a different action.
+templ noChapters(v SeriesView) {
+	<div class="empty">
+		<span class="empty-icon">
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h6a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H3z"></path><path d="M21 5h-6a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h7z"></path></svg>
+		</span>
+		if !v.Tracked() {
+			<strong>No chapters on { v.Series.ModuleName } yet</strong>
+			<p>
+				This series is listed but hasn’t published anything. Follow it and
+				atsume will download chapter 1 the moment it appears.
+			</p>
+			<div class="actions center">
+				@followButton(v)
+			</div>
+		} else if !v.Series.CheckedAt.Valid || (v.SiteNeedsLogin && !v.SiteHasCredentials) {
+			{{ headline, detail := v.ChaptersEmptyReason() }}
+			<strong>{ headline }</strong>
+			<p>{ detail }</p>
+			if v.SiteNeedsLogin && !v.SiteHasCredentials {
+				<p><a class="cta" href={ templ.SafeURL(v.SettingsURL()) }>Add an account for { v.Series.ModuleName }</a></p>
+			}
+		} else {
+			<strong>No chapters on { v.Series.ModuleName } yet</strong>
+			<p>
+				This series is listed but hasn’t published anything.
+				if v.Series.Subscribed {
+					atsume will download chapter 1 the moment it appears.
+				} else {
+					Follow it and atsume will download chapter 1 the moment it appears.
+				}
+			</p>
+			<div class="actions center">
+				if !v.Series.Subscribed {
+					@followButton(v)
+				}
+				<button type="button" hx-post={ fmt.Sprintf("/series/%d/refresh", v.Series.ID) } hx-swap="none">Check again</button>
+			</div>
+			<p class="muted">{ "Checked " + ago(v.Series.CheckedAt.Time) }</p>
+		}
+	</div>
+}
+
+// nothingDownloaded is the Downloaded filter with nothing in it.
+templ nothingDownloaded(v SeriesView) {
+	<div class="empty">
+		<span class="empty-icon accent">↓</span>
+		<strong>No chapters downloaded yet</strong>
+		<p>
+			if v.Series.Subscribed {
+				Following only picks up chapters published from now on. The
+				{ fmt.Sprintf("%d", v.ChapterTotal()) } already listed are yours to download whenever you like.
+			} else {
+				Download any chapter to keep it, or all { fmt.Sprintf("%d", v.ChapterTotal()) } at once.
+			}
+		</p>
+		<div class="actions center">
+			@downloadAllFromEmpty(v)
+			@startWithFirst(v)
+		</div>
+		<a href={ templ.SafeURL(v.ListURL(FilterAll, v.Oldest, false)) }>Show all chapters</a>
+	</div>
+}
+
+// downloadAllFromEmpty and startWithFirst queue downloads from the
+// Downloaded filter, then show the whole list, where they appear.
+templ downloadAllFromEmpty(v SeriesView) {
+	if !v.Tracked() {
+		<form hx-post={ "/modules/" + v.Module + "/series/download" }>
+			<input type="hidden" name="url" value={ v.SeriesURL }/>
+			<button type="submit" class="primary">{ fmt.Sprintf("Download all %d", v.ToDownload()) }</button>
+		</form>
+	} else {
+		<button
+			type="button"
+			class="primary"
+			hx-post={ fmt.Sprintf("/series/%d/download", v.Series.ID) }
+			hx-swap="none"
+			data-next={ v.ListURL(FilterAll, v.Oldest, false) }
+			hx-on::after-request="location.href = this.dataset.next"
+		>{ fmt.Sprintf("Download all %d", v.ToDownload()) }</button>
+	}
+}
+
+templ startWithFirst(v SeriesView) {
+	{{ stored, listed, ok := v.FirstToDownload() }}
+	if ok && !v.Tracked() {
+		<form hx-post={ "/modules/" + v.Module + "/series/download" }>
+			<input type="hidden" name="url" value={ v.SeriesURL }/>
+			<input type="hidden" name="chapter" value={ listed.URL }/>
+			<button type="submit">{ "Start with " + listed.Name }</button>
+		</form>
+	} else if ok {
+		<button
+			type="button"
+			hx-post={ fmt.Sprintf("/chapters/%d/download", stored.ID) }
+			hx-swap="none"
+			data-next={ v.ListURL(FilterAll, true, false) }
+			hx-on::after-request="location.href = this.dataset.next"
+		>{ "Start with " + stored.Name }</button>
+	}
+}
+
+// caughtUp is the Not downloaded filter with nothing in it.
+templ caughtUp(v SeriesView) {
+	<div class="empty">
+		<span class="empty-icon ok">✓</span>
+		<strong>You’re all caught up</strong>
+		<p>
+			{ fmt.Sprintf("All %d chapters are downloaded.", v.ChapterTotal()) }
+			if v.Series.Subscribed {
+				New ones download automatically when { v.Series.ModuleName } publishes them.
+			} else {
+				Follow the series to get new ones automatically.
+			}
+		</p>
+		if v.Series.Subscribed && v.Series.CheckedAt.Valid {
+			<p class="muted">
+				{ "Checked " + ago(v.Series.CheckedAt.Time) + " · " }
+				<button type="button" class="link" hx-post={ fmt.Sprintf("/series/%d/refresh", v.Series.ID) } hx-swap="none">Check now</button>
+			</p>
+		}
+		<a href={ templ.SafeURL(v.ListURL(FilterAll, v.Oldest, false)) }>Show all chapters</a>
+	</div>
+}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dyskette/atsume/internal/app"
+	"github.com/dyskette/atsume/internal/jobs"
 	"github.com/dyskette/atsume/internal/scraper"
 	"github.com/dyskette/atsume/internal/store"
 	"github.com/dyskette/atsume/internal/web/ui"
@@ -250,7 +251,50 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.SeriesPage(s.seriesView(r.Context(), series, chapters)))
+	v := s.seriesView(r.Context(), series, chapters)
+	listOptions(r, &v)
+	s.render(w, r, ui.SeriesPage(v))
+}
+
+// listOptions reads how the chapter list is shown from the address: which
+// chapters, in which order, and whether all of them.
+func listOptions(r *http.Request, v *ui.SeriesView) {
+	q := r.URL.Query()
+	switch f := q.Get("filter"); f {
+	case ui.FilterDownloaded, ui.FilterNotDownloaded:
+		v.Filter = f
+	}
+	v.Oldest = q.Get("sort") == "oldest"
+	v.ShowAll = q.Get("all") == "1"
+}
+
+// rowStates gives every chapter its place in line or download progress.
+func (s *Server) rowStates(ctx context.Context) map[int64]ui.RowState {
+	out := map[int64]ui.RowState{}
+	if positions, err := s.App.QueuePositions(ctx); err == nil {
+		for id, p := range positions {
+			out[id] = ui.RowState{Position: p}
+		}
+	}
+	for id, p := range s.App.ActiveDownloads() {
+		out[id] = ui.RowState{Active: true, Done: p.Done, Total: p.Total}
+	}
+	return out
+}
+
+// rowState is one chapter's place in line or download progress.
+func (s *Server) rowState(ctx context.Context, c store.Chapter) ui.RowState {
+	switch c.State {
+	case store.ChapterDownloading:
+		if p, ok := s.App.ActiveDownloads()[c.ID]; ok {
+			return ui.RowState{Active: true, Done: p.Done, Total: p.Total}
+		}
+	case store.ChapterQueued:
+		if positions, err := s.App.QueuePositions(ctx); err == nil {
+			return ui.RowState{Position: positions[c.ID]}
+		}
+	}
+	return ui.RowState{}
 }
 
 // seriesView assembles what the series page renders.
@@ -263,6 +307,7 @@ func (s *Server) seriesView(ctx context.Context, series store.Series, chapters [
 		CheckInterval: s.App.Cfg.CheckInterval,
 		Missing:       s.App.MissingFiles(chapters),
 		SiteURL:       s.App.SiteLink(ctx, series.Key(), series.URL),
+		Rows:          s.rowStates(ctx),
 	}
 	if info, ok := s.App.SiteInfo(ctx, series.Key()); ok {
 		v.SiteNeedsLogin = info.NeedsLogin
@@ -339,7 +384,28 @@ func (s *Server) handleDownloadChapter(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.ChapterRow(chapter))
+	s.render(w, r, ui.ChapterRowBody(chapter, false, s.rowState(r.Context(), chapter)))
+}
+
+// handleCancelChapter takes a chapter out of the queue or stops its download.
+// A running download resets the chapter as it returns, and the live update
+// brings that row; the reply is the row as it stands now.
+func (s *Server) handleCancelChapter(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.App.CancelChapter(r.Context(), id); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	chapter, err := s.App.Store.GetChapter(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.ChapterRowBody(chapter, false, s.rowState(r.Context(), chapter)))
 }
 
 func (s *Server) handleModuleSettings(w http.ResponseWriter, r *http.Request) {
@@ -445,7 +511,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	if e, ok := s.App.SiteInfo(r.Context(), module); ok {
 		siteName = e.Site
 	}
-	s.render(w, r, ui.SeriesPage(ui.SeriesView{
+	v := ui.SeriesView{
 		Series: store.Series{
 			ModuleKey: module, ModuleName: siteName, URL: seriesURL,
 			Title: info.Title, CoverURL: info.CoverLink, Authors: info.Authors,
@@ -457,7 +523,9 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		Destination:   s.App.SeriesDestination(info.Title),
 		SiteURL:       s.App.SiteLink(r.Context(), module, seriesURL),
 		CheckInterval: s.App.Cfg.CheckInterval,
-	}))
+	}
+	listOptions(r, &v)
+	s.render(w, r, ui.SeriesPage(v))
 }
 
 // handleFollowFromPage follows a series from its page. The series and its
@@ -657,11 +725,36 @@ func (s *Server) handleCheckNow(w http.ResponseWriter, r *http.Request) {
 
 // handleQueue serves the status line, which the footer fetches on load.
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
-	q, err := s.App.Store.Queue(r.Context())
+	s.render(w, r, ui.QueueStatus(s.queueView(r.Context())))
+}
+
+// handlePauseQueue stops new downloads from starting; running ones finish.
+func (s *Server) handlePauseQueue(w http.ResponseWriter, r *http.Request) {
+	s.App.PauseQueue()
+	s.App.Bus.Publish(jobs.Event{Kind: "queue-updated"})
+	s.render(w, r, ui.QueueStatus(s.queueView(r.Context())))
+}
+
+// handleResumeQueue lets queued downloads start again.
+func (s *Server) handleResumeQueue(w http.ResponseWriter, r *http.Request) {
+	s.App.ResumeQueue()
+	s.App.Bus.Publish(jobs.Event{Kind: "queue-updated"})
+	s.render(w, r, ui.QueueStatus(s.queueView(r.Context())))
+}
+
+// queueView gathers what the footer shows. The counts come from the store,
+// the pages from the downloads running in this process.
+func (s *Server) queueView(ctx context.Context) ui.QueueView {
+	q, err := s.App.Store.Queue(ctx)
 	if err != nil {
 		slog.Error("queue status", "err", err)
 	}
-	s.render(w, r, ui.QueueStatus(q))
+	v := ui.QueueView{QueueStatus: q, Paused: s.App.QueuePaused()}
+	for _, p := range s.App.ActiveDownloads() {
+		v.Done += p.Done
+		v.Total += p.Total
+	}
+	return v
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

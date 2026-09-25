@@ -10,25 +10,23 @@ import (
 	"github.com/dyskette/atsume/internal/store"
 )
 
-// TestQueueEventsCarryTheFooter covers the footer's live update. The footer
-// replaces its whole element with each "queue" event, so every one must carry
-// that element; plain text would remove it and the footer would stop updating
-// until the page was reloaded.
+// TestQueueEventsCarryTheFooter covers the footer's live update: a check
+// finishing sends the footer's contents as a "queue" event.
 func TestQueueEventsCarryTheFooter(t *testing.T) {
 	st, err := store.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	s := &Server{App: &app.App{Store: st}}
+	s := &Server{App: &app.App{Store: st, Pool: &jobs.Pool{}}}
 
-	name, html := s.renderEvent(context.Background(), jobs.Event{
+	evs := s.renderEvent(context.Background(), jobs.Event{
 		Kind: "series-updated", SeriesID: 1, State: "done", Message: "Solo Leveling: 2 new chapters",
 	})
-	if name != "queue" {
-		t.Fatalf("event %q, want queue", name)
+	if len(evs) != 1 || evs[0].name != "queue" {
+		t.Fatalf("events %v, want one queue event", evs)
 	}
-	if !strings.Contains(html, `id="queue-status"`) {
-		t.Errorf("a queue event must carry the footer element, got %q", html)
+	if html := evs[0].html; !strings.Contains(html, "Nothing in progress") {
+		t.Errorf("a queue event must carry the footer's status, got %q", html)
 	}
 }

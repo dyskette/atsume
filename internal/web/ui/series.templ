@@ -129,64 +129,6 @@ templ seriesMenu(v SeriesView) {
 	</details>
 }
 
-// chapterList is the chapters as stored for a series in the library, or as
-// the site lists them for one that is not.
-templ chapterList(v SeriesView) {
-	<div class="head">
-		<h2>Chapters <span class="count">{ fmt.Sprintf("%d", v.ChapterTotal()) }</span></h2>
-	</div>
-	if v.ChapterTotal() == 0 {
-		if v.Tracked() {
-			@chaptersEmpty(v)
-		} else {
-			<div class="empty">
-				<strong>No chapters on { v.Series.ModuleName } yet</strong>
-				<p>
-					This series is listed but hasn’t published anything. Follow it and
-					atsume will download chapter 1 the moment it appears.
-				</p>
-			</div>
-		}
-	}
-	<ul class="rows chapters">
-		if v.Tracked() {
-			for _, c := range v.Chapters {
-				@ChapterRowState(c, v.Missing[c.ID])
-			}
-		} else {
-			for _, c := range v.Listed {
-				@listedChapterRow(v, c)
-			}
-		}
-	</ul>
-}
-
-// listedChapterRow is a chapter of a series not in the library. Downloading
-// it saves the series, so the page reloads as a library series.
-templ listedChapterRow(v SeriesView, c ListedChapter) {
-	<li class="chapter">
-		<span class="title">{ c.Name }</span>
-		<form hx-post={ "/modules/" + v.Module + "/series/download" }>
-			<input type="hidden" name="url" value={ v.SeriesURL }/>
-			<input type="hidden" name="chapter" value={ c.URL }/>
-			<button type="submit" title="Download">↓</button>
-		</form>
-	</li>
-}
-
-// chaptersEmpty distinguishes "never checked" from "checked and found none",
-// because the two call for completely different actions.
-templ chaptersEmpty(v SeriesView) {
-	{{ headline, detail := v.ChaptersEmptyReason() }}
-	<div class="empty">
-		<strong>{ headline }</strong>
-		<p>{ detail }</p>
-		if v.SiteNeedsLogin && !v.SiteHasCredentials {
-			<p><a class="cta" href={ templ.SafeURL(v.SettingsURL()) }>Add an account for { v.Series.ModuleName }</a></p>
-		}
-	</div>
-}
-
 // ConfirmRemove states exactly what removing does before it is done.
 //
 // The question a reader actually has is whether their files are about to go,

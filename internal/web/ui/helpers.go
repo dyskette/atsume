@@ -38,25 +38,6 @@ func previewURL(module, link string) string {
 	return SiteURL(module, "/preview?url="+escapeQueryValue(link))
 }
 
-// stateLabel renders a chapter's state for display.
-func stateLabel(c store.Chapter) string {
-	switch c.State {
-	case store.ChapterDone:
-		if c.Pages > 0 {
-			return fmt.Sprintf("%d pages", c.Pages)
-		}
-		return "done"
-	case store.ChapterDownloading:
-		return "downloading"
-	case store.ChapterQueued:
-		return "queued"
-	case store.ChapterFailed:
-		return "failed"
-	default:
-		return "pending"
-	}
-}
-
 // lastChecked renders when a series was last looked at, which is the only
 // signal that automatic checking is actually running.
 func lastChecked(s store.Series) string {
@@ -93,17 +74,36 @@ func passwordPlaceholder(s *app.ModuleSettings) string {
 	return ""
 }
 
-// queueBusyText says what is happening in the fewest words that are still
+// QueueView is what the footer shows: the chapters in flight, whether the
+// queue is paused, and how many pages the running downloads have in.
+type QueueView struct {
+	store.QueueStatus
+	Paused      bool
+	Done, Total int
+}
+
+// queueText says what is happening in the fewest words that are still
 // specific: a count alone reads as a number with no verb.
-func queueBusyText(q store.QueueStatus) string {
-	switch {
-	case q.Downloading > 0 && q.Queued > 0:
-		return fmt.Sprintf("Downloading %d, %d waiting", q.Downloading, q.Queued)
-	case q.Downloading > 0:
-		return fmt.Sprintf("Downloading %d", q.Downloading)
-	default:
-		return fmt.Sprintf("%d waiting to download", q.Queued)
+func queueText(v QueueView) string {
+	var parts []string
+	if v.Downloading > 0 {
+		if v.Paused {
+			parts = append(parts, fmt.Sprintf("%d finishing", v.Downloading))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d active", v.Downloading))
+		}
 	}
+	if v.Queued > 0 {
+		parts = append(parts, fmt.Sprintf("%d queued", v.Queued))
+	}
+	head := "Downloading"
+	if v.Paused {
+		head = "Paused"
+	}
+	if len(parts) == 0 {
+		return head
+	}
+	return head + " · " + strings.Join(parts, ", ")
 }
 
 // truncate shortens a message for inline display, keeping the full text in the
@@ -114,14 +114,6 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
-}
-
-// Progress renders the live progress line swapped in over SSE.
-func Progress(done, total int) string {
-	if total == 0 {
-		return "downloading"
-	}
-	return fmt.Sprintf("%d/%d pages", done, total)
 }
 
 // Count renders a number with its noun, pluralised. Writing "1 chapter(s)"

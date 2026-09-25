@@ -10,6 +10,7 @@ import (
 
 	"github.com/a-h/templ"
 	"github.com/dyskette/atsume/internal/jobs"
+	"github.com/dyskette/atsume/internal/store"
 	"github.com/dyskette/atsume/internal/web/ui"
 )
 
@@ -61,53 +62,60 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if !open {
 				return
 			}
-			if name, html := s.renderEvent(r.Context(), e); name != "" {
-				writeEvent(w, name, html)
+			for _, ev := range s.renderEvent(r.Context(), e) {
+				writeEvent(w, ev.name, ev.html)
 			}
 			// The status line is derived here rather than published by the
 			// worker: every event that matters to it is already on this
-			// stream, and recomputing once per page of a download would be
-			// a query per image.
-			if time.Since(lastStatus) > statusInterval {
+			// stream. Only page progress is throttled, since recomputing once
+			// per page would be a query per image; a chapter changing state
+			// always refreshes it, or a download finishing while the queue is
+			// paused would leave the footer saying it is still running.
+			if e.Kind != "chapter-progress" || time.Since(lastStatus) > statusInterval {
 				lastStatus = time.Now()
-				if q, err := s.App.Store.Queue(r.Context()); err == nil {
-					writeEvent(w, "queue", renderToString(r.Context(), ui.QueueStatus(q)))
-				}
+				writeEvent(w, "queue", renderToString(r.Context(), ui.QueueStatus(s.queueView(r.Context()))))
 			}
 			flusher.Flush()
 		}
 	}
 }
 
-// renderEvent turns a bus event into an SSE event name and its HTML payload.
-func (s *Server) renderEvent(ctx context.Context, e jobs.Event) (string, string) {
+// sseEvent is one event for the browser: the name an element swaps on, and
+// the HTML it swaps in.
+type sseEvent struct{ name, html string }
+
+// renderEvent turns a bus event into the events that update the page.
+func (s *Server) renderEvent(ctx context.Context, e jobs.Event) []sseEvent {
 	switch e.Kind {
 	case "chapter-progress":
 		ch, err := s.App.Store.GetChapter(ctx, e.ChapterID)
 		if err != nil {
-			return "", ""
+			return nil
 		}
-		return fmt.Sprintf("chapter-%d", e.ChapterID),
-			renderToString(ctx, ui.ChapterProgressRow(ch, e.Done, e.Total))
+		st := ui.RowState{Active: true, Done: e.Done, Total: e.Total}
+		return []sseEvent{{fmt.Sprintf("chapter-%d", e.ChapterID), renderToString(ctx, ui.ChapterRowBody(ch, false, st))}}
 
 	case "chapter-updated":
 		ch, err := s.App.Store.GetChapter(ctx, e.ChapterID)
 		if err != nil {
-			return "", ""
+			return nil
 		}
-		return fmt.Sprintf("chapter-%d", e.ChapterID),
-			renderToString(ctx, ui.ChapterRow(ch))
+		out := []sseEvent{{fmt.Sprintf("chapter-%d", e.ChapterID), renderToString(ctx, ui.ChapterRowBody(ch, false, s.rowState(ctx, ch)))}}
+		// A chapter leaving the queue, by starting or being cancelled, moves
+		// every one behind it up a place, so the rows that show their place
+		// are sent again.
+		if ch.State == store.ChapterDownloading || ch.State == store.ChapterPending {
+			out = append(out, s.queuedRows(ctx)...)
+		}
+		return out
 
-	case "series-updated":
+	case "series-updated", "queue-updated":
 		// The footer replaces its whole element with a "queue" event, so this
 		// sends the footer itself, refreshed now that a check has finished and
-		// may have queued downloads. Plain text here would remove the element
-		// and stop the footer updating until the page was reloaded.
-		q, err := s.App.Store.Queue(ctx)
-		if err != nil {
-			return "", ""
-		}
-		return "queue", renderToString(ctx, ui.QueueStatus(q))
+		// may have queued downloads, or the queue was paused or resumed. Plain
+		// text here would remove the element and stop the footer updating
+		// until the page was reloaded.
+		return []sseEvent{{"queue", renderToString(ctx, ui.QueueStatus(s.queueView(ctx)))}}
 
 	case "site-indexed":
 		// The status line reports itself while a read runs, so a reader
@@ -115,7 +123,7 @@ func (s *Server) renderEvent(ctx context.Context, e jobs.Event) (string, string)
 		// stopped meaning anything after three seconds.
 		info, err := s.App.Store.SiteCatalogueInfo(ctx, e.Site)
 		if err != nil {
-			return "", ""
+			return nil
 		}
 		info.Note = e.Message
 		v := ui.BrowseView{
@@ -123,9 +131,30 @@ func (s *Server) renderEvent(ctx context.Context, e jobs.Event) (string, string)
 			Catalogue: info,
 			Indexing:  e.State == "working",
 		}
-		return "site-" + e.Site, renderToString(ctx, ui.CatalogueStatus(v))
+		return []sseEvent{{"site-" + e.Site, renderToString(ctx, ui.CatalogueStatus(v))}}
 	}
-	return "", ""
+	return nil
+}
+
+// queuedRows renders the queued chapters near enough the front of the queue
+// to show their place in it.
+func (s *Server) queuedRows(ctx context.Context) []sseEvent {
+	positions, err := s.App.QueuePositions(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []sseEvent
+	for id, p := range positions {
+		if !ui.NumberedPosition(p) {
+			continue // said plain "Queued" before and still does
+		}
+		ch, err := s.App.Store.GetChapter(ctx, id)
+		if err != nil || ch.State != store.ChapterQueued {
+			continue
+		}
+		out = append(out, sseEvent{fmt.Sprintf("chapter-%d", id), renderToString(ctx, ui.ChapterRowBody(ch, false, ui.RowState{Position: p}))})
+	}
+	return out
 }
 
 // renderToString renders a component into a string for embedding in an event.
