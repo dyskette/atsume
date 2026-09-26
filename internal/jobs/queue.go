@@ -86,7 +86,7 @@ func (q *Queue) Fail(ctx context.Context, j *Job, cause error) error {
 	delay := time.Duration(1<<uint(j.Attempts)) * time.Minute
 	_, err := q.db.ExecContext(ctx,
 		`UPDATE jobs SET state = 'pending', error = ?, run_after = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		cause.Error(), time.Now().Add(delay), j.ID)
+		cause.Error(), sqlTime(time.Now().Add(delay)), j.ID)
 	return err
 }
 
@@ -179,3 +179,9 @@ func (q *Queue) ResetRunning(ctx context.Context) (int64, error) {
 	n, _ := res.RowsAffected()
 	return n, nil
 }
+
+// sqlTime formats t the way SQLite's CURRENT_TIMESTAMP does, in UTC, so the
+// two compare as text. The driver's own format for a time.Time carries a "T"
+// and a local offset, and compared against CURRENT_TIMESTAMP that made a
+// retry wait until midnight UTC or run at once, depending on the hour.
+func sqlTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") }

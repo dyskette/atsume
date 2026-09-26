@@ -110,3 +110,42 @@ func TestPauseHoldsNewJobs(t *testing.T) {
 		t.Errorf("%d of 2 jobs ran after resuming", n)
 	}
 }
+
+// TestFailedJobWaitsOutItsBackoff covers the retry delay in any time zone:
+// a job that failed is not claimed again until its backoff has passed.
+func TestFailedJobWaitsOutItsBackoff(t *testing.T) {
+	for _, zone := range []string{"UTC", "America/Mexico_City", "Asia/Tokyo"} {
+		t.Run(zone, func(t *testing.T) {
+			loc, err := time.LoadLocation(zone)
+			if err != nil {
+				t.Skip(err)
+			}
+			saved := time.Local
+			time.Local = loc
+			t.Cleanup(func() { time.Local = saved })
+
+			q, ctx := newQueue(t), context.Background()
+			if _, err := q.Enqueue(ctx, "x", struct{}{}); err != nil {
+				t.Fatal(err)
+			}
+			j, err := q.Claim(ctx)
+			if err != nil || j == nil {
+				t.Fatalf("claim: %v %v", j, err)
+			}
+			if err := q.Fail(ctx, j, context.DeadlineExceeded); err != nil {
+				t.Fatal(err)
+			}
+			if again, err := q.Claim(ctx); err != nil || again != nil {
+				t.Errorf("a failed job was claimed again at once: %v %v", again, err)
+			}
+			// Once its time has come, it runs.
+			if _, err := q.db.ExecContext(ctx,
+				`UPDATE jobs SET run_after = datetime('now', '-1 second') WHERE id = ?`, j.ID); err != nil {
+				t.Fatal(err)
+			}
+			if again, err := q.Claim(ctx); err != nil || again == nil {
+				t.Errorf("a job past its backoff was not claimed: %v %v", again, err)
+			}
+		})
+	}
+}
