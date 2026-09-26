@@ -1479,6 +1479,72 @@ func TestSiteCatalogueIsKept(t *testing.T) {
 	}
 }
 
+// TestEmptyReadKeepsTheList covers a read that finishes without error but
+// finds nothing, which is what a site's layout change or a challenge page
+// served as 200 looks like to a module. Taking that at its word would remove
+// every title already stored.
+func TestEmptyReadKeepsTheList(t *testing.T) {
+	var empty atomic.Bool
+	inner := sectionedSite(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if empty.Load() {
+			fmt.Fprint(w, "<html><body>Something changed</body></html>")
+			return
+		}
+		res, err := http.Get(inner.URL + r.URL.RequestURI())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(srv.Close)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	read := func() store.SiteCatalogue {
+		t.Helper()
+		if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, ctx, func() bool {
+			stats, _ := a.Queue.Stats(ctx)
+			return stats["pending"] == 0 && stats["running"] == 0
+		}, "the read")
+		info, err := st.SiteCatalogueInfo(ctx, "Sectioned")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+
+	first := read()
+	if first.Titles != 4 || !first.Complete {
+		t.Fatalf("first read: %d titles, complete=%v", first.Titles, first.Complete)
+	}
+
+	empty.Store(true)
+	info := read()
+	if info.Titles != 4 {
+		t.Errorf("an empty read left %d titles, want the 4 already stored", info.Titles)
+	}
+	if info.Complete {
+		t.Error("an empty read over a stored list should not count as complete")
+	}
+	if !info.DataAt.Equal(first.DataAt) || info.Source != first.Source {
+		t.Errorf("kept titles dated %v from %q, want %v from %q", info.DataAt, info.Source, first.DataAt, first.Source)
+	}
+	if !strings.Contains(info.Note, "kept") {
+		t.Errorf("note = %q, want it to say the titles were kept", info.Note)
+	}
+
+	// Once the site lists titles again, a read replaces the list as usual.
+	empty.Store(false)
+	if info := read(); info.Titles != 4 || !info.Complete {
+		t.Errorf("read after recovery: %d titles, complete=%v", info.Titles, info.Complete)
+	}
+}
+
 // countingSite is the sectioned test site with a request counter, so a test
 // can tell whether looking at a catalogue went back to the network.
 func countingSite(t *testing.T, reads *atomic.Int32) *httptest.Server {

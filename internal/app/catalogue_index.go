@@ -161,8 +161,21 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 	}
 
 	note := fmt.Sprintf("%s in %s", plural(seq, "title"), humanElapsed(time.Since(startedAt)))
-	if err := a.Store.FinishSiteCatalogue(ctx, p.Site, true, note,
-		store.SourceSite, time.Now(), read); err != nil {
+	complete, source, dataAt := true, store.SourceSite, time.Now()
+	// A read that finds nothing on a site that listed titles before is more
+	// likely a changed layout, or a challenge page served as 200, than a
+	// site that emptied overnight. Finishing it as complete would remove
+	// every stored title, so the list is kept, still saying where it came
+	// from and how old it is, and the read is marked incomplete.
+	if seq == 0 {
+		if before, err := a.Store.SiteCatalogueInfo(ctx, p.Site); err == nil && before.Titles > 0 {
+			complete, source, dataAt = false, before.Source, before.DataAt
+			note = fmt.Sprintf("the site listed no titles, so the %s from before were kept",
+				plural(before.Titles, "title"))
+		}
+	}
+	if err := a.Store.FinishSiteCatalogue(ctx, p.Site, complete, note,
+		source, dataAt, read); err != nil {
 		return err
 	}
 	slog.Info("site catalogue read", "site", p.Site, "titles", seq, "took", time.Since(startedAt))
