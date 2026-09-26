@@ -17,12 +17,17 @@ templ QueueStatus(v QueueView) {
 		case v.Busy():
 			<span class="dot working"></span>
 			<span>{ queueText(v) }</span>
+		case len(v.Reading) > 0:
+			<span class="dot working"></span>
 		case v.Failed > 0:
 			<span class="dot bad"></span>
 			<span>Nothing in progress</span>
 		default:
 			<span class="dot"></span>
 			<span>Nothing in progress</span>
+	}
+	if t := readingText(v); t != "" {
+		<span>{ t }</span>
 	}
 	if v.Total > 0 {
 		<progress value={ fmt.Sprintf("%d", v.Done) } max={ fmt.Sprintf("%d", v.Total) }></progress>

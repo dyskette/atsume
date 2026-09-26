@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -754,6 +755,10 @@ func (s *Server) queueView(ctx context.Context) ui.QueueView {
 		v.Done += p.Done
 		v.Total += p.Total
 	}
+	for site := range s.App.ActiveReads() {
+		v.Reading = append(v.Reading, site)
+	}
+	slices.Sort(v.Reading)
 	return v
 }
 

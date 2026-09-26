@@ -301,7 +301,12 @@ func (a *App) readEstimate(ctx context.Context, site string, before store.SiteCa
 }
 
 // publishIndex tells anyone watching the site page how the read is going.
+// A read that has ended leaves the running reads first, so what the event
+// triggers — the footer among it — no longer counts it.
 func (a *App) publishIndex(site, state, message string, p ReadProgress) {
+	if state != "working" {
+		a.reads.finish(site)
+	}
 	a.Bus.Publish(jobs.Event{
 		Kind: "site-indexed", State: state, Message: message,
 		Site: site, Done: p.Page, Total: p.Estimate,

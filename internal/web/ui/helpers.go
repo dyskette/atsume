@@ -80,6 +80,26 @@ type QueueView struct {
 	store.QueueStatus
 	Paused      bool
 	Done, Total int
+	// Reading is the sites whose catalogue is being read.
+	Reading []string
+}
+
+// readingText names the catalogue reads running, "" when there are none,
+// set off from the downloads when there are some.
+func readingText(v QueueView) string {
+	var t string
+	switch len(v.Reading) {
+	case 0:
+		return ""
+	case 1:
+		t = "Reading " + v.Reading[0] + " catalogue"
+	default:
+		t = fmt.Sprintf("Reading %d catalogues", len(v.Reading))
+	}
+	if v.Busy() || v.Paused {
+		t = "· " + t
+	}
+	return t
 }
 
 // queueText says what is happening in the fewest words that are still
