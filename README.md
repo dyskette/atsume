@@ -117,6 +117,18 @@ cookie and user agent it earns are carried forward. It is consulted only after a
 refusal that actually looks like a challenge, so an ordinary 403 never costs a
 browser run.
 
+To set it up, run FlareSolverr next to atsume and point atsume at it, then
+restart atsume:
+
+```sh
+podman run -d --name flaresolverr -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+ATSUME_FLARESOLVERR_URL=http://localhost:8191
+```
+
+Every site behind a challenge benefits; nothing is configured per site. A site
+that refuses atsume without a challenge page is blocking the address or the
+tool, and FlareSolverr may not help there.
+
 ### Output layout
 
 ```

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Registry manages the on-disk checkout of upstream website modules.
@@ -29,6 +30,8 @@ type Registry struct {
 	current string // absolute path of the active checkout
 	ref     string // the revision that checkout is at
 	modules []ModuleInfo
+	commit  string    // the commit checked out, "" outside git
+	date    time.Time // when that commit was made
 }
 
 // ModuleInfo is a module discovered on disk, before it is loaded into Lua.
@@ -71,6 +74,59 @@ func (r *Registry) Fetch(ctx context.Context, ref string) error {
 	return r.Use(dest, ref)
 }
 
+// Update replaces the checkout of the current ref with its latest commit and
+// makes it current, keeping the one it replaces beside it as .old. A checkout
+// is otherwise never refreshed: "master" means master on the day of the
+// first run until someone asks. It reports whether there was anything newer;
+// asking the repository first means an up-to-date checkout costs no clone.
+func (r *Registry) Update(ctx context.Context) (bool, error) {
+	if latest := r.latest(ctx); latest != "" && latest == r.Commit() {
+		return false, nil
+	}
+	before := r.Commit()
+	if err := r.replace(ctx); err != nil {
+		return false, err
+	}
+	return r.Commit() != before, nil
+}
+
+// latest asks the repository which commit the current ref is at, "" when it
+// cannot say.
+func (r *Registry) latest(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "git", "ls-remote", r.Repo, r.Ref()).Output()
+	if err != nil {
+		return ""
+	}
+	hash, _, _ := strings.Cut(string(out), "\t")
+	return strings.TrimSpace(hash)
+}
+
+func (r *Registry) replace(ctx context.Context) error {
+	ref := r.Ref()
+	dest := filepath.Join(r.Root, sanitizeRef(ref))
+	tmp, old := dest+".new", dest+".old"
+	os.RemoveAll(tmp)
+	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", ref, r.Repo, tmp)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		os.RemoveAll(tmp)
+		return fmt.Errorf("clone %s at %s: %w: %s", r.Repo, ref, err, strings.TrimSpace(string(out)))
+	}
+	if _, err := discover(filepath.Join(tmp, "lua", "modules")); err != nil {
+		os.RemoveAll(tmp)
+		return err
+	}
+	os.RemoveAll(old)
+	if err := os.Rename(dest, old); err != nil && !os.IsNotExist(err) {
+		os.RemoveAll(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		os.Rename(old, dest)
+		return err
+	}
+	return r.Use(dest, ref)
+}
+
 // Use activates an existing checkout.
 func (r *Registry) Use(dir, ref string) error {
 	mods, err := discover(filepath.Join(dir, "lua", "modules"))
@@ -80,11 +136,39 @@ func (r *Registry) Use(dir, ref string) error {
 	if len(mods) == 0 {
 		return fmt.Errorf("no modules found under %s", dir)
 	}
+	commit, date := lastCommit(dir)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.current, r.ref, r.modules = dir, ref, mods
+	r.commit, r.date = commit, date
 	return nil
+}
+
+// lastCommit reads the commit a checkout is at and when it was made, empty
+// for a directory that is not a git checkout.
+func lastCommit(dir string) (string, time.Time) {
+	out, err := exec.Command("git", "-C", dir, "log", "-1", "--format=%H %cI").Output()
+	if err != nil {
+		return "", time.Time{}
+	}
+	hash, when, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
+	t, _ := time.Parse(time.RFC3339, when)
+	return hash, t
+}
+
+// Commit returns the commit the active checkout is at, "" outside git.
+func (r *Registry) Commit() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.commit
+}
+
+// CommitDate returns when the active checkout's commit was made.
+func (r *Registry) CommitDate() time.Time {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.date
 }
 
 // LuaDir returns the lua directory of the active checkout.

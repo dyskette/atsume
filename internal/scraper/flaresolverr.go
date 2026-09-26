@@ -121,6 +121,12 @@ func looksLikeChallenge(status int, body []byte) bool {
 	if status != http.StatusForbidden && status != http.StatusServiceUnavailable {
 		return false
 	}
+	return hasChallengeMarkers(body)
+}
+
+// hasChallengeMarkers reports whether a body carries an interstitial's
+// markers, whatever the status it was served with.
+func hasChallengeMarkers(body []byte) bool {
 	// Only the head of the document is examined; these markers appear early and
 	// a chapter page can be a megabyte.
 	head := body

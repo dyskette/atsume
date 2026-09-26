@@ -194,37 +194,57 @@ func TestBuildSites(t *testing.T) {
 		{Site: "Delta", Category: "Raw"},
 		{Site: "Epsilon"},
 	}}
-
-	v := BuildSites(cat, "")
-	if v.Total != 5 || v.Found != 5 {
-		t.Fatalf("total=%d found=%d", v.Total, v.Found)
+	read := time.Now().Add(-time.Hour)
+	catalogues := map[string]store.SiteCatalogue{
+		"Alpha": {Exists: true, Complete: true, Titles: 10, Source: store.SourceSite, BuiltAt: read, Resume: store.NoPos},
+		"Beta":  {Exists: true, Titles: 3, Problem: app.ProblemBlocked, Status: 403, BuiltAt: read, Resume: store.ReadPos{Dir: 0, Page: 2}},
+		"Delta": {Exists: true, Complete: true, Titles: 40, Source: store.SourcePrebuilt, DataAt: read, Resume: store.NoPos},
 	}
-	// Largest category first; alphabetical order would bury the useful ones.
-	if v.Groups[0].Category != "English" || len(v.Groups[0].Entries) != 3 {
-		t.Errorf("first group = %+v", v.Groups[0])
+	usage := map[string]store.SiteUse{
+		"Alpha": {Series: 3, Following: 2, NewToday: 2},
+		"Beta":  {Series: 1, Following: 1, CheckError: "network problem"},
 	}
-	// Whatever declares no category goes last, named rather than hidden.
-	last := v.Groups[len(v.Groups)-1]
-	if last.Category != uncategorised || len(last.Entries) != 1 {
-		t.Errorf("last group = %+v", last)
-	}
-
-	// A search flattens the result: grouping a handful of matches only makes
-	// them harder to scan.
-	v = BuildSites(cat, "ta")
-	if v.Found != 2 {
-		t.Fatalf("found = %d, want Beta and Delta", v.Found)
-	}
-	if len(v.Groups) != 1 || v.Groups[0].Category != "" {
-		t.Errorf("search results should be one unnamed group, got %+v", v.Groups)
+	build := func(in SitesInput) SitesView {
+		in.Catalogue, in.Catalogues, in.Usage = cat, catalogues, usage
+		return BuildSites(in)
 	}
 
-	// Category is searchable too.
-	if got := BuildSites(cat, "raw").Found; got != 1 {
-		t.Errorf("category search found %d, want 1", got)
+	v := build(SitesInput{})
+	if v.Total != 5 || v.Found != 5 || v.Counts() != "5 available · 2 you use" {
+		t.Fatalf("total=%d found=%d counts=%q", v.Total, v.Found, v.Counts())
 	}
-	if got := BuildSites(cat, "nothing here").Found; got != 0 {
-		t.Errorf("no-match search found %d", got)
+	status := map[string]string{}
+	for _, r := range v.Rows {
+		status[r.Entry.Site] = r.Status
+	}
+	want := map[string]string{"Alpha": "Working", "Beta": "Blocked", "Gamma": "Not read yet", "Delta": "Shared list", "Epsilon": "Not read yet"}
+	for site, w := range want {
+		if status[site] != w {
+			t.Errorf("%s: status %q, want %q", site, status[site], w)
+		}
+	}
+	// Largest category first; whatever declares none goes last, named.
+	if v.Chips[0].Name != "English" || v.Chips[len(v.Chips)-1].Name != uncategorised {
+		t.Errorf("chips = %+v", v.Chips)
+	}
+	// The cards say the one thing worth knowing: a failing check before
+	// anything else, then what arrived today.
+	lines := map[string]string{}
+	for _, c := range v.Yours {
+		lines[c.Site] = c.Line
+	}
+	if lines["Alpha"] != "2 new chapters today" || lines["Beta"] != "Chapter checks failing" {
+		t.Errorf("card lines = %v", lines)
+	}
+
+	if got := build(SitesInput{Query: "ta"}).Found; got != 2 {
+		t.Errorf("name search found %d, want Beta and Delta", got)
+	}
+	if got := build(SitesInput{Category: "Raw"}).Found; got != 1 {
+		t.Errorf("category filter found %d, want 1", got)
+	}
+	if got := build(SitesInput{HideProblems: true}).Found; got != 4 {
+		t.Errorf("hiding problems left %d, want everything but Beta", got)
 	}
 }
 

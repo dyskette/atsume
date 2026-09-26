@@ -50,16 +50,21 @@ templ ModuleSettings(s *app.ModuleSettings, saved bool) {
 				}
 			</ul>
 
-			if len(s.Mirrors) > 1 {
-				<h2>Address</h2>
-				<p class="muted">
+			<h2 id="address">Address</h2>
+			<p class="muted">
+				if len(s.Mirrors) > 1 {
 					{ Count(len(s.Mirrors), "address is", "addresses are") } declared for
 					this site. They serve the same catalogue; pick another when one
 					stops answering.
-				</p>
-				<ul class="rows">
+				}
+				Sites change domains often. If this one moved somewhere its module
+				does not know yet, type the new address; leave it empty to use the
+				module's own.
+			</p>
+			<ul class="rows">
+				if len(s.Mirrors) > 1 {
 					<li>
-						<span class="title">In use</span>
+						<span class="title">Declared</span>
 						<select name={ app.MirrorOption }>
 							for _, m := range s.Mirrors {
 								if m == s.Mirror {
@@ -70,7 +75,14 @@ templ ModuleSettings(s *app.ModuleSettings, saved bool) {
 							}
 						</select>
 					</li>
-				</ul>
+				}
+				<li>
+					<span class="title">Your own</span>
+					<input type="text" name={ app.AddressOption } value={ s.Address } placeholder={ s.InUse } inputmode="url"/>
+				</li>
+			</ul>
+			if s.InUse != "" {
+				<p class="muted">{ "In use: " + s.InUse }</p>
 			}
 
 			<h2>Account</h2>

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1433,7 +1434,7 @@ func TestSiteCatalogueIsKept(t *testing.T) {
 	}
 
 	// Looking again costs the site nothing. That is the whole point.
-	titles, found, err := st.SearchSiteTitles(ctx, "Sectioned", "", 0, 50)
+	titles, found, err := st.SearchSiteTitles(ctx, "Sectioned", "", false, 0, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1451,7 +1452,7 @@ func TestSiteCatalogueIsKept(t *testing.T) {
 
 	// Search runs over the whole catalogue, not over what a browser happens
 	// to have loaded.
-	titles, found, err = st.SearchSiteTitles(ctx, "Sectioned", "gamma", 0, 50)
+	titles, found, err = st.SearchSiteTitles(ctx, "Sectioned", "gamma", false, 0, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1460,7 +1461,7 @@ func TestSiteCatalogueIsKept(t *testing.T) {
 	}
 
 	// A term with wildcards in it is a term, not a pattern.
-	if _, found, _ = st.SearchSiteTitles(ctx, "Sectioned", "%", 0, 50); found != 0 {
+	if _, found, _ = st.SearchSiteTitles(ctx, "Sectioned", "%", false, 0, 50); found != 0 {
 		t.Errorf("a literal %% matched %d titles", found)
 	}
 
@@ -1476,6 +1477,426 @@ func TestSiteCatalogueIsKept(t *testing.T) {
 	info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
 	if info.Titles != 4 {
 		t.Errorf("after a second read the catalogue holds %d titles", info.Titles)
+	}
+}
+
+// TestEmptyReadKeepsTheList covers a read that finishes without error but
+// finds nothing, which is what a site's layout change or a challenge page
+// served as 200 looks like to a module. Taking that at its word would remove
+// every title already stored.
+func TestEmptyReadKeepsTheList(t *testing.T) {
+	var empty atomic.Bool
+	inner := sectionedSite(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if empty.Load() {
+			fmt.Fprint(w, "<html><body>Something changed</body></html>")
+			return
+		}
+		res, err := http.Get(inner.URL + r.URL.RequestURI())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(srv.Close)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	read := func() store.SiteCatalogue {
+		t.Helper()
+		if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, ctx, func() bool {
+			stats, _ := a.Queue.Stats(ctx)
+			return stats["pending"] == 0 && stats["running"] == 0
+		}, "the read")
+		info, err := st.SiteCatalogueInfo(ctx, "Sectioned")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+
+	first := read()
+	if first.Titles != 4 || !first.Complete {
+		t.Fatalf("first read: %d titles, complete=%v", first.Titles, first.Complete)
+	}
+
+	empty.Store(true)
+	info := read()
+	if info.Titles != 4 {
+		t.Errorf("an empty read left %d titles, want the 4 already stored", info.Titles)
+	}
+	if info.Complete {
+		t.Error("an empty read over a stored list should not count as complete")
+	}
+	if !info.DataAt.Equal(first.DataAt) || info.Source != first.Source {
+		t.Errorf("kept titles dated %v from %q, want %v from %q", info.DataAt, info.Source, first.DataAt, first.Source)
+	}
+	if !strings.Contains(info.Note, "kept") {
+		t.Errorf("note = %q, want it to say the titles were kept", info.Note)
+	}
+
+	// Once the site lists titles again, a read replaces the list as usual.
+	empty.Store(false)
+	if info := read(); info.Titles != 4 || !info.Complete {
+		t.Errorf("read after recovery: %d titles, complete=%v", info.Titles, info.Complete)
+	}
+}
+
+// TestReadRecordsWhyItFailed covers the kind of failure a read records,
+// which decides what the site page offers. Server errors and no answer at
+// all are covered by TestClassifyProblem: the HTTP binding retries those
+// with seconds of backoff.
+func TestReadRecordsWhyItFailed(t *testing.T) {
+	cases := []struct {
+		name       string
+		serve      func(w http.ResponseWriter)
+		problem    string
+		status     int
+		challenged bool
+	}{
+		{"refused", func(w http.ResponseWriter) { http.Error(w, "no", http.StatusForbidden) }, ProblemBlocked, 403, false},
+		{"not found", func(w http.ResponseWriter) { http.NotFound(w, nil) }, ProblemMoved, 404, false},
+		{"challenge served as 200", func(w http.ResponseWriter) {
+			fmt.Fprint(w, "<html><title>Just a moment...</title></html>")
+		}, ProblemBlocked, 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { c.serve(w) }))
+			t.Cleanup(srv.Close)
+			a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+			if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+				t.Fatal(err)
+			}
+			var info store.SiteCatalogue
+			waitFor(t, ctx, func() bool {
+				info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+				return info.Problem != ""
+			}, "the read to record a problem")
+			if info.Problem != c.problem {
+				t.Errorf("problem = %q, want %q (note %q)", info.Problem, c.problem, info.Note)
+			}
+			if c.status != 0 && info.Status != c.status {
+				t.Errorf("status = %d, want %d", info.Status, c.status)
+			}
+			if info.Challenged != c.challenged {
+				t.Errorf("challenged = %v, want %v", info.Challenged, c.challenged)
+			}
+			if info.Complete {
+				t.Error("a failed read should not count as complete")
+			}
+		})
+	}
+}
+
+// TestRefreshMarksNewTitles covers the New marker: nothing is new on the
+// first read of a site, what a later read adds is new and listed first, and
+// it stays new until the read after.
+func TestRefreshMarksNewTitles(t *testing.T) {
+	var extra atomic.Bool
+	inner := sectionedSite(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if extra.Load() && r.URL.Path == "/dir/2/0" {
+			fmt.Fprint(w, `<ul class="manga-list"><li><a href="/manga/gamma-one/">Gamma One</a></li>`+
+				`<li><a href="/manga/delta/">Delta</a></li></ul>`)
+			return
+		}
+		res, err := http.Get(inner.URL + r.URL.RequestURI())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(srv.Close)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	read := func() store.SiteCatalogue {
+		t.Helper()
+		if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, ctx, func() bool {
+			stats, _ := a.Queue.Stats(ctx)
+			return stats["pending"] == 0 && stats["running"] == 0
+		}, "the read")
+		info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+		return info
+	}
+	newNames := func() []string {
+		t.Helper()
+		titles, _, err := st.SearchSiteTitles(ctx, "Sectioned", "", false, 0, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, ti := range titles {
+			if ti.New {
+				out = append(out, ti.Name)
+			}
+		}
+		return out
+	}
+
+	if info := read(); info.NewTitles != 0 || len(newNames()) != 0 {
+		t.Errorf("first read marked %d titles new", info.NewTitles)
+	}
+
+	extra.Store(true)
+	info := read()
+	if info.NewTitles != 1 {
+		t.Errorf("refresh found %d new titles, want 1", info.NewTitles)
+	}
+	titles, _, _ := st.SearchSiteTitles(ctx, "Sectioned", "", false, 0, 50)
+	if len(titles) == 0 || titles[0].Name != "Delta" || !titles[0].New {
+		t.Errorf("the new title should be listed first, got %+v", titles)
+	}
+
+	if info := read(); info.NewTitles != 0 {
+		t.Errorf("a title stayed new past the read after, %d new", info.NewTitles)
+	}
+}
+
+// TestReadNotesWhereASiteMoved covers a site redirecting its own address to
+// another host, which is how a site that changed domains usually says so.
+func TestReadNotesWhereASiteMoved(t *testing.T) {
+	newHome, _ := hookedSite(t, nil)
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, newHome.URL+r.URL.RequestURI(), http.StatusMovedPermanently)
+	}))
+	t.Cleanup(old.Close)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, old.URL))
+
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Titles != 4 {
+		t.Errorf("read %d titles through the redirect, want 4", info.Titles)
+	}
+	if info.MovedTo != newHome.URL {
+		t.Errorf("moved to %q, want %q", info.MovedTo, newHome.URL)
+	}
+}
+
+// TestTypedAddressIsRead covers pointing a site at an address its module
+// does not declare, and going back to the module's own.
+func TestTypedAddressIsRead(t *testing.T) {
+	live, _ := hookedSite(t, nil)
+	gone := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(gone.Close)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, gone.URL))
+
+	if _, ok := CleanAddress("darkscans.net"); ok {
+		t.Error("an address without a scheme was accepted")
+	}
+	if err := a.UseAddress(ctx, "Sectioned", live.URL+"/"); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := a.SiteInfo(ctx, "Sectioned")
+	if got := a.SiteAddress(ctx, e); got != live.URL {
+		t.Errorf("address in use = %q, want %q", got, live.URL)
+	}
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	if info, _ := st.SiteCatalogueInfo(ctx, "Sectioned"); info.Titles != 4 {
+		t.Errorf("read %d titles at the typed address (problem %q), want 4", info.Titles, info.Problem)
+	}
+
+	if err := st.SetModuleOption(ctx, "Sectioned", AddressOption, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.SiteAddress(ctx, e); got != gone.URL {
+		t.Errorf("after clearing, address in use = %q, want the module's own %q", got, gone.URL)
+	}
+}
+
+// hookedSite is the sectioned test site behind a hook that may answer a
+// request itself, and a log of the paths asked for.
+func hookedSite(t *testing.T, hook func(w http.ResponseWriter, r *http.Request) bool) (*httptest.Server, func() []string) {
+	t.Helper()
+	inner := sectionedSite(t)
+	var mu sync.Mutex
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		if hook != nil && hook(w, r) {
+			return
+		}
+		res, err := http.Get(inner.URL + r.URL.RequestURI())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), paths...)
+	}
+}
+
+func waitIdle(t *testing.T, ctx context.Context, a *App) {
+	t.Helper()
+	// The checks are not one atomic look, and a job moves from queued to
+	// running between them, so idle has to hold on two looks apart.
+	idle := func() bool {
+		stats, _ := a.Queue.Stats(ctx)
+		return stats["running"] == 0 && len(a.ActiveReads()) == 0 && !a.Indexing(ctx, "Sectioned")
+	}
+	waitFor(t, ctx, func() bool {
+		if !idle() {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+		return idle()
+	}, "the read to end")
+}
+
+// TestFailedReadResumes covers carrying on a read that failed partway: it
+// keeps what it read and where it stopped, is not retried when the site
+// refused it, and carries on from there without asking for earlier pages.
+func TestFailedReadResumes(t *testing.T) {
+	var refuse atomic.Bool
+	refuse.Store(true)
+	srv, paths := hookedSite(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if refuse.Load() && r.URL.Path == "/dir/2/0" {
+			http.Error(w, "no", http.StatusForbidden)
+			return true
+		}
+		return false
+	})
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Problem != ProblemBlocked || info.Complete || info.Titles != 3 {
+		t.Fatalf("after the refusal: problem=%q complete=%v titles=%d", info.Problem, info.Complete, info.Titles)
+	}
+	if info.Resume.Dir < 0 || !info.RetryAt.IsZero() {
+		t.Errorf("resume=%+v retryAt=%v, want a position and no retry", info.Resume, info.RetryAt)
+	}
+
+	refuse.Store(false)
+	asked := len(paths())
+	if err := a.EnqueueResume(ctx, "Sectioned"); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+	if !info.Complete || info.Titles != 4 || info.Problem != "" {
+		t.Errorf("after resuming: complete=%v titles=%d problem=%q", info.Complete, info.Titles, info.Problem)
+	}
+	for _, p := range paths()[asked:] {
+		if p == "/dir/1/0" || p == "/dir/1/1" {
+			t.Errorf("resuming asked for %s again", p)
+		}
+	}
+	if info.Pages == 0 || info.OKAt.IsZero() {
+		t.Errorf("a complete read should record its pages (%d) and when it succeeded", info.Pages)
+	}
+}
+
+// TestStoppedReadCarriesOn covers the reader stopping a read and carrying it
+// on later.
+func TestStoppedReadCarriesOn(t *testing.T) {
+	var slow atomic.Bool
+	slow.Store(true)
+	srv, _ := hookedSite(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if slow.Load() && r.URL.Path != "/dir/0/0" {
+			time.Sleep(300 * time.Millisecond)
+		}
+		return false
+	})
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		p, ok := a.ActiveReads()["Sectioned"]
+		return ok && p.Titles > 0
+	}, "the read to find something")
+	if !a.StopRead("Sectioned") {
+		t.Fatal("no read to stop")
+	}
+	waitIdle(t, ctx, a)
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Problem != ProblemStopped || info.Complete || info.Resume.Dir < 0 {
+		t.Fatalf("after stopping: problem=%q complete=%v resume=%+v", info.Problem, info.Complete, info.Resume)
+	}
+
+	slow.Store(false)
+	if err := a.EnqueueResume(ctx, "Sectioned"); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+	if !info.Complete || info.Titles != 4 {
+		t.Errorf("after carrying on: complete=%v titles=%d", info.Complete, info.Titles)
+	}
+}
+
+// TestDownSiteIsRetriedLater covers the automatic retry of a site that is
+// down: it is scheduled, it does not count as a read in progress while it
+// waits, and asking for a read now replaces it.
+func TestDownSiteIsRetriedLater(t *testing.T) {
+	var down atomic.Bool
+	down.Store(true)
+	srv, _ := hookedSite(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if down.Load() {
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return true
+		}
+		return false
+	})
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Problem != ProblemDown || info.Retries != 1 {
+		t.Fatalf("problem=%q retries=%d", info.Problem, info.Retries)
+	}
+	if wait := time.Until(info.RetryAt); wait < 4*time.Minute || wait > 6*time.Minute {
+		t.Errorf("retry in %v, want about five minutes", wait)
+	}
+	if a.Indexing(ctx, "Sectioned") {
+		t.Error("a retry waiting for later should not count as a read in progress")
+	}
+	if stats, _ := a.Queue.Stats(ctx); stats["pending"] != 1 {
+		t.Errorf("pending jobs = %d, want the one retry", stats["pending"])
+	}
+
+	down.Store(false)
+	if err := a.EnqueueResume(ctx, "Sectioned"); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+	if !info.Complete || info.Titles != 4 || !info.RetryAt.IsZero() {
+		t.Errorf("after trying now: complete=%v titles=%d retryAt=%v", info.Complete, info.Titles, info.RetryAt)
+	}
+	if stats, _ := a.Queue.Stats(ctx); stats["pending"] != 0 {
+		t.Errorf("the scheduled retry is still waiting: %d pending", stats["pending"])
 	}
 }
 
@@ -1602,7 +2023,7 @@ func TestRereadKeepsTheListUsable(t *testing.T) {
 		[]store.SiteTitle{{URL: "/manga/beta-one/", Name: "Beta One", Seq: 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishSiteCatalogue(ctx, "Sectioned", false, "gave up", store.SourceSite, time.Now(), read); err != nil {
+	if err := st.FinishSiteCatalogue(ctx, "Sectioned", read, store.ReadOutcome{Note: "gave up", Source: store.SourceSite, DataAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ = st.SiteCatalogueInfo(ctx, "Sectioned"); info.Titles != 4 {
@@ -1618,7 +2039,7 @@ func TestRereadKeepsTheListUsable(t *testing.T) {
 		[]store.SiteTitle{{URL: "/manga/beta-one/", Name: "Beta One", Seq: 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishSiteCatalogue(ctx, "Sectioned", true, "1 title", store.SourceSite, time.Now(), read); err != nil {
+	if err := st.FinishSiteCatalogue(ctx, "Sectioned", read, store.ReadOutcome{Complete: true, Note: "1 title", Source: store.SourceSite, DataAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ = st.SiteCatalogueInfo(ctx, "Sectioned"); info.Titles != 1 {

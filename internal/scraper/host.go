@@ -42,9 +42,8 @@ type Account struct {
 //
 // An empty name takes the first, which is what a file declaring one website
 // means. Mirrors share a name and differ only by address, so rootURL breaks
-// the tie; asking for an address that is no longer declared falls back to the
-// site's first mirror rather than failing, because a mirror disappearing
-// upstream should not take a followed series with it.
+// the tie; an address that is not declared takes the first, and Open then
+// points it at that address.
 func selectSite(sites []*Module, name, rootURL string) *Module {
 	if name == "" {
 		return sites[0]
@@ -210,6 +209,12 @@ func (h *Host) Open(ctx context.Context, moduleFile, site, rootURL string) (*Run
 	r.mod = selectSite(r.sites, site, rootURL)
 	if r.mod == nil {
 		return nil, fmt.Errorf("%s declares no website named %q", moduleFile, site)
+	}
+	// An address the site does not declare is one the reader typed for a
+	// site that moved; the module reads it as its own. MODULE.RootURL is what
+	// modules build their requests from.
+	if rootURL != "" && !strings.EqualFold(r.mod.RootURL, rootURL) {
+		r.mod.RootURL = rootURL
 	}
 	for _, o := range r.mod.Options {
 		r.options[o.Name] = luaValueOf(o.Default)
@@ -383,8 +388,7 @@ func (r *Runner) GetNameAndLink(page int) ([]Entry, error) {
 		return nil, err
 	}
 	if truncInt(v) == netProblem {
-		return nil, fmt.Errorf("%s: network problem listing page %d from %s (last status %d)",
-			r.mod.Name, page+1, r.mod.RootURL, r.http.ResultCode)
+		return nil, r.fetchError(fmt.Sprintf("listing page %d from %s", page+1, r.mod.RootURL))
 	}
 
 	links, names := r.links.All(), r.names.All()
@@ -425,8 +429,7 @@ func (r *Runner) GetInfo(mangaURL string) (*MangaInfo, error) {
 	}
 	switch truncInt(v) {
 	case netProblem:
-		return nil, fmt.Errorf("%s: network problem fetching %s (last status %d)",
-			r.mod.Name, mangaURL, r.http.ResultCode)
+		return nil, r.fetchError("fetching " + mangaURL)
 	case informationNotFound:
 		return nil, fmt.Errorf("%s: no series information at %s; the page may have moved",
 			r.mod.Name, mangaURL)

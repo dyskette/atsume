@@ -12,6 +12,8 @@ type SiteTitle struct {
 	URL  string
 	Name string
 	Seq  int
+	// New is a title the latest read found that the one before did not.
+	New bool
 }
 
 // SiteCatalogue is what is known about a site's stored title list.
@@ -34,7 +36,48 @@ type SiteCatalogue struct {
 	// DataAt is how old the titles are, which for a snapshot is not when it
 	// was downloaded.
 	DataAt time.Time
+	// Problem is what kind of failure ended the last read, "" when none.
+	Problem string
+	// NewTitles is how many titles the latest read found that the one
+	// before did not.
+	NewTitles int
+	// OverList is a latest read that began with titles already stored: a
+	// refresh rather than a first read.
+	OverList bool
+	// Pages is how many directory pages the last complete read took, and
+	// Steps how many the latest read got through.
+	Pages, Steps int
+	// Resume is where an unfinished read stopped; Resume.Dir is -1 when
+	// there is nothing to carry on from.
+	Resume ReadPos
+	// OKAt is when the site last read all the way through.
+	OKAt time.Time
+	// RetryAt is when atsume tries a site that was down again, zero when it
+	// will not, and Retries how many times it has.
+	RetryAt time.Time
+	Retries int
+	// Failure is what the latest read ran into.
+	Failure
 }
+
+// Failure is what a read ran into, for explaining it in plain words.
+type Failure struct {
+	// Status is the last HTTP status, 0 when the site did not answer.
+	Status int
+	// Challenged is an anti-bot page seen during the read.
+	Challenged bool
+	// Cause is why a site did not answer: "dns", "refused", "timeout" or "".
+	Cause string
+	// MovedTo is the address a request to the site was redirected to on
+	// another host, "" when none was.
+	MovedTo string
+}
+
+// ReadPos is a position in a site's directory: which section, which page.
+type ReadPos struct{ Dir, Page int }
+
+// NoPos is the position of a read with nothing to resume.
+var NoPos = ReadPos{Dir: -1}
 
 // FromSite reports whether atsume read this catalogue itself.
 func (c SiteCatalogue) FromSite() bool { return c.Source != SourcePrebuilt }
@@ -72,7 +115,9 @@ func (s *Store) BeginSiteCatalogue(ctx context.Context, site string) (int64, err
 		INSERT INTO site_catalogue (site, built_at, complete, note, read_seq)
 		VALUES (?, CURRENT_TIMESTAMP, 0, '', 1)
 		ON CONFLICT (site) DO UPDATE SET
-			complete = 0, note = '', read_seq = read_seq + 1`, site); err != nil {
+			complete = 0, note = '', read_seq = read_seq + 1,
+			new_from = CASE WHEN EXISTS (SELECT 1 FROM site_title WHERE site = excluded.site)
+			                THEN read_seq + 1 ELSE 0 END`, site); err != nil {
 		return 0, err
 	}
 	var seq int64
@@ -102,8 +147,8 @@ func (s *Store) AddSiteTitles(ctx context.Context, site string, read int64, titl
 	// A title already stored is refreshed rather than skipped: its name may
 	// have changed, and seen_at is what marks it as still listed.
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO site_title (site, url, name, seq, seen_at, seen_read)
-		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+		INSERT INTO site_title (site, url, name, seq, seen_at, seen_read, first_read)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
 		ON CONFLICT (site, url) DO UPDATE SET
 			name = excluded.name, seq = excluded.seq,
 			seen_at = CURRENT_TIMESTAMP, seen_read = excluded.seen_read`)
@@ -116,11 +161,33 @@ func (s *Store) AddSiteTitles(ctx context.Context, site string, read int64, titl
 		if t.URL == "" {
 			continue
 		}
-		if _, err := stmt.ExecContext(ctx, site, t.URL, CleanTitle(t.Name), t.Seq, read); err != nil {
+		if _, err := stmt.ExecContext(ctx, site, t.URL, CleanTitle(t.Name), t.Seq, read, read); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// ReadOutcome is how a read of a site's catalogue ended.
+type ReadOutcome struct {
+	// Complete is a read that got to the end, which is the only kind that
+	// may decide a title has gone.
+	Complete bool
+	Note     string
+	Source   string
+	// DataAt is how old the titles are.
+	DataAt time.Time
+	// Problem is the kind of failure that ended the read, "" when none.
+	Problem string
+	// Steps is how many directory pages the read got through.
+	Steps int
+	// Resume is where an unfinished read can carry on from, NoPos for none.
+	Resume ReadPos
+	// RetryAt is when atsume will try again by itself, and Retries how
+	// many times it has so far.
+	RetryAt time.Time
+	Retries int
+	Failure
 }
 
 // FinishSiteCatalogue records how the read ended.
@@ -128,7 +195,7 @@ func (s *Store) AddSiteTitles(ctx context.Context, site string, read int64, titl
 // The timestamp is stamped here rather than at the start: "read 20 minutes
 // ago" should mean the list is twenty minutes old, and a read of a large
 // site takes minutes of that by itself.
-func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, complete bool, note, source string, dataAt time.Time, read int64) error {
+func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, read int64, o ReadOutcome) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -138,38 +205,124 @@ func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, complete b
 	// Only a read that finished may decide a title has gone. One that failed
 	// partway simply did not get there, and treating that as a deletion
 	// would empty a catalogue because a site had a bad minute.
-	if complete {
+	if o.Complete {
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM site_title WHERE site = ? AND seen_read <> ?`, site, read); err != nil {
 			return err
 		}
 	}
-	var data any
-	if !dataAt.IsZero() {
-		data = dataAt.UTC().Format("2006-01-02 15:04:05")
+	if o.Complete {
+		o.Resume = NoPos
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE site_catalogue
-		SET complete = ?, note = ?, source = ?, data_at = ?, built_at = CURRENT_TIMESTAMP
-		WHERE site = ?`, complete, note, source, data, site); err != nil {
+		SET complete = ?, note = ?, source = ?, data_at = ?, problem = ?, built_at = CURRENT_TIMESTAMP,
+		    steps = ?, resume_dir = ?, resume_page = ?, retry_at = ?, retries = ?,
+		    status = ?, challenged = ?, cause = ?, moved_to = ?,
+		    pages = CASE WHEN ? THEN ? ELSE pages END,
+		    ok_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE ok_at END
+		WHERE site = ?`,
+		o.Complete, o.Note, o.Source, sqlTime(o.DataAt), o.Problem,
+		o.Steps, o.Resume.Dir, o.Resume.Page, sqlTime(o.RetryAt), o.Retries,
+		o.Status, o.Challenged, o.Cause, o.MovedTo,
+		o.Complete && o.Source == SourceSite, o.Steps,
+		o.Complete, site); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-// SiteCatalogueInfo reports what is stored for a site.
-func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalogue, error) {
-	out := SiteCatalogue{Site: site}
-	var built, data sql.NullString
-	err := s.DB.QueryRowContext(ctx, `
-		SELECT built_at, complete, note, source, data_at,
-		       (SELECT COUNT(*) FROM site_title WHERE site = ?)
-		FROM site_catalogue WHERE site = ?`, site, site).
-		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Titles)
+// ResumeSiteCatalogue picks an unfinished read back up: the read number its
+// titles carry, where it stopped, how far it had got, and the titles it had
+// already seen. ok is false when there is nothing to resume.
+func (s *Store) ResumeSiteCatalogue(ctx context.Context, site string) (read int64, at ReadPos, steps int, seen []string, ok bool, err error) {
+	err = s.DB.QueryRowContext(ctx, `
+		SELECT read_seq, resume_dir, resume_page, steps FROM site_catalogue
+		WHERE site = ? AND complete = 0 AND resume_dir >= 0`, site).
+		Scan(&read, &at.Dir, &at.Page, &steps)
 	if err == sql.ErrNoRows {
-		return out, nil
+		return 0, NoPos, 0, nil, false, nil
 	}
 	if err != nil {
+		return 0, NoPos, 0, nil, false, err
+	}
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT url FROM site_title WHERE site = ? AND seen_read = ?`, site, read)
+	if err != nil {
+		return 0, NoPos, 0, nil, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return 0, NoPos, 0, nil, false, err
+		}
+		seen = append(seen, u)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, NoPos, 0, nil, false, err
+	}
+	_, err = s.DB.ExecContext(ctx,
+		`UPDATE site_catalogue SET note = '', retry_at = NULL WHERE site = ?`, site)
+	return read, at, steps, seen, err == nil, err
+}
+
+// OthersWorking reports whether any other site read through, or had a series
+// checked, within the last hour: evidence that a failure is the site's and
+// not the connection's.
+func (s *Store) OthersWorking(ctx context.Context, site string) (bool, error) {
+	var ok bool
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM site_catalogue
+		               WHERE site <> ? AND julianday(ok_at) > julianday('now', '-1 hour'))
+		    OR EXISTS (SELECT 1 FROM series
+		               WHERE module_key <> ? AND julianday(checked_at) > julianday('now', '-1 hour'))`,
+		site, site).Scan(&ok)
+	return ok, err
+}
+
+// SiteCatalogueInfo reports what is stored for a site.
+func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalogue, error) {
+	out, err := scanCatalogue(s.DB.QueryRowContext(ctx, `SELECT `+catalogueColumns+` FROM site_catalogue c WHERE site = ?`, site))
+	if err == sql.ErrNoRows {
+		return SiteCatalogue{Site: site, Resume: NoPos}, nil
+	}
+	return out, err
+}
+
+// SiteCatalogues reports what is stored for every site that has been read,
+// by site.
+func (s *Store) SiteCatalogues(ctx context.Context) (map[string]SiteCatalogue, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+catalogueColumns+` FROM site_catalogue c`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]SiteCatalogue{}
+	for rows.Next() {
+		c, err := scanCatalogue(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[c.Site] = c
+	}
+	return out, rows.Err()
+}
+
+// catalogueColumns are what scanCatalogue reads, from site_catalogue as c.
+const catalogueColumns = `c.site, built_at, complete, note, source, data_at, problem,
+	(SELECT COUNT(*) FROM site_title WHERE site = c.site),
+	(SELECT COUNT(*) FROM site_title WHERE site = c.site AND c.new_from > 0 AND first_read = c.new_from),
+	pages, steps, resume_dir, resume_page, ok_at, retry_at, retries,
+	status, challenged, cause, moved_to, new_from > 0`
+
+func scanCatalogue(row interface{ Scan(...any) error }) (SiteCatalogue, error) {
+	out := SiteCatalogue{Resume: NoPos}
+	var built, data, okAt, retryAt sql.NullString
+	if err := row.Scan(&out.Site, &built, &out.Complete, &out.Note, &out.Source, &data, &out.Problem,
+		&out.Titles, &out.NewTitles,
+		&out.Pages, &out.Steps, &out.Resume.Dir, &out.Resume.Page, &okAt, &retryAt, &out.Retries,
+		&out.Status, &out.Challenged, &out.Cause, &out.MovedTo, &out.OverList); err != nil {
 		return out, err
 	}
 	out.Exists = true
@@ -178,6 +331,12 @@ func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalog
 	}
 	if t := parseTimestamp(data); t.Valid {
 		out.DataAt = t.Time
+	}
+	if t := parseTimestamp(okAt); t.Valid {
+		out.OKAt = t.Time
+	}
+	if t := parseTimestamp(retryAt); t.Valid {
+		out.RetryAt = t.Time
 	}
 	return out, nil
 }
@@ -188,11 +347,18 @@ func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalog
 // hold thousands of titles, and shipping all of them so a script can hide
 // most is how a page becomes unusable on the device most likely to be
 // reading it.
-func (s *Store) SearchSiteTitles(ctx context.Context, site, query string, offset, limit int) ([]SiteTitle, int, error) {
+//
+// hideLibrary leaves out titles already in the library, matched the way
+// TrackedURLs matches them.
+func (s *Store) SearchSiteTitles(ctx context.Context, site, query string, hideLibrary bool, offset, limit int) ([]SiteTitle, int, error) {
 	where, args := `site = ?`, []any{site}
 	if q := strings.TrimSpace(query); q != "" {
 		where += ` AND name LIKE ? ESCAPE '\'`
 		args = append(args, "%"+escapeLike(q)+"%")
+	}
+	if hideLibrary {
+		where += ` AND url NOT IN (SELECT url FROM series WHERE module_key = ? OR module_name = ?)`
+		args = append(args, site, site)
 	}
 
 	var total int
@@ -202,8 +368,10 @@ func (s *Store) SearchSiteTitles(ctx context.Context, site, query string, offset
 	}
 
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT url, name, seq FROM site_title WHERE `+where+`
-		 ORDER BY seq LIMIT ? OFFSET ?`, append(args, limit, offset)...)
+		`SELECT url, name, seq,
+		        first_read = (SELECT new_from FROM site_catalogue WHERE site = site_title.site AND new_from > 0) AS new
+		 FROM site_title WHERE `+where+`
+		 ORDER BY new DESC, seq LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -212,9 +380,11 @@ func (s *Store) SearchSiteTitles(ctx context.Context, site, query string, offset
 	var out []SiteTitle
 	for rows.Next() {
 		var t SiteTitle
-		if err := rows.Scan(&t.URL, &t.Name, &t.Seq); err != nil {
+		var isNew sql.NullBool
+		if err := rows.Scan(&t.URL, &t.Name, &t.Seq, &isNew); err != nil {
 			return nil, 0, err
 		}
+		t.New = isNew.Bool
 		out = append(out, t)
 	}
 	return out, total, rows.Err()
@@ -224,4 +394,13 @@ func (s *Store) SearchSiteTitles(ctx context.Context, site, query string, offset
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
+}
+
+// sqlTime formats t the way SQLite's CURRENT_TIMESTAMP does, in UTC, so the
+// two compare as text; the zero time is NULL.
+func sqlTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format("2006-01-02 15:04:05")
 }

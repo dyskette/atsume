@@ -80,6 +80,26 @@ type QueueView struct {
 	store.QueueStatus
 	Paused      bool
 	Done, Total int
+	// Reading is the sites whose catalogue is being read.
+	Reading []string
+}
+
+// readingText names the catalogue reads running, "" when there are none,
+// set off from the downloads when there are some.
+func readingText(v QueueView) string {
+	var t string
+	switch len(v.Reading) {
+	case 0:
+		return ""
+	case 1:
+		t = "Reading " + v.Reading[0] + " catalogue"
+	default:
+		t = fmt.Sprintf("Reading %d catalogues", len(v.Reading))
+	}
+	if v.Busy() || v.Paused {
+		t = "· " + t
+	}
+	return t
 }
 
 // queueText says what is happening in the fewest words that are still
@@ -199,4 +219,13 @@ func olderThan(t time.Time) string {
 		return "over a year old"
 	}
 	return fmt.Sprintf("%d months old", months)
+}
+
+// upper starts a sentence with a capital.
+func upper(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	return strings.ToUpper(string(r[0])) + string(r[1:])
 }

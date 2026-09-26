@@ -41,6 +41,19 @@ func (q *Queue) Enqueue(ctx context.Context, kind string, payload any) (int64, e
 	return id, err
 }
 
+// EnqueueAt adds a job that no worker takes before at.
+func (q *Queue) EnqueueAt(ctx context.Context, kind string, payload any, at time.Time) (int64, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	err = q.db.QueryRowContext(ctx,
+		`INSERT INTO jobs (kind, payload, run_after) VALUES (?, ?, ?) RETURNING id`,
+		kind, string(raw), sqlTime(at)).Scan(&id)
+	return id, err
+}
+
 // Claim atomically takes the next runnable job, or returns nil when there is
 // none. The UPDATE ... RETURNING runs as a single statement so two workers can
 // never claim the same row.
@@ -86,7 +99,7 @@ func (q *Queue) Fail(ctx context.Context, j *Job, cause error) error {
 	delay := time.Duration(1<<uint(j.Attempts)) * time.Minute
 	_, err := q.db.ExecContext(ctx,
 		`UPDATE jobs SET state = 'pending', error = ?, run_after = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		cause.Error(), time.Now().Add(delay), j.ID)
+		cause.Error(), sqlTime(time.Now().Add(delay)), j.ID)
 	return err
 }
 
@@ -122,6 +135,26 @@ func (q *Queue) DeletePending(ctx context.Context, kind, key string, value any) 
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// ReadyOfKind returns the payloads of jobs of one kind waiting to start and
+// ready to, leaving out those waiting for a retry time still to come.
+func (q *Queue) ReadyOfKind(ctx context.Context, kind string) ([]json.RawMessage, error) {
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT payload FROM jobs WHERE kind = ? AND state = 'pending' AND run_after <= CURRENT_TIMESTAMP`, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []json.RawMessage
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, json.RawMessage(p))
+	}
+	return out, rows.Err()
 }
 
 // PendingInOrder returns the payloads of jobs of one kind waiting to start,
@@ -179,3 +212,9 @@ func (q *Queue) ResetRunning(ctx context.Context) (int64, error) {
 	n, _ := res.RowsAffected()
 	return n, nil
 }
+
+// sqlTime formats t the way SQLite's CURRENT_TIMESTAMP does, in UTC, so the
+// two compare as text. The driver's own format for a time.Time carries a "T"
+// and a local offset, and compared against CURRENT_TIMESTAMP that made a
+// retry wait until midnight UTC or run at once, depending on the hour.
+func sqlTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") }

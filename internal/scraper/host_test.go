@@ -612,15 +612,16 @@ function GetInfo() return no_error end
 	}
 	r.Close()
 
-	// An address upstream has dropped falls back rather than failing: these
-	// domains disappear constantly, and a followed series must survive it.
-	r, err = h.Open(context.Background(), path, "Many Doors", "https://gone.example")
+	// An address the site does not declare is one the reader typed for a
+	// site that moved, and is read as the site's own. A stored mirror that
+	// upstream dropped never gets this far: the app ignores it.
+	r, err = h.Open(context.Background(), path, "Many Doors", "https://moved.example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer r.Close()
-	if got := r.Module().RootURL; got != "https://one.example" {
-		t.Errorf("root = %q, want a fallback to the first mirror", got)
+	if got := r.Module().RootURL; got != "https://moved.example" {
+		t.Errorf("root = %q, want the typed address", got)
 	}
 }
 

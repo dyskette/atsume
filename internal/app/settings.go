@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/dyskette/atsume/internal/scraper"
@@ -34,6 +35,9 @@ type ModuleSettings struct {
 	// are blocked and abandoned constantly.
 	Mirrors []string
 	Mirror  string
+	// Address is an address the reader typed for the site, "" when they use
+	// a declared one, and InUse the address atsume uses now.
+	Address, InUse string
 
 	// Series from this site, so the page that fixes a problem can name what
 	// the problem was about and offer a way back to it.
@@ -80,9 +84,15 @@ func (a *App) ModuleSettings(ctx context.Context, name string) (*ModuleSettings,
 			s.Username = creds.Username
 		}
 	}
-	if e, ok := a.SiteInfo(ctx, name); ok && e.HasMirrors() {
-		s.Mirrors = e.Mirrors
-		s.Mirror = r.Module().RootURL
+	if e, ok := a.SiteInfo(ctx, name); ok {
+		if e.HasMirrors() {
+			s.Mirrors = e.Mirrors
+			s.Mirror = r.Module().RootURL
+		}
+		s.InUse = a.SiteAddress(ctx, e)
+	}
+	if addr, ok := CleanAddress(s.Values[AddressOption]); ok {
+		s.Address = addr
 	}
 	if s.Series, err = a.Store.SeriesByModule(ctx, name); err != nil {
 		return nil, err
@@ -129,17 +139,56 @@ func (a *App) SaveModuleSettings(ctx context.Context, name string, options map[s
 // declare, which are plain Lua identifiers.
 const MirrorOption = "__mirror"
 
+// AddressOption is the reserved setting holding an address the reader typed
+// for a site, for one that moved somewhere its module does not declare.
+const AddressOption = "__address"
+
+// CleanAddress tidies a typed site address, reporting whether it is one:
+// http or https, with a host, without a trailing slash.
+func CleanAddress(s string) (string, bool) {
+	s = strings.TrimRight(strings.TrimSpace(s), "/")
+	u, err := url.Parse(s)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", false
+	}
+	return s, true
+}
+
+// SiteAddress is the address atsume reads a site at: the one chosen or typed,
+// otherwise the first it declares.
+func (a *App) SiteAddress(ctx context.Context, e ModuleEntry) string {
+	if m := a.mirrorFor(ctx, e); m != "" {
+		return m
+	}
+	return e.Root()
+}
+
+// UseAddress points atsume at a different address for a site.
+func (a *App) UseAddress(ctx context.Context, site, address string) error {
+	addr, ok := CleanAddress(address)
+	if !ok {
+		return fmt.Errorf("%q is not a web address", address)
+	}
+	return a.Store.SetModuleOption(ctx, a.ResolveModule(ctx, site), AddressOption, addr)
+}
+
 // mirrorFor returns the address chosen for a site, or none to take the first.
 //
 // A choice that no longer appears among the declarations is ignored rather
 // than honoured: these domains are abandoned constantly, and a stored address
 // that upstream has dropped should not strand a followed series.
+//
+// An address the reader typed wins over the declared ones: it is how a site
+// that moved to a domain upstream has not caught up with is still read.
 func (a *App) mirrorFor(ctx context.Context, e ModuleEntry) string {
-	if len(e.Mirrors) < 2 {
-		return ""
-	}
 	opts, err := a.Store.ModuleOptions(ctx, e.Site)
 	if err != nil {
+		return ""
+	}
+	if addr, ok := CleanAddress(opts[AddressOption]); ok {
+		return addr
+	}
+	if len(e.Mirrors) < 2 {
 		return ""
 	}
 	chosen := opts[MirrorOption]
@@ -251,4 +300,11 @@ func (a *App) RecheckSite(ctx context.Context, moduleKey string) (int, error) {
 		}
 	}
 	return len(series), nil
+}
+
+// UpdateModules fetches the latest commit of the modules' ref and switches
+// to it, reporting whether there was one. Downloads already running finish
+// on the files they loaded.
+func (a *App) UpdateModules(ctx context.Context) (bool, error) {
+	return a.Registry.Update(ctx)
 }

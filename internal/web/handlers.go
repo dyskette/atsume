@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dyskette/atsume/internal/app"
 	"github.com/dyskette/atsume/internal/jobs"
@@ -44,16 +46,27 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	v := ui.BuildSites(s.App.ModuleCatalogue(r.Context()), query)
-
-	// htmx sends this header when swapping the list in place; a full page load
-	// needs the chrome around it.
-	if r.Header.Get("HX-Request") == "true" {
-		s.render(w, r, ui.SiteGroups(v))
+	ctx := r.Context()
+	q := r.URL.Query()
+	in := ui.SitesInput{
+		Catalogue: s.App.ModuleCatalogue(ctx),
+		Query:     q.Get("q"), Category: q.Get("cat"),
+		HideProblems: q.Get("problems") == "hide", ShowAll: q.Get("all") == "1",
+		Updated:     q.Get("updated") == "1",
+		ModulesDate: s.App.Registry.CommitDate(),
+	}
+	var err error
+	if in.Catalogues, err = s.App.Store.SiteCatalogues(ctx); err != nil {
+		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.Sites(v))
+	now := time.Now()
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if in.Usage, err = s.App.Store.SiteUsage(ctx, dayStart); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.Sites(ui.BuildSites(in)))
 }
 
 // browseRows is how many titles one screenful holds. A catalogue can run to
@@ -107,7 +120,78 @@ func (s *Server) handleIndexSite(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.catalogueStatus(w, r, false)
+	reloadPage(w)
+}
+
+// handleResumeSite carries on an unfinished read from where it stopped.
+func (s *Server) handleResumeSite(w http.ResponseWriter, r *http.Request) {
+	if err := s.App.EnqueueResume(r.Context(), r.PathValue("name")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	reloadPage(w)
+}
+
+// handleStopSite stops a running read, keeping what it read.
+func (s *Server) handleStopSite(w http.ResponseWriter, r *http.Request) {
+	s.App.StopRead(s.App.ResolveModule(r.Context(), r.PathValue("name")))
+	reloadPage(w)
+}
+
+// handleUseAddress points a site at the address it was redirected to, and
+// reads it there.
+func (s *Server) handleUseAddress(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.App.UseAddress(r.Context(), name, r.FormValue("address")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.App.EnqueueIndex(r.Context(), name, store.SourceSite); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	reloadPage(w)
+}
+
+// handleUpdateModules fetches the modules' latest commit. It takes seconds,
+// a shallow clone of a few megabytes, so it is done while the reader waits.
+//
+// What it says afterwards depends on where it was pressed: on a site's page
+// an update is followed by reading that site again, which is why it was
+// pressed; on the Sites page the page reloads saying what it updated to.
+// Nothing newer, or a fetch that failed, is said in place.
+func (s *Server) handleUpdateModules(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	changed, err := s.App.UpdateModules(ctx)
+	date := s.App.Registry.CommitDate().Format("2 Jan 2006")
+	switch {
+	case err != nil:
+		slog.Warn("modules update failed", "err", err)
+		s.render(w, r, ui.UpdateNote("Couldn’t fetch the modules: "+err.Error(), true))
+		return
+	case !changed:
+		s.render(w, r, ui.UpdateNote("Modules are already current ("+date+").", false))
+		return
+	}
+	slog.Info("modules updated", "commit", s.App.Registry.Commit())
+	if site := r.FormValue("site"); site != "" {
+		if err := s.App.EnqueueIndex(r.Context(), site, store.SourceSite); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		reloadPage(w)
+		return
+	}
+	w.Header().Set("HX-Redirect", "/modules?updated=1")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// reloadPage answers an htmx request by reloading the page, which is how an
+// action that changes what the whole page says shows it.
+func reloadPage(w http.ResponseWriter) {
+	w.Header().Set("HX-Refresh", "true")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleRereadSite asks before spending minutes of a site's bandwidth.
@@ -133,30 +217,55 @@ func (s *Server) catalogueStatus(w http.ResponseWriter, r *http.Request, indexin
 		return
 	}
 	v.Indexing = v.Indexing || indexing
+	v.Live = true
 	s.render(w, r, ui.CatalogueStatus(v))
 }
 
 // browseView assembles a site's page from what is stored.
 func (s *Server) browseView(r *http.Request) (ui.BrowseView, error) {
-	module := s.App.ResolveModule(r.Context(), r.PathValue("name"))
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	if offset < 0 {
-		offset = 0
-	}
-
-	v := ui.BrowseView{Module: module, Query: query, Offset: offset, Limit: browseRows}
-	var err error
-	if v.Catalogue, err = s.App.Store.SiteCatalogueInfo(r.Context(), module); err != nil {
+	ctx := r.Context()
+	module := s.App.ResolveModule(ctx, r.PathValue("name"))
+	q := r.URL.Query()
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	v, err := s.siteStatusView(ctx, module)
+	if err != nil {
 		return v, err
 	}
-	v.Indexing = s.App.Indexing(r.Context(), module)
+	v.Query, v.Offset, v.Limit = strings.TrimSpace(q.Get("q")), max(offset, 0), browseRows
+	v.HideLibrary = q.Get("hide") == "1"
 	if v.Titles, v.Found, err = s.App.Store.SearchSiteTitles(
-		r.Context(), module, query, offset, browseRows); err != nil {
+		ctx, module, v.Query, v.HideLibrary, v.Offset, browseRows); err != nil {
 		return v, err
 	}
-	if v.Tracked, err = s.App.Store.TrackedURLs(r.Context(), module); err != nil {
+	// A search the library filter emptied says so, rather than suggesting
+	// the site lacks what the reader already follows.
+	if v.Found == 0 && v.HideLibrary {
+		if _, all, err := s.App.Store.SearchSiteTitles(ctx, module, v.Query, false, 0, 1); err == nil {
+			v.HiddenMatches = all
+		}
+	}
+	if v.Tracked, err = s.App.Store.TrackedURLs(ctx, module); err != nil {
 		return v, err
+	}
+	return v, nil
+}
+
+// siteStatusView is what a site's status line and failure states need: the
+// stored catalogue, the read running now, and what explains a failure.
+func (s *Server) siteStatusView(ctx context.Context, module string) (ui.BrowseView, error) {
+	v := ui.BrowseView{Module: module, FlareSolverr: s.App.Cfg.FlaresolverrURL != ""}
+	var err error
+	if v.Catalogue, err = s.App.Store.SiteCatalogueInfo(ctx, module); err != nil {
+		return v, err
+	}
+	v.Progress, v.Indexing = s.App.ActiveReads()[module]
+	v.Indexing = v.Indexing || s.App.Indexing(ctx, module)
+	if e, ok := s.App.SiteInfo(ctx, module); ok {
+		v.Category, v.SiteURL, v.ModuleFile = e.Category, s.App.SiteAddress(ctx, e), e.FileName
+	}
+	v.ModulesDate = s.App.Registry.CommitDate()
+	if v.Catalogue.Problem != "" {
+		v.OthersWorking, _ = s.App.Store.OthersWorking(ctx, module)
 	}
 	return v, nil
 }
@@ -192,17 +301,9 @@ func (s *Server) handleFollowMany(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("followed several", "module", module, "count", followed)
-	// Reloading the index would cost another request to the site, so the page
-	// says what happened and offers the library rather than re-fetching.
-	w.Header().Set("HX-Reswap", "outerHTML")
-	w.Header().Set("HX-Retarget", "#follow-many")
-	detail := "their chapter lists are being fetched"
-	if followed == 1 {
-		detail = "its chapter list is being fetched"
-	}
-	s.render(w, r, ui.Notice(
-		fmt.Sprintf("Following %d more — %s.", followed, detail),
-		"/"))
+	// The list is stored, so showing the followed titles as in the library
+	// costs the site nothing.
+	reloadPage(w)
 }
 
 func queryPage(r *http.Request) int {
@@ -448,6 +549,16 @@ func (s *Server) handleSaveModuleSettings(w http.ResponseWriter, r *http.Request
 		if v := r.PostForm.Get(app.MirrorOption); v != "" {
 			values[app.MirrorOption] = v
 		}
+	}
+	// An empty address goes back to the declared ones; anything else has to
+	// be an address.
+	if typed := strings.TrimSpace(r.PostForm.Get(app.AddressOption)); typed == "" {
+		values[app.AddressOption] = ""
+	} else if addr, ok := app.CleanAddress(typed); ok {
+		values[app.AddressOption] = addr
+	} else {
+		http.Error(w, fmt.Sprintf("%q is not a web address; it needs http:// or https:// and a host", typed), http.StatusBadRequest)
+		return
 	}
 
 	username := r.PostForm.Get("__username")
@@ -754,6 +865,10 @@ func (s *Server) queueView(ctx context.Context) ui.QueueView {
 		v.Done += p.Done
 		v.Total += p.Total
 	}
+	for site := range s.App.ActiveReads() {
+		v.Reading = append(v.Reading, site)
+	}
+	slices.Sort(v.Reading)
 	return v
 }
 
