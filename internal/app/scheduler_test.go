@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1650,6 +1651,178 @@ func TestRefreshMarksNewTitles(t *testing.T) {
 
 	if info := read(); info.NewTitles != 0 {
 		t.Errorf("a title stayed new past the read after, %d new", info.NewTitles)
+	}
+}
+
+// hookedSite is the sectioned test site behind a hook that may answer a
+// request itself, and a log of the paths asked for.
+func hookedSite(t *testing.T, hook func(w http.ResponseWriter, r *http.Request) bool) (*httptest.Server, func() []string) {
+	t.Helper()
+	inner := sectionedSite(t)
+	var mu sync.Mutex
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		if hook != nil && hook(w, r) {
+			return
+		}
+		res, err := http.Get(inner.URL + r.URL.RequestURI())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), paths...)
+	}
+}
+
+func waitIdle(t *testing.T, ctx context.Context, a *App) {
+	t.Helper()
+	waitFor(t, ctx, func() bool {
+		stats, _ := a.Queue.Stats(ctx)
+		return stats["running"] == 0 && len(a.ActiveReads()) == 0 && !a.Indexing(ctx, "Sectioned")
+	}, "the read to end")
+}
+
+// TestFailedReadResumes covers carrying on a read that failed partway: it
+// keeps what it read and where it stopped, is not retried when the site
+// refused it, and carries on from there without asking for earlier pages.
+func TestFailedReadResumes(t *testing.T) {
+	var refuse atomic.Bool
+	refuse.Store(true)
+	srv, paths := hookedSite(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if refuse.Load() && r.URL.Path == "/dir/2/0" {
+			http.Error(w, "no", http.StatusForbidden)
+			return true
+		}
+		return false
+	})
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Problem != ProblemBlocked || info.Complete || info.Titles != 3 {
+		t.Fatalf("after the refusal: problem=%q complete=%v titles=%d", info.Problem, info.Complete, info.Titles)
+	}
+	if info.Resume.Dir < 0 || !info.RetryAt.IsZero() {
+		t.Errorf("resume=%+v retryAt=%v, want a position and no retry", info.Resume, info.RetryAt)
+	}
+
+	refuse.Store(false)
+	asked := len(paths())
+	if err := a.EnqueueResume(ctx, "Sectioned"); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+	if !info.Complete || info.Titles != 4 || info.Problem != "" {
+		t.Errorf("after resuming: complete=%v titles=%d problem=%q", info.Complete, info.Titles, info.Problem)
+	}
+	for _, p := range paths()[asked:] {
+		if p == "/dir/1/0" || p == "/dir/1/1" {
+			t.Errorf("resuming asked for %s again", p)
+		}
+	}
+	if info.Pages == 0 || info.OKAt.IsZero() {
+		t.Errorf("a complete read should record its pages (%d) and when it succeeded", info.Pages)
+	}
+}
+
+// TestStoppedReadCarriesOn covers the reader stopping a read and carrying it
+// on later.
+func TestStoppedReadCarriesOn(t *testing.T) {
+	var slow atomic.Bool
+	slow.Store(true)
+	srv, _ := hookedSite(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if slow.Load() && r.URL.Path != "/dir/0/0" {
+			time.Sleep(300 * time.Millisecond)
+		}
+		return false
+	})
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		p, ok := a.ActiveReads()["Sectioned"]
+		return ok && p.Titles > 0
+	}, "the read to find something")
+	if !a.StopRead("Sectioned") {
+		t.Fatal("no read to stop")
+	}
+	waitIdle(t, ctx, a)
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Problem != ProblemStopped || info.Complete || info.Resume.Dir < 0 {
+		t.Fatalf("after stopping: problem=%q complete=%v resume=%+v", info.Problem, info.Complete, info.Resume)
+	}
+
+	slow.Store(false)
+	if err := a.EnqueueResume(ctx, "Sectioned"); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+	if !info.Complete || info.Titles != 4 {
+		t.Errorf("after carrying on: complete=%v titles=%d", info.Complete, info.Titles)
+	}
+}
+
+// TestDownSiteIsRetriedLater covers the automatic retry of a site that is
+// down: it is scheduled, it does not count as a read in progress while it
+// waits, and asking for a read now replaces it.
+func TestDownSiteIsRetriedLater(t *testing.T) {
+	var down atomic.Bool
+	down.Store(true)
+	srv, _ := hookedSite(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if down.Load() {
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return true
+		}
+		return false
+	})
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Problem != ProblemDown || info.Retries != 1 {
+		t.Fatalf("problem=%q retries=%d", info.Problem, info.Retries)
+	}
+	if wait := time.Until(info.RetryAt); wait < 4*time.Minute || wait > 6*time.Minute {
+		t.Errorf("retry in %v, want about five minutes", wait)
+	}
+	if a.Indexing(ctx, "Sectioned") {
+		t.Error("a retry waiting for later should not count as a read in progress")
+	}
+	if stats, _ := a.Queue.Stats(ctx); stats["pending"] != 1 {
+		t.Errorf("pending jobs = %d, want the one retry", stats["pending"])
+	}
+
+	down.Store(false)
+	if err := a.EnqueueResume(ctx, "Sectioned"); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+	if !info.Complete || info.Titles != 4 || !info.RetryAt.IsZero() {
+		t.Errorf("after trying now: complete=%v titles=%d retryAt=%v", info.Complete, info.Titles, info.RetryAt)
+	}
+	if stats, _ := a.Queue.Stats(ctx); stats["pending"] != 0 {
+		t.Errorf("the scheduled retry is still waiting: %d pending", stats["pending"])
 	}
 }
 

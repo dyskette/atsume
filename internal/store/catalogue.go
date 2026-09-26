@@ -41,7 +41,25 @@ type SiteCatalogue struct {
 	// NewTitles is how many titles the latest read found that the one
 	// before did not.
 	NewTitles int
+	// Pages is how many directory pages the last complete read took, and
+	// Steps how many the latest read got through.
+	Pages, Steps int
+	// Resume is where an unfinished read stopped; Resume.Dir is -1 when
+	// there is nothing to carry on from.
+	Resume ReadPos
+	// OKAt is when the site last read all the way through.
+	OKAt time.Time
+	// RetryAt is when atsume tries a site that was down again, zero when it
+	// will not, and Retries how many times it has.
+	RetryAt time.Time
+	Retries int
 }
+
+// ReadPos is a position in a site's directory: which section, which page.
+type ReadPos struct{ Dir, Page int }
+
+// NoPos is the position of a read with nothing to resume.
+var NoPos = ReadPos{Dir: -1}
 
 // FromSite reports whether atsume read this catalogue itself.
 func (c SiteCatalogue) FromSite() bool { return c.Source != SourcePrebuilt }
@@ -143,6 +161,14 @@ type ReadOutcome struct {
 	DataAt time.Time
 	// Problem is the kind of failure that ended the read, "" when none.
 	Problem string
+	// Steps is how many directory pages the read got through.
+	Steps int
+	// Resume is where an unfinished read can carry on from, NoPos for none.
+	Resume ReadPos
+	// RetryAt is when atsume will try again by itself, and Retries how
+	// many times it has so far.
+	RetryAt time.Time
+	Retries int
 }
 
 // FinishSiteCatalogue records how the read ended.
@@ -166,29 +192,72 @@ func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, read int64
 			return err
 		}
 	}
-	var data any
-	if !o.DataAt.IsZero() {
-		data = o.DataAt.UTC().Format("2006-01-02 15:04:05")
+	if o.Complete {
+		o.Resume = NoPos
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE site_catalogue
-		SET complete = ?, note = ?, source = ?, data_at = ?, problem = ?, built_at = CURRENT_TIMESTAMP
-		WHERE site = ?`, o.Complete, o.Note, o.Source, data, o.Problem, site); err != nil {
+		SET complete = ?, note = ?, source = ?, data_at = ?, problem = ?, built_at = CURRENT_TIMESTAMP,
+		    steps = ?, resume_dir = ?, resume_page = ?, retry_at = ?, retries = ?,
+		    pages = CASE WHEN ? THEN ? ELSE pages END,
+		    ok_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE ok_at END
+		WHERE site = ?`,
+		o.Complete, o.Note, o.Source, sqlTime(o.DataAt), o.Problem,
+		o.Steps, o.Resume.Dir, o.Resume.Page, sqlTime(o.RetryAt), o.Retries,
+		o.Complete && o.Source == SourceSite, o.Steps,
+		o.Complete, site); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
+// ResumeSiteCatalogue picks an unfinished read back up: the read number its
+// titles carry, where it stopped, how far it had got, and the titles it had
+// already seen. ok is false when there is nothing to resume.
+func (s *Store) ResumeSiteCatalogue(ctx context.Context, site string) (read int64, at ReadPos, steps int, seen []string, ok bool, err error) {
+	err = s.DB.QueryRowContext(ctx, `
+		SELECT read_seq, resume_dir, resume_page, steps FROM site_catalogue
+		WHERE site = ? AND complete = 0 AND resume_dir >= 0`, site).
+		Scan(&read, &at.Dir, &at.Page, &steps)
+	if err == sql.ErrNoRows {
+		return 0, NoPos, 0, nil, false, nil
+	}
+	if err != nil {
+		return 0, NoPos, 0, nil, false, err
+	}
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT url FROM site_title WHERE site = ? AND seen_read = ?`, site, read)
+	if err != nil {
+		return 0, NoPos, 0, nil, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return 0, NoPos, 0, nil, false, err
+		}
+		seen = append(seen, u)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, NoPos, 0, nil, false, err
+	}
+	_, err = s.DB.ExecContext(ctx,
+		`UPDATE site_catalogue SET note = '', retry_at = NULL WHERE site = ?`, site)
+	return read, at, steps, seen, err == nil, err
+}
+
 // SiteCatalogueInfo reports what is stored for a site.
 func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalogue, error) {
-	out := SiteCatalogue{Site: site}
-	var built, data sql.NullString
+	out := SiteCatalogue{Site: site, Resume: NoPos}
+	var built, data, okAt, retryAt sql.NullString
 	err := s.DB.QueryRowContext(ctx, `
 		SELECT built_at, complete, note, source, data_at, problem,
 		       (SELECT COUNT(*) FROM site_title WHERE site = c.site),
-		       (SELECT COUNT(*) FROM site_title WHERE site = c.site AND c.new_from > 0 AND first_read = c.new_from)
+		       (SELECT COUNT(*) FROM site_title WHERE site = c.site AND c.new_from > 0 AND first_read = c.new_from),
+		       pages, steps, resume_dir, resume_page, ok_at, retry_at, retries
 		FROM site_catalogue c WHERE site = ?`, site).
-		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Problem, &out.Titles, &out.NewTitles)
+		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Problem, &out.Titles, &out.NewTitles,
+			&out.Pages, &out.Steps, &out.Resume.Dir, &out.Resume.Page, &okAt, &retryAt, &out.Retries)
 	if err == sql.ErrNoRows {
 		return out, nil
 	}
@@ -201,6 +270,12 @@ func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalog
 	}
 	if t := parseTimestamp(data); t.Valid {
 		out.DataAt = t.Time
+	}
+	if t := parseTimestamp(okAt); t.Valid {
+		out.OKAt = t.Time
+	}
+	if t := parseTimestamp(retryAt); t.Valid {
+		out.RetryAt = t.Time
 	}
 	return out, nil
 }
@@ -251,4 +326,13 @@ func (s *Store) SearchSiteTitles(ctx context.Context, site, query string, offset
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
+}
+
+// sqlTime formats t the way SQLite's CURRENT_TIMESTAMP does, in UTC, so the
+// two compare as text; the zero time is NULL.
+func sqlTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format("2006-01-02 15:04:05")
 }

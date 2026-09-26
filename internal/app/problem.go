@@ -24,6 +24,8 @@ const (
 	// ProblemBroken is the module failing while running, which is a fault in
 	// the module or in atsume's support for it rather than in the site.
 	ProblemBroken = "broken"
+	// ProblemStopped is not a failure: the reader stopped the read.
+	ProblemStopped = "stopped"
 )
 
 // classifyProblem says what kind of failure err is, "" when it is none of

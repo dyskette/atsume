@@ -41,6 +41,19 @@ func (q *Queue) Enqueue(ctx context.Context, kind string, payload any) (int64, e
 	return id, err
 }
 
+// EnqueueAt adds a job that no worker takes before at.
+func (q *Queue) EnqueueAt(ctx context.Context, kind string, payload any, at time.Time) (int64, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	err = q.db.QueryRowContext(ctx,
+		`INSERT INTO jobs (kind, payload, run_after) VALUES (?, ?, ?) RETURNING id`,
+		kind, string(raw), sqlTime(at)).Scan(&id)
+	return id, err
+}
+
 // Claim atomically takes the next runnable job, or returns nil when there is
 // none. The UPDATE ... RETURNING runs as a single statement so two workers can
 // never claim the same row.
@@ -122,6 +135,27 @@ func (q *Queue) DeletePending(ctx context.Context, kind, key string, value any) 
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// ActiveOfKind returns the payloads of jobs of one kind running or ready to
+// run now, leaving out those waiting for a retry time still to come.
+func (q *Queue) ActiveOfKind(ctx context.Context, kind string) ([]json.RawMessage, error) {
+	rows, err := q.db.QueryContext(ctx,
+		`SELECT payload FROM jobs WHERE kind = ?
+		 AND (state = 'running' OR (state = 'pending' AND run_after <= CURRENT_TIMESTAMP))`, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []json.RawMessage
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, json.RawMessage(p))
+	}
+	return out, rows.Err()
 }
 
 // PendingInOrder returns the payloads of jobs of one kind waiting to start,

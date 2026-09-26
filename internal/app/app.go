@@ -46,6 +46,8 @@ type App struct {
 	files fileClaims
 	// active is the chapter downloads running now.
 	active activeDownloads
+	// reads is the site reads running now.
+	reads activeReads
 	// started is when this process came up, which is what tells a scheduler
 	// that has never run apart from one that started a moment ago.
 	started time.Time
