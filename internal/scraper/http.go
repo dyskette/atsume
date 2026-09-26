@@ -46,6 +46,15 @@ type HTTP struct {
 	LastURL    string
 	Terminated bool
 
+	// LastErr is why the last request got no answer at all: a name that did
+	// not resolve, a refused connection, a timeout. It is nil when the site
+	// answered, whatever the status.
+	LastErr error
+	// Challenged is set once any response carried an anti-bot interstitial,
+	// whatever its status, so a read that came back empty can be told apart
+	// from one that was quietly turned away.
+	Challenged bool
+
 	// Document holds the last response body. It is a pointer so that a module
 	// rewriting it in place — descrambling a tiled image, for instance — is
 	// visible here afterwards.
@@ -80,8 +89,8 @@ func NewHTTP(ctx context.Context, limiter Limiter, transport http.RoundTripper, 
 func (h *HTTP) do(method, rawURL, body string) bool {
 	h.Document.Set(nil)
 	h.ResultCode = 0
+	h.LastErr = nil
 
-	var lastErr error
 	for attempt := 0; attempt <= h.RetryCount; attempt++ {
 		if h.ctx.Err() != nil {
 			h.Terminated = true
@@ -100,7 +109,7 @@ func (h *HTTP) do(method, rawURL, body string) bool {
 		if ok {
 			return true
 		}
-		lastErr = err
+		h.LastErr = err
 		// An anti-bot interstitial is recoverable where an ordinary refusal is
 		// not, so it is checked before giving up on a 4xx.
 		if h.trySolve(rawURL) {
@@ -111,7 +120,6 @@ func (h *HTTP) do(method, rawURL, body string) bool {
 			return false
 		}
 	}
-	_ = lastErr
 	return false
 }
 
@@ -159,6 +167,9 @@ func (h *HTTP) attempt(method, rawURL, body string) (bool, error) {
 		return false, err
 	}
 	h.Document.Set(data)
+	if hasChallengeMarkers(data) {
+		h.Challenged = true
+	}
 	return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 }
 

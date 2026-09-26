@@ -1545,6 +1545,45 @@ func TestEmptyReadKeepsTheList(t *testing.T) {
 	}
 }
 
+// TestReadRecordsWhyItFailed covers the kind of failure a read records,
+// which decides what the site page offers. Server errors and no answer at
+// all are covered by TestClassifyProblem: the HTTP binding retries those
+// with seconds of backoff.
+func TestReadRecordsWhyItFailed(t *testing.T) {
+	cases := []struct {
+		name    string
+		serve   func(w http.ResponseWriter)
+		problem string
+	}{
+		{"refused", func(w http.ResponseWriter) { http.Error(w, "no", http.StatusForbidden) }, ProblemBlocked},
+		{"not found", func(w http.ResponseWriter) { http.NotFound(w, nil) }, ProblemMoved},
+		{"challenge served as 200", func(w http.ResponseWriter) {
+			fmt.Fprint(w, "<html><title>Just a moment...</title></html>")
+		}, ProblemBlocked},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { c.serve(w) }))
+			t.Cleanup(srv.Close)
+			a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+			if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+				t.Fatal(err)
+			}
+			var info store.SiteCatalogue
+			waitFor(t, ctx, func() bool {
+				info, _ = st.SiteCatalogueInfo(ctx, "Sectioned")
+				return info.Problem != ""
+			}, "the read to record a problem")
+			if info.Problem != c.problem {
+				t.Errorf("problem = %q, want %q (note %q)", info.Problem, c.problem, info.Note)
+			}
+			if info.Complete {
+				t.Error("a failed read should not count as complete")
+			}
+		})
+	}
+}
+
 // countingSite is the sectioned test site with a request counter, so a test
 // can tell whether looking at a catalogue went back to the network.
 func countingSite(t *testing.T, reads *atomic.Int32) *httptest.Server {
@@ -1668,7 +1707,7 @@ func TestRereadKeepsTheListUsable(t *testing.T) {
 		[]store.SiteTitle{{URL: "/manga/beta-one/", Name: "Beta One", Seq: 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishSiteCatalogue(ctx, "Sectioned", false, "gave up", store.SourceSite, time.Now(), read); err != nil {
+	if err := st.FinishSiteCatalogue(ctx, "Sectioned", read, store.ReadOutcome{Note: "gave up", Source: store.SourceSite, DataAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ = st.SiteCatalogueInfo(ctx, "Sectioned"); info.Titles != 4 {
@@ -1684,7 +1723,7 @@ func TestRereadKeepsTheListUsable(t *testing.T) {
 		[]store.SiteTitle{{URL: "/manga/beta-one/", Name: "Beta One", Seq: 0}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishSiteCatalogue(ctx, "Sectioned", true, "1 title", store.SourceSite, time.Now(), read); err != nil {
+	if err := st.FinishSiteCatalogue(ctx, "Sectioned", read, store.ReadOutcome{Complete: true, Note: "1 title", Source: store.SourceSite, DataAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ = st.SiteCatalogueInfo(ctx, "Sectioned"); info.Titles != 1 {

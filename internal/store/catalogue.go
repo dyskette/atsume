@@ -34,6 +34,8 @@ type SiteCatalogue struct {
 	// DataAt is how old the titles are, which for a snapshot is not when it
 	// was downloaded.
 	DataAt time.Time
+	// Problem is what kind of failure ended the last read, "" when none.
+	Problem string
 }
 
 // FromSite reports whether atsume read this catalogue itself.
@@ -123,12 +125,25 @@ func (s *Store) AddSiteTitles(ctx context.Context, site string, read int64, titl
 	return tx.Commit()
 }
 
+// ReadOutcome is how a read of a site's catalogue ended.
+type ReadOutcome struct {
+	// Complete is a read that got to the end, which is the only kind that
+	// may decide a title has gone.
+	Complete bool
+	Note     string
+	Source   string
+	// DataAt is how old the titles are.
+	DataAt time.Time
+	// Problem is the kind of failure that ended the read, "" when none.
+	Problem string
+}
+
 // FinishSiteCatalogue records how the read ended.
 //
 // The timestamp is stamped here rather than at the start: "read 20 minutes
 // ago" should mean the list is twenty minutes old, and a read of a large
 // site takes minutes of that by itself.
-func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, complete bool, note, source string, dataAt time.Time, read int64) error {
+func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, read int64, o ReadOutcome) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -138,20 +153,20 @@ func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, complete b
 	// Only a read that finished may decide a title has gone. One that failed
 	// partway simply did not get there, and treating that as a deletion
 	// would empty a catalogue because a site had a bad minute.
-	if complete {
+	if o.Complete {
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM site_title WHERE site = ? AND seen_read <> ?`, site, read); err != nil {
 			return err
 		}
 	}
 	var data any
-	if !dataAt.IsZero() {
-		data = dataAt.UTC().Format("2006-01-02 15:04:05")
+	if !o.DataAt.IsZero() {
+		data = o.DataAt.UTC().Format("2006-01-02 15:04:05")
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE site_catalogue
-		SET complete = ?, note = ?, source = ?, data_at = ?, built_at = CURRENT_TIMESTAMP
-		WHERE site = ?`, complete, note, source, data, site); err != nil {
+		SET complete = ?, note = ?, source = ?, data_at = ?, problem = ?, built_at = CURRENT_TIMESTAMP
+		WHERE site = ?`, o.Complete, o.Note, o.Source, data, o.Problem, site); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -162,10 +177,10 @@ func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalog
 	out := SiteCatalogue{Site: site}
 	var built, data sql.NullString
 	err := s.DB.QueryRowContext(ctx, `
-		SELECT built_at, complete, note, source, data_at,
+		SELECT built_at, complete, note, source, data_at, problem,
 		       (SELECT COUNT(*) FROM site_title WHERE site = ?)
 		FROM site_catalogue WHERE site = ?`, site, site).
-		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Titles)
+		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Problem, &out.Titles)
 	if err == sql.ErrNoRows {
 		return out, nil
 	}

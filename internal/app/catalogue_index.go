@@ -108,6 +108,9 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 		// position hands back the same 2,677 titles and a read that trusted
 		// the count would never finish.
 		seen = map[string]bool{}
+		// Challenged is whether any page was an anti-bot interstitial,
+		// which a module can take for an empty page without complaint.
+		challenged bool
 	)
 	flush := func() error {
 		if len(batch) == 0 {
@@ -129,11 +132,13 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 			// Whatever was read stays: a partial catalogue a reader can
 			// search beats nothing, as long as it says it is partial.
 			_ = flush()
-			_ = a.Store.FinishSiteCatalogue(ctx, p.Site, false, err.Error(),
-				store.SourceSite, time.Time{}, read)
+			_ = a.Store.FinishSiteCatalogue(ctx, p.Site, read, store.ReadOutcome{
+				Note: err.Error(), Source: store.SourceSite, Problem: classifyProblem(err),
+			})
 			a.publishIndex(p.Site, "failed", err.Error(), seq)
 			return err
 		}
+		challenged = challenged || res.Challenged
 		var added int
 		for _, e := range res.Entries {
 			if e.Link == "" || seen[e.Link] {
@@ -161,21 +166,23 @@ func (a *App) indexSite(ctx context.Context, raw json.RawMessage) error {
 	}
 
 	note := fmt.Sprintf("%s in %s", plural(seq, "title"), humanElapsed(time.Since(startedAt)))
-	complete, source, dataAt := true, store.SourceSite, time.Now()
-	// A read that finds nothing on a site that listed titles before is more
-	// likely a changed layout, or a challenge page served as 200, than a
-	// site that emptied overnight. Finishing it as complete would remove
-	// every stored title, so the list is kept, still saying where it came
-	// from and how old it is, and the read is marked incomplete.
+	out := store.ReadOutcome{Complete: true, Note: note, Source: store.SourceSite, DataAt: time.Now()}
+	// A read that finds nothing is more likely a changed layout, or a
+	// challenge page served as 200, than a site that emptied overnight.
+	// Finishing it as complete would remove every stored title, so a list
+	// already here is kept, still saying where it came from and how old it
+	// is, and the read is marked incomplete.
 	if seq == 0 {
+		if challenged {
+			out.Complete, out.Problem = false, ProblemBlocked
+		}
 		if before, err := a.Store.SiteCatalogueInfo(ctx, p.Site); err == nil && before.Titles > 0 {
-			complete, source, dataAt = false, before.Source, before.DataAt
-			note = fmt.Sprintf("the site listed no titles, so the %s from before were kept",
+			out.Complete, out.Source, out.DataAt = false, before.Source, before.DataAt
+			out.Note = fmt.Sprintf("the site listed no titles, so the %s from before were kept",
 				plural(before.Titles, "title"))
 		}
 	}
-	if err := a.Store.FinishSiteCatalogue(ctx, p.Site, complete, note,
-		source, dataAt, read); err != nil {
+	if err := a.Store.FinishSiteCatalogue(ctx, p.Site, read, out); err != nil {
 		return err
 	}
 	slog.Info("site catalogue read", "site", p.Site, "titles", seq, "took", time.Since(startedAt))
@@ -235,8 +242,9 @@ func (a *App) indexFromSnapshot(ctx context.Context, site string, read int64, st
 
 	note := fmt.Sprintf("%s from a published catalogue, %s", plural(len(titles), "title"),
 		humanBytes(snap.Bytes))
-	if err := a.Store.FinishSiteCatalogue(ctx, site, true, note,
-		store.SourcePrebuilt, snap.Newest, read); err != nil {
+	if err := a.Store.FinishSiteCatalogue(ctx, site, read, store.ReadOutcome{
+		Complete: true, Note: note, Source: store.SourcePrebuilt, DataAt: snap.Newest,
+	}); err != nil {
 		return false, err
 	}
 	slog.Info("site catalogue from snapshot", "site", site, "titles", len(titles),

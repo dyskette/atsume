@@ -174,6 +174,9 @@ type BrowseResult struct {
 	// Sections is how many the site is split into, so the reader can be told
 	// when they cross from one into another.
 	Sections int
+	// Challenged reports that the site served an anti-bot interstitial,
+	// which is why a position can come back empty without an error.
+	Challenged bool
 }
 
 // maxBrowseRollovers bounds how many empty sections one request will skip.
@@ -205,6 +208,7 @@ func (a *App) Browse(ctx context.Context, module string, at BrowsePos) (BrowseRe
 	for attempt := 0; attempt < maxBrowseRollovers && at.Dir < total; attempt++ {
 		r.SetDirectoryIndex(at.Dir)
 		entries, err := r.GetNameAndLink(at.Page)
+		out.Challenged = r.Challenged()
 		if err != nil {
 			return out, err
 		}

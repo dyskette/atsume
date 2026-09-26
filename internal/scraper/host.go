@@ -383,8 +383,7 @@ func (r *Runner) GetNameAndLink(page int) ([]Entry, error) {
 		return nil, err
 	}
 	if truncInt(v) == netProblem {
-		return nil, fmt.Errorf("%s: network problem listing page %d from %s (last status %d)",
-			r.mod.Name, page+1, r.mod.RootURL, r.http.ResultCode)
+		return nil, r.fetchError(fmt.Sprintf("listing page %d from %s", page+1, r.mod.RootURL))
 	}
 
 	links, names := r.links.All(), r.names.All()
@@ -425,8 +424,7 @@ func (r *Runner) GetInfo(mangaURL string) (*MangaInfo, error) {
 	}
 	switch truncInt(v) {
 	case netProblem:
-		return nil, fmt.Errorf("%s: network problem fetching %s (last status %d)",
-			r.mod.Name, mangaURL, r.http.ResultCode)
+		return nil, r.fetchError("fetching " + mangaURL)
 	case informationNotFound:
 		return nil, fmt.Errorf("%s: no series information at %s; the page may have moved",
 			r.mod.Name, mangaURL)
