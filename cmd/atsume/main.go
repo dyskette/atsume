@@ -7,6 +7,8 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,6 +25,17 @@ import (
 )
 
 func main() {
+	// "atsume module …" runs one website module for someone fixing it, and
+	// starts nothing else.
+	if len(os.Args) > 1 && os.Args[1] == "module" {
+		if err := runModule(os.Args[2:], os.Stdout); err != nil {
+			if !errors.Is(err, flag.ErrHelp) {
+				fmt.Fprintln(os.Stderr, "atsume module:", err)
+			}
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)

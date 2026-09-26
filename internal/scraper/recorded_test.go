@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -64,10 +63,6 @@ func runRecordedCase(t *testing.T, root, luaRoot, name string, record bool) *Run
 	if err := json.Unmarshal(raw, &c); err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(lua55Rejects, c.Module) {
-		t.Skipf("%s needs a template Lua 5.5 rejects until FMD2 fixes it; see lua55Rejects", c.Module)
-	}
-
 	cassetteDir := filepath.Join(dir, "cassette")
 	if !record {
 		if _, err := os.Stat(cassetteDir); err != nil {
@@ -86,6 +81,12 @@ func runRecordedCase(t *testing.T, root, luaRoot, name string, record bool) *Run
 
 	h := &Host{LuaDir: luaRoot, Transport: cassette}
 	r, err := h.Open(context.Background(), modFile, "", "")
+	// Skipped only when the checkout's module really is one Lua 5.5 rejects,
+	// so a checkout where it is fixed — a fork, or upstream once it merges
+	// the fix — runs the case.
+	if isLua55Reject(err) {
+		t.Skipf("%s assigns to a for loop variable, which Lua 5.5 rejects: %v", c.Module, err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

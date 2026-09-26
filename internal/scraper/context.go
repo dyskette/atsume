@@ -98,3 +98,7 @@ func (u *updateList) bind(r *rt.Runtime) rt.Value {
 	}}
 	return f.push(r)
 }
+
+// DirectoryPageNumber is how many pages the module said the current directory
+// has, through UPDATELIST.CurrentDirectoryPageNumber; 0 when it said nothing.
+func (r *Runner) DirectoryPageNumber() int { return r.update.CurrentDirectoryPageNumber }

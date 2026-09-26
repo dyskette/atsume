@@ -105,7 +105,7 @@ func classifyLoadError(err string) string {
 	switch {
 	// Lua 5.5 makes a for loop's control variable read-only; nine upstream
 	// modules assign to it.
-	case strings.Contains(err, "constant variable"):
+	case strings.Contains(err, lua55RejectMessage):
 		return "lua 5.5 read-only for"
 	case strings.Contains(err, "goto"):
 		return "lua 5.2 goto"

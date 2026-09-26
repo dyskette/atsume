@@ -260,6 +260,30 @@ func joinAll(vals []string, sep string) string {
 	return strings.Join(out, sep)
 }
 
+// Values evaluates expr the way modules' XPath calls do, returning each
+// result as a trimmed string and the error the module calls swallow: a
+// selector being tried out should say why it matched nothing.
+func (q *Query) Values(expr string) ([]string, error) {
+	var err error
+	if _, caps := Rewrite(expr); len(caps.Parts) == 0 {
+		_, _, err = q.eval(expr, nil)
+	} else {
+		for _, part := range caps.Parts {
+			if _, cerr := xpath.Compile(part); cerr != nil && err == nil {
+				err = cerr
+			}
+		}
+	}
+	vals, _ := q.evalValues(expr, nil)
+	var out []string
+	for _, s := range vals {
+		if t := strings.TrimSpace(s); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out, err
+}
+
 // XPathValues returns each result as a trimmed string, dropping empty ones.
 // It backs the XPathStringAll(expr, list) overload that fills a TStringList.
 func (q *Query) XPathValues(expr string, ctx *html.Node) []string {
