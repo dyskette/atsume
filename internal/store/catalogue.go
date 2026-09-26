@@ -283,22 +283,46 @@ func (s *Store) OthersWorking(ctx context.Context, site string) (bool, error) {
 
 // SiteCatalogueInfo reports what is stored for a site.
 func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalogue, error) {
-	out := SiteCatalogue{Site: site, Resume: NoPos}
-	var built, data, okAt, retryAt sql.NullString
-	err := s.DB.QueryRowContext(ctx, `
-		SELECT built_at, complete, note, source, data_at, problem,
-		       (SELECT COUNT(*) FROM site_title WHERE site = c.site),
-		       (SELECT COUNT(*) FROM site_title WHERE site = c.site AND c.new_from > 0 AND first_read = c.new_from),
-		       pages, steps, resume_dir, resume_page, ok_at, retry_at, retries,
-		       status, challenged, cause, moved_to, new_from > 0
-		FROM site_catalogue c WHERE site = ?`, site).
-		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Problem, &out.Titles, &out.NewTitles,
-			&out.Pages, &out.Steps, &out.Resume.Dir, &out.Resume.Page, &okAt, &retryAt, &out.Retries,
-			&out.Status, &out.Challenged, &out.Cause, &out.MovedTo, &out.OverList)
+	out, err := scanCatalogue(s.DB.QueryRowContext(ctx, `SELECT `+catalogueColumns+` FROM site_catalogue c WHERE site = ?`, site))
 	if err == sql.ErrNoRows {
-		return out, nil
+		return SiteCatalogue{Site: site, Resume: NoPos}, nil
 	}
+	return out, err
+}
+
+// SiteCatalogues reports what is stored for every site that has been read,
+// by site.
+func (s *Store) SiteCatalogues(ctx context.Context) (map[string]SiteCatalogue, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+catalogueColumns+` FROM site_catalogue c`)
 	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]SiteCatalogue{}
+	for rows.Next() {
+		c, err := scanCatalogue(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[c.Site] = c
+	}
+	return out, rows.Err()
+}
+
+// catalogueColumns are what scanCatalogue reads, from site_catalogue as c.
+const catalogueColumns = `c.site, built_at, complete, note, source, data_at, problem,
+	(SELECT COUNT(*) FROM site_title WHERE site = c.site),
+	(SELECT COUNT(*) FROM site_title WHERE site = c.site AND c.new_from > 0 AND first_read = c.new_from),
+	pages, steps, resume_dir, resume_page, ok_at, retry_at, retries,
+	status, challenged, cause, moved_to, new_from > 0`
+
+func scanCatalogue(row interface{ Scan(...any) error }) (SiteCatalogue, error) {
+	out := SiteCatalogue{Resume: NoPos}
+	var built, data, okAt, retryAt sql.NullString
+	if err := row.Scan(&out.Site, &built, &out.Complete, &out.Note, &out.Source, &data, &out.Problem,
+		&out.Titles, &out.NewTitles,
+		&out.Pages, &out.Steps, &out.Resume.Dir, &out.Resume.Page, &okAt, &retryAt, &out.Retries,
+		&out.Status, &out.Challenged, &out.Cause, &out.MovedTo, &out.OverList); err != nil {
 		return out, err
 	}
 	out.Exists = true

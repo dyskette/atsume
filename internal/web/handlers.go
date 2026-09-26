@@ -46,16 +46,26 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
-	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	v := ui.BuildSites(s.App.ModuleCatalogue(r.Context()), query)
-
-	// htmx sends this header when swapping the list in place; a full page load
-	// needs the chrome around it.
-	if r.Header.Get("HX-Request") == "true" {
-		s.render(w, r, ui.SiteGroups(v))
+	ctx := r.Context()
+	q := r.URL.Query()
+	in := ui.SitesInput{
+		Catalogue: s.App.ModuleCatalogue(ctx),
+		Query:     q.Get("q"), Category: q.Get("cat"),
+		HideProblems: q.Get("problems") == "hide", ShowAll: q.Get("all") == "1",
+		ModulesDate: s.App.Registry.CommitDate(),
+	}
+	var err error
+	if in.Catalogues, err = s.App.Store.SiteCatalogues(ctx); err != nil {
+		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, ui.Sites(v))
+	now := time.Now()
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if in.Usage, err = s.App.Store.SiteUsage(ctx, dayStart); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, ui.Sites(ui.BuildSites(in)))
 }
 
 // browseRows is how many titles one screenful holds. A catalogue can run to

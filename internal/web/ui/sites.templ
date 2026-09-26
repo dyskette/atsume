@@ -1,0 +1,107 @@
+package ui
+
+import "fmt"
+
+// Sites is every site atsume can read: first the ones the library uses, then
+// all of them in a table saying how each one's last read went.
+templ Sites(v SitesView) {
+	@Layout("Sites") {
+		<div class="sites-head">
+			<h1>Sites</h1>
+			<span class="muted">{ v.Counts() }</span>
+			<span class="grow"></span>
+			<span class="muted">
+				if !v.ModulesDate.IsZero() {
+					{ "Modules from " + v.ModulesDate.Format("2 Jan 2006") }
+				}
+			</span>
+			@updateModulesButton(false)
+		</div>
+		if len(v.Yours) > 0 {
+			<h2>Your sites</h2>
+			<ul class="site-cards">
+				for _, c := range v.Yours {
+					<li>
+						<a href={ templ.SafeURL(SiteURL(c.Site)) }>
+							<strong><span class={ "dot", c.Tone }></span>{ c.Site }</strong>
+							<span class="muted">{ fmt.Sprintf("%d following · %s", c.Following, Count(c.Titles, "title", "titles")) }</span>
+							if c.Line != "" {
+								<span class={ "line", c.Tone }>{ c.Line }</span>
+							}
+						</a>
+					</li>
+				}
+			</ul>
+		}
+		<div class="list-head">
+			<h2>All sites</h2>
+			<form class="site-search" hx-get="/modules" hx-target="#site-list" hx-select="#site-list" hx-swap="outerHTML" hx-push-url="true" hx-trigger="input changed delay:200ms from:find input[type=search], search, change from:find input[type=checkbox]">
+				<input type="hidden" name="cat" value={ v.Category }/>
+				<input type="search" name="q" value={ v.Query } placeholder="Search sites by name" autocomplete="off"/>
+				<label class="toggle">
+					<input type="checkbox" name="problems" value="hide" checked?={ v.HideProblems }/>
+					Hide sites with problems
+				</label>
+			</form>
+		</div>
+		@SiteList(v)
+	}
+}
+
+// SiteList is the filtered table, swapped in as the search changes.
+templ SiteList(v SitesView) {
+	<div id="site-list">
+		<nav class="chips-row" aria-label="Categories">
+			@categoryChip(v, "", "All", v.Total)
+			for _, c := range v.Chips {
+				@categoryChip(v, c.Name, c.Name, c.N)
+			}
+			if len(v.MoreChips) > 0 {
+				<details class="menu more-chips">
+					<summary>More…</summary>
+					<div class="menu-items">
+						for _, c := range v.MoreChips {
+							<a href={ templ.SafeURL(v.URL(c.Name, v.HideProblems, false)) }>{ fmt.Sprintf("%s · %d", c.Name, c.N) }</a>
+						}
+					</div>
+				</details>
+			}
+		</nav>
+		if v.Found == 0 {
+			<div class="empty panel">
+				<strong>No sites match</strong>
+				<p>Nothing in the catalogue matches that search.</p>
+			</div>
+		} else {
+			<table class="sites">
+				<thead>
+					<tr><th>Site</th><th>Category</th><th class="num">Titles</th><th>Last read</th><th>Status</th></tr>
+				</thead>
+				<tbody>
+					for _, r := range v.Rows {
+						<tr>
+							<td><a href={ templ.SafeURL(SiteURL(r.Entry.Site)) }>{ r.Entry.Site }</a></td>
+							<td class="muted">{ categoryOf(r.Entry) }</td>
+							<td class="num">{ r.TitlesText() }</td>
+							<td class="muted">{ r.LastRead() }</td>
+							<td class={ "status", r.Tone }><span class={ "dot", r.Tone }></span>{ r.Status }</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+			<p class="table-foot muted">
+				{ fmt.Sprintf("Showing %d of %d sites", len(v.Rows), v.Found) }
+				if len(v.Rows) < v.Found {
+					{ " · " }
+					<a href={ templ.SafeURL(v.URL(v.Category, v.HideProblems, true)) }>Show all</a>
+				}
+			</p>
+		}
+	</div>
+}
+
+templ categoryChip(v SitesView, category, label string, n int) {
+	<a class={ "chip-link", templ.KV("on", v.Category == category) } href={ templ.SafeURL(v.URL(category, v.HideProblems, false)) }>
+		{ label } <span class="n">{ fmt.Sprint(n) }</span>
+	</a>
+}

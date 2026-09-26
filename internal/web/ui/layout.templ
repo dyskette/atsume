@@ -1,7 +1,5 @@
 package ui
 
-import "fmt"
-
 // Layout is the page chrome. The SSE connection lives here so that every page
 // receives chapter progress without opening a stream of its own.
 templ Layout(title string) {
@@ -50,68 +48,4 @@ templ Layout(title string) {
 			</footer>
 		</body>
 	</html>
-}
-
-// Sites is the chooser. Several hundred entries is too many to present as one
-// flat list, so they are grouped by the category each module declares.
-templ Sites(v SitesView) {
-	@Layout("Sites") {
-		<div class="head">
-			<h1>Sites</h1>
-		</div>
-		<p class="muted">
-			{ fmt.Sprintf("%d sites, from the FMD2 module catalogue at %s.", v.Total, v.Ref) }
-			atsume does not vouch for them — some have moved or closed since the
-			module for them was written.
-		</p>
-		<form class="search" hx-get="/modules" hx-target="#site-list" hx-trigger="input changed delay:200ms, search">
-			<input
-				type="search"
-				name="q"
-				value={ v.Query }
-				placeholder="Search sites by name or category…"
-				autocomplete="off"
-			/>
-		</form>
-		<div id="site-list">
-			@SiteGroups(v)
-		</div>
-	}
-}
-
-// SiteGroups is the swappable part, so a search does not reload the page.
-templ SiteGroups(v SitesView) {
-	if v.Found == 0 {
-		<div class="empty">
-			<strong>No sites match</strong>
-			Nothing in the catalogue matches “{ v.Query }”.
-		</div>
-	}
-	for _, g := range v.Groups {
-		if g.Category != "" {
-			<h2 class="category">
-				{ g.Category }
-				<span class="muted">{ fmt.Sprintf("%d", len(g.Entries)) }</span>
-			</h2>
-		}
-		<ul class="grid">
-			for _, e := range g.Entries {
-				<li>
-					if e.Available() {
-						<a href={ templ.SafeURL(SiteURL(e.Site)) }>{ e.Site }</a>
-					} else {
-						<a class="broken" href={ templ.SafeURL(SiteURL(e.Site)) } title={ e.Err }>
-							{ e.Site }
-						</a>
-						<span class="muted">unavailable</span>
-					}
-					if e.HasMirrors() {
-						<span class="muted mirrors" title="This site is reachable at several addresses">
-							{ Count(len(e.Mirrors), "address", "addresses") }
-						</span>
-					}
-				</li>
-			}
-		</ul>
-	}
 }
