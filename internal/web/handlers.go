@@ -450,6 +450,16 @@ func (s *Server) handleSaveModuleSettings(w http.ResponseWriter, r *http.Request
 			values[app.MirrorOption] = v
 		}
 	}
+	// An empty address goes back to the declared ones; anything else has to
+	// be an address.
+	if typed := strings.TrimSpace(r.PostForm.Get(app.AddressOption)); typed == "" {
+		values[app.AddressOption] = ""
+	} else if addr, ok := app.CleanAddress(typed); ok {
+		values[app.AddressOption] = addr
+	} else {
+		http.Error(w, fmt.Sprintf("%q is not a web address; it needs http:// or https:// and a host", typed), http.StatusBadRequest)
+		return
+	}
 
 	username := r.PostForm.Get("__username")
 	password := r.PostForm.Get("__password")

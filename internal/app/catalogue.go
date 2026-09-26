@@ -124,10 +124,13 @@ func (a *App) ResolveModule(ctx context.Context, name string) string {
 // catalogue, and is cached until the pinned revision changes.
 func (a *App) ModuleCatalogue(ctx context.Context) Catalogue {
 	ref := a.Registry.Ref()
+	// Keyed by the commit as well as the ref, so updating the modules to a
+	// newer commit of the same ref is not answered from the old list.
+	key := ref + "@" + a.Registry.Commit()
 
 	a.catalogue.mu.Lock()
 	defer a.catalogue.mu.Unlock()
-	if a.catalogue.ref == ref && a.catalogue.entries != nil {
+	if a.catalogue.ref == key && a.catalogue.entries != nil {
 		return Catalogue{Entries: a.catalogue.entries, Ref: ref}
 	}
 
@@ -155,7 +158,7 @@ func (a *App) ModuleCatalogue(ctx context.Context) Catalogue {
 
 	slog.Debug("scanned the catalogue", "files", len(files), "sites", len(entries),
 		"took", time.Since(start))
-	a.catalogue.ref, a.catalogue.entries = ref, entries
+	a.catalogue.ref, a.catalogue.entries = key, entries
 	return Catalogue{Entries: entries, Ref: ref}
 }
 

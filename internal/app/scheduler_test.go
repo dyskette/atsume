@@ -1685,6 +1685,40 @@ func TestReadNotesWhereASiteMoved(t *testing.T) {
 	}
 }
 
+// TestTypedAddressIsRead covers pointing a site at an address its module
+// does not declare, and going back to the module's own.
+func TestTypedAddressIsRead(t *testing.T) {
+	live, _ := hookedSite(t, nil)
+	gone := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(gone.Close)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, gone.URL))
+
+	if _, ok := CleanAddress("darkscans.net"); ok {
+		t.Error("an address without a scheme was accepted")
+	}
+	if err := a.UseAddress(ctx, "Sectioned", live.URL+"/"); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := a.SiteInfo(ctx, "Sectioned")
+	if got := a.SiteAddress(ctx, e); got != live.URL {
+		t.Errorf("address in use = %q, want %q", got, live.URL)
+	}
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	if info, _ := st.SiteCatalogueInfo(ctx, "Sectioned"); info.Titles != 4 {
+		t.Errorf("read %d titles at the typed address (problem %q), want 4", info.Titles, info.Problem)
+	}
+
+	if err := st.SetModuleOption(ctx, "Sectioned", AddressOption, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.SiteAddress(ctx, e); got != gone.URL {
+		t.Errorf("after clearing, address in use = %q, want the module's own %q", got, gone.URL)
+	}
+}
+
 // hookedSite is the sectioned test site behind a hook that may answer a
 // request itself, and a log of the paths asked for.
 func hookedSite(t *testing.T, hook func(w http.ResponseWriter, r *http.Request) bool) (*httptest.Server, func() []string) {
