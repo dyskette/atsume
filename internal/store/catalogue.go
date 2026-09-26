@@ -53,6 +53,21 @@ type SiteCatalogue struct {
 	// will not, and Retries how many times it has.
 	RetryAt time.Time
 	Retries int
+	// Failure is what the latest read ran into.
+	Failure
+}
+
+// Failure is what a read ran into, for explaining it in plain words.
+type Failure struct {
+	// Status is the last HTTP status, 0 when the site did not answer.
+	Status int
+	// Challenged is an anti-bot page seen during the read.
+	Challenged bool
+	// Cause is why a site did not answer: "dns", "refused", "timeout" or "".
+	Cause string
+	// MovedTo is the address a request to the site was redirected to on
+	// another host, "" when none was.
+	MovedTo string
 }
 
 // ReadPos is a position in a site's directory: which section, which page.
@@ -169,6 +184,7 @@ type ReadOutcome struct {
 	// many times it has so far.
 	RetryAt time.Time
 	Retries int
+	Failure
 }
 
 // FinishSiteCatalogue records how the read ended.
@@ -199,11 +215,13 @@ func (s *Store) FinishSiteCatalogue(ctx context.Context, site string, read int64
 		UPDATE site_catalogue
 		SET complete = ?, note = ?, source = ?, data_at = ?, problem = ?, built_at = CURRENT_TIMESTAMP,
 		    steps = ?, resume_dir = ?, resume_page = ?, retry_at = ?, retries = ?,
+		    status = ?, challenged = ?, cause = ?, moved_to = ?,
 		    pages = CASE WHEN ? THEN ? ELSE pages END,
 		    ok_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE ok_at END
 		WHERE site = ?`,
 		o.Complete, o.Note, o.Source, sqlTime(o.DataAt), o.Problem,
 		o.Steps, o.Resume.Dir, o.Resume.Page, sqlTime(o.RetryAt), o.Retries,
+		o.Status, o.Challenged, o.Cause, o.MovedTo,
 		o.Complete && o.Source == SourceSite, o.Steps,
 		o.Complete, site); err != nil {
 		return err
@@ -246,6 +264,20 @@ func (s *Store) ResumeSiteCatalogue(ctx context.Context, site string) (read int6
 	return read, at, steps, seen, err == nil, err
 }
 
+// OthersWorking reports whether any other site read through, or had a series
+// checked, within the last hour: evidence that a failure is the site's and
+// not the connection's.
+func (s *Store) OthersWorking(ctx context.Context, site string) (bool, error) {
+	var ok bool
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM site_catalogue
+		               WHERE site <> ? AND julianday(ok_at) > julianday('now', '-1 hour'))
+		    OR EXISTS (SELECT 1 FROM series
+		               WHERE module_key <> ? AND julianday(checked_at) > julianday('now', '-1 hour'))`,
+		site, site).Scan(&ok)
+	return ok, err
+}
+
 // SiteCatalogueInfo reports what is stored for a site.
 func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalogue, error) {
 	out := SiteCatalogue{Site: site, Resume: NoPos}
@@ -254,10 +286,12 @@ func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalog
 		SELECT built_at, complete, note, source, data_at, problem,
 		       (SELECT COUNT(*) FROM site_title WHERE site = c.site),
 		       (SELECT COUNT(*) FROM site_title WHERE site = c.site AND c.new_from > 0 AND first_read = c.new_from),
-		       pages, steps, resume_dir, resume_page, ok_at, retry_at, retries
+		       pages, steps, resume_dir, resume_page, ok_at, retry_at, retries,
+		       status, challenged, cause, moved_to
 		FROM site_catalogue c WHERE site = ?`, site).
 		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Problem, &out.Titles, &out.NewTitles,
-			&out.Pages, &out.Steps, &out.Resume.Dir, &out.Resume.Page, &okAt, &retryAt, &out.Retries)
+			&out.Pages, &out.Steps, &out.Resume.Dir, &out.Resume.Page, &okAt, &retryAt, &out.Retries,
+			&out.Status, &out.Challenged, &out.Cause, &out.MovedTo)
 	if err == sql.ErrNoRows {
 		return out, nil
 	}

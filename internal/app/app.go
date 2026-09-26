@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/dyskette/atsume/internal/config"
@@ -179,6 +181,9 @@ type BrowseResult struct {
 	// Challenged reports that the site served an anti-bot interstitial,
 	// which is why a position can come back empty without an error.
 	Challenged bool
+	// MovedTo is the address a request to the site's own host was
+	// redirected to on another host, "" when none was.
+	MovedTo string
 }
 
 // maxBrowseRollovers bounds how many empty sections one request will skip.
@@ -211,6 +216,9 @@ func (a *App) Browse(ctx context.Context, module string, at BrowsePos) (BrowseRe
 		r.SetDirectoryIndex(at.Dir)
 		entries, err := r.GetNameAndLink(at.Page)
 		out.Challenged = r.Challenged()
+		if from, to := r.Redirected(); to != "" && sameSite(from, r.Module().RootURL) {
+			out.MovedTo = to
+		}
 		if err != nil {
 			return out, err
 		}
@@ -836,4 +844,15 @@ func (a *App) MissingFiles(chapters []store.Chapter) map[int64]bool {
 		}
 	}
 	return missing
+}
+
+// sameSite reports whether host is the host of root, ignoring a "www." on
+// either.
+func sameSite(host, root string) bool {
+	u, err := url.Parse(root)
+	if err != nil {
+		return false
+	}
+	trim := func(h string) string { return strings.TrimPrefix(strings.ToLower(h), "www.") }
+	return trim(host) == trim(u.Host)
 }

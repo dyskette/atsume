@@ -54,6 +54,10 @@ type HTTP struct {
 	// whatever its status, so a read that came back empty can be told apart
 	// from one that was quietly turned away.
 	Challenged bool
+	// RedirectFrom and RedirectTo record the first request that a redirect
+	// took to another host: the host asked for, and the address it ended at.
+	// A site that moved domains usually says so this way.
+	RedirectFrom, RedirectTo string
 
 	// Document holds the last response body. It is a pointer so that a module
 	// rewriting it in place — descrambling a tiled image, for instance — is
@@ -157,6 +161,9 @@ func (h *HTTP) attempt(method, rawURL, body string) (bool, error) {
 
 	h.ResultCode = resp.StatusCode
 	h.LastURL = resp.Request.URL.String()
+	if final := resp.Request.URL; h.RedirectTo == "" && final.Host != req.URL.Host {
+		h.RedirectFrom, h.RedirectTo = req.URL.Host, final.Scheme+"://"+final.Host
+	}
 	// Modules read HTTP.Cookies after a login to check whether the server
 	// issued the session cookie they were looking for.
 	for _, c := range resp.Cookies() {

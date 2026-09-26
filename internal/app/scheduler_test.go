@@ -1552,15 +1552,17 @@ func TestEmptyReadKeepsTheList(t *testing.T) {
 // with seconds of backoff.
 func TestReadRecordsWhyItFailed(t *testing.T) {
 	cases := []struct {
-		name    string
-		serve   func(w http.ResponseWriter)
-		problem string
+		name       string
+		serve      func(w http.ResponseWriter)
+		problem    string
+		status     int
+		challenged bool
 	}{
-		{"refused", func(w http.ResponseWriter) { http.Error(w, "no", http.StatusForbidden) }, ProblemBlocked},
-		{"not found", func(w http.ResponseWriter) { http.NotFound(w, nil) }, ProblemMoved},
+		{"refused", func(w http.ResponseWriter) { http.Error(w, "no", http.StatusForbidden) }, ProblemBlocked, 403, false},
+		{"not found", func(w http.ResponseWriter) { http.NotFound(w, nil) }, ProblemMoved, 404, false},
 		{"challenge served as 200", func(w http.ResponseWriter) {
 			fmt.Fprint(w, "<html><title>Just a moment...</title></html>")
-		}, ProblemBlocked},
+		}, ProblemBlocked, 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1577,6 +1579,12 @@ func TestReadRecordsWhyItFailed(t *testing.T) {
 			}, "the read to record a problem")
 			if info.Problem != c.problem {
 				t.Errorf("problem = %q, want %q (note %q)", info.Problem, c.problem, info.Note)
+			}
+			if c.status != 0 && info.Status != c.status {
+				t.Errorf("status = %d, want %d", info.Status, c.status)
+			}
+			if info.Challenged != c.challenged {
+				t.Errorf("challenged = %v, want %v", info.Challenged, c.challenged)
 			}
 			if info.Complete {
 				t.Error("a failed read should not count as complete")
@@ -1651,6 +1659,29 @@ func TestRefreshMarksNewTitles(t *testing.T) {
 
 	if info := read(); info.NewTitles != 0 {
 		t.Errorf("a title stayed new past the read after, %d new", info.NewTitles)
+	}
+}
+
+// TestReadNotesWhereASiteMoved covers a site redirecting its own address to
+// another host, which is how a site that changed domains usually says so.
+func TestReadNotesWhereASiteMoved(t *testing.T) {
+	newHome, _ := hookedSite(t, nil)
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, newHome.URL+r.URL.RequestURI(), http.StatusMovedPermanently)
+	}))
+	t.Cleanup(old.Close)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, old.URL))
+
+	if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, ctx, a)
+	info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+	if info.Titles != 4 {
+		t.Errorf("read %d titles through the redirect, want 4", info.Titles)
+	}
+	if info.MovedTo != newHome.URL {
+		t.Errorf("moved to %q, want %q", info.MovedTo, newHome.URL)
 	}
 }
 

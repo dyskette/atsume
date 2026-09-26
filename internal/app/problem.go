@@ -3,9 +3,12 @@ package app
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"syscall"
 
 	"github.com/dyskette/atsume/internal/scraper"
+	"github.com/dyskette/atsume/internal/store"
 )
 
 // What kind of failure ended a site read. Each calls for something different
@@ -51,4 +54,25 @@ func classifyProblem(err error) string {
 		return ProblemDown
 	}
 	return ""
+}
+
+// failureOf is what a read's error says about the site, for explaining it.
+func failureOf(err error) store.Failure {
+	var fe *scraper.FetchError
+	if !errors.As(err, &fe) {
+		return store.Failure{}
+	}
+	f := store.Failure{Status: fe.Status, Challenged: fe.Challenge}
+	var dns *net.DNSError
+	var ne net.Error
+	switch {
+	case fe.Cause == nil:
+	case errors.As(fe.Cause, &dns):
+		f.Cause = "dns"
+	case errors.Is(fe.Cause, syscall.ECONNREFUSED):
+		f.Cause = "refused"
+	case errors.As(fe.Cause, &ne) && ne.Timeout():
+		f.Cause = "timeout"
+	}
+	return f
 }

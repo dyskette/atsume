@@ -41,3 +41,7 @@ func (r *Runner) fetchError(what string) *FetchError {
 // Challenged reports whether any response this runner received carried an
 // anti-bot interstitial.
 func (r *Runner) Challenged() bool { return r.http.Challenged }
+
+// Redirected reports the first request a redirect took to another host: the
+// host asked for and the address it ended at, both "" when none was.
+func (r *Runner) Redirected() (from, to string) { return r.http.RedirectFrom, r.http.RedirectTo }

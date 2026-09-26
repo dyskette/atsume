@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -173,6 +174,7 @@ func (a *App) indexSite(jobCtx context.Context, raw json.RawMessage) error {
 		// Challenged is whether any page was an anti-bot interstitial,
 		// which a module can take for an empty page without complaint.
 		challenged bool
+		movedTo    string
 	)
 	flush := func() error {
 		if len(batch) == 0 {
@@ -198,9 +200,10 @@ func (a *App) indexSite(jobCtx context.Context, raw json.RawMessage) error {
 			if ferr := flush(); ferr != nil {
 				return ferr
 			}
-			return a.readFailed(jobCtx, ctx, p, read, at, steps, err)
+			return a.readFailed(jobCtx, ctx, p, read, at, steps, cmp.Or(res.MovedTo, movedTo), err)
 		}
 		challenged = challenged || res.Challenged
+		movedTo = cmp.Or(movedTo, res.MovedTo)
 		var added int
 		for _, e := range res.Entries {
 			if e.Link == "" || seen[e.Link] {
@@ -230,7 +233,10 @@ func (a *App) indexSite(jobCtx context.Context, raw json.RawMessage) error {
 
 	titles := len(seen)
 	note := fmt.Sprintf("%s in %s", plural(titles, "title"), humanElapsed(time.Since(startedAt)))
-	out := store.ReadOutcome{Complete: true, Note: note, Source: store.SourceSite, DataAt: time.Now(), Steps: steps}
+	out := store.ReadOutcome{
+		Complete: true, Note: note, Source: store.SourceSite, DataAt: time.Now(), Steps: steps,
+		Resume: store.NoPos, Failure: store.Failure{Challenged: challenged, MovedTo: movedTo},
+	}
 	// A read that finds nothing is more likely a changed layout, or a
 	// challenge page served as 200, than a site that emptied overnight.
 	// Finishing it as complete would remove every stored title, so a list
@@ -256,15 +262,16 @@ func (a *App) indexSite(jobCtx context.Context, raw json.RawMessage) error {
 
 // readFailed records a read that ended early, keeping where it stopped, and
 // schedules a retry when the site was down or unreachable.
-func (a *App) readFailed(jobCtx, ctx context.Context, p IndexPayload, read int64, at store.ReadPos, steps int, err error) error {
+func (a *App) readFailed(jobCtx, ctx context.Context, p IndexPayload, read int64, at store.ReadPos, steps int, movedTo string, err error) error {
 	// A shutdown is not the site's fault; the job runs again at start-up.
 	if jobCtx.Err() != nil {
 		return err
 	}
 	out := store.ReadOutcome{
 		Note: err.Error(), Source: store.SourceSite, Steps: steps, Resume: at,
-		Problem: classifyProblem(err), Retries: p.Retry,
+		Problem: classifyProblem(err), Retries: p.Retry, Failure: failureOf(err),
 	}
+	out.MovedTo = movedTo
 	state := "failed"
 	if errors.Is(context.Cause(ctx), errStopped) {
 		out.Note, out.Problem, state = "stopped by the reader", ProblemStopped, "stopped"
