@@ -223,9 +223,26 @@ atsume module xpath https://www.leercapitulo.co/manga/ '//a[contains(@class,"lc-
 ```
 
 `info` and `list` show which fields came back empty; `xpath` tries a
-replacement selector against the live page with the XPath engine modules run
-on, so a selector that works there works in the module. Edit the `.lua` file
-and run the first command again. To run atsume itself on a fixed module before
+replacement selector with the XPath engine modules run on, so a selector that
+works there works in the module. `fetch` saves a page as atsume's HTTP client
+gets it, and `xpath` reads a saved page too, so selectors can be tried without
+asking the site each time:
+
+```sh
+atsume module fetch https://www.leercapitulo.co/manga/ -o list.html
+atsume module xpath list.html '//a[contains(@class,"lc-card-name")]/@href'
+```
+
+Edit the `.lua` file and run the first command again. Once it works, record
+it, so the next change to the site fails a test instead of a read:
+
+```sh
+atsume module -fmd2 ~/src/FMD2 LeerCapitulo record /manga/xyz/one/ /leer/xyz/one/1/
+```
+
+That writes `internal/scraper/testdata/recorded/leercapitulo/`: `case.json`,
+which is committed, and the recorded responses and expected result, which are
+the site's content and stay local. To run atsume itself on a fixed module before
 upstream merges it, point `ATSUME_MODULES_REPO` at the checkout and
 `ATSUME_MODULES_REF` at its branch; for the tests, `ATSUME_FMD2_DIR`.
 

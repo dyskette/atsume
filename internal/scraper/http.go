@@ -44,6 +44,9 @@ type HTTP struct {
 	RetryCount int
 	ResultCode int
 	LastURL    string
+	// RequestURL is the address the last request asked for, which LastURL
+	// is only once the site answers, and without redirects.
+	RequestURL string
 	Terminated bool
 
 	// LastErr is why the last request got no answer at all: a name that did
@@ -94,6 +97,7 @@ func (h *HTTP) do(method, rawURL, body string) bool {
 	h.Document.Set(nil)
 	h.ResultCode = 0
 	h.LastErr = nil
+	h.RequestURL = rawURL
 
 	for attempt := 0; attempt <= h.RetryCount; attempt++ {
 		if h.ctx.Err() != nil {
@@ -179,6 +183,11 @@ func (h *HTTP) attempt(method, rawURL, body string) (bool, error) {
 	}
 	return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 }
+
+// Get fetches a page the way a module's HTTP.GET does: the same user agent,
+// retries and anti-bot solving, with the outcome recorded on the receiver.
+// It reports whether the request succeeded.
+func (h *HTTP) Get(url string) bool { return h.do(http.MethodGet, url, "") }
 
 // Reset clears per-request state but keeps cookies, matching HTTP.Reset().
 func (h *HTTP) Reset() {

@@ -9,27 +9,13 @@ import (
 	"testing"
 )
 
-// recordedCase describes a module run against recorded traffic from a real site.
-type recordedCase struct {
-	// Module is the upstream module name, loaded from the FMD2 checkout.
-	Module string `json:"module"`
-	// SeriesURL and ChapterURL are what the handlers are pointed at.
-	SeriesURL  string `json:"series_url"`
-	ChapterURL string `json:"chapter_url"`
-	// Note explains why this site was chosen.
-	Note string `json:"note,omitempty"`
-	// ExpectNoChapters records a site that correctly lists none, with the
-	// reason. Without it the harness would report a verified, explained state
-	// as a failure, and the explanation would live nowhere.
-	ExpectNoChapters string `json:"expect_no_chapters,omitempty"`
-}
-
 // TestRecorded replays real traffic against real upstream modules.
 //
 // This is the only coverage that exercises markup atsume did not author. The
 // recordings are a site's own content, so neither they nor the goldens derived
-// from them are committed; the test skips without a local recording. Capture
-// one with:
+// from them are committed; the test skips without a local recording. Record
+// a new case with atsume module record (see docs/MODULES.md), or re-record
+// every case with:
 //
 //	ATSUME_RECORD=1 ATSUME_FMD2_DIR=... go test ./internal/scraper/ -run TestRecorded -update
 func TestRecorded(t *testing.T) {
@@ -59,7 +45,7 @@ func runRecordedCase(t *testing.T, root, luaRoot, name string, record bool) *Run
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	var c recordedCase
+	var c RecordedCase
 	if err := json.Unmarshal(raw, &c); err != nil {
 		t.Fatal(err)
 	}
@@ -92,46 +78,15 @@ func runRecordedCase(t *testing.T, root, luaRoot, name string, record bool) *Run
 	}
 	defer r.Close()
 
-	got := goldenResult{Template: c.Module}
-
-	info, err := r.GetInfo(c.SeriesURL)
+	got, err := recordedResult(r, c)
 	if err != nil {
-		t.Fatalf("GetInfo: %v", err)
+		t.Fatal(err)
 	}
-	got.Info = &goldenInfo{
-		Title: info.Title, AltTitles: info.AltTitles, CoverLink: info.CoverLink,
-		Authors: info.Authors, Artists: info.Artists, Genres: info.Genres,
-		Status: info.Status, Summary: info.Summary,
-		ChapterLinks: info.ChapterLinks.All(), ChapterNames: info.ChapterNames.All(),
-	}
-
-	if c.ChapterURL != "" {
-		pages, err := r.GetPageNumber(c.ChapterURL)
-		if err != nil {
-			t.Fatalf("GetPageNumber: %v", err)
-		}
-		got.Pages = pages
-	}
-
 	// A recorded run must actually extract something; a module that
 	// silently returns nothing is the failure this whole suite exists
 	// to catch.
-	if got.Info.Title == "" {
-		t.Error("title is empty")
-	}
-	switch {
-	case c.ExpectNoChapters != "":
-		// Pinning the absence: if chapters ever appear, the recorded
-		// explanation has gone stale and needs revisiting.
-		if len(got.Info.ChapterLinks) > 0 {
-			t.Errorf("expected no chapters (%s) but found %d",
-				c.ExpectNoChapters, len(got.Info.ChapterLinks))
-		}
-	case len(got.Info.ChapterLinks) == 0:
-		t.Error("no chapters were extracted")
-	}
-	if c.ChapterURL != "" && len(got.Pages) == 0 {
-		t.Error("no pages were extracted")
+	for _, p := range got.problems(c) {
+		t.Error(p)
 	}
 
 	goldenPath := filepath.Join(dir, "golden.json")

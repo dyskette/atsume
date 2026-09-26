@@ -15,12 +15,18 @@ type FetchError struct {
 	Challenge bool
 	// Cause is why the site did not answer at all, nil when it did.
 	Cause error
-	// URL is where the last request ended up, after redirects.
-	URL string
+	// URL is where the last request ended up, after redirects, and
+	// Requested what it asked for: the address to look at when a module
+	// reports a problem without saying what it requested.
+	URL, Requested string
 }
 
 func (e *FetchError) Error() string {
-	msg := fmt.Sprintf("%s: network problem %s (last status %d)", e.Module, e.What, e.Status)
+	msg := fmt.Sprintf("%s: network problem %s (last status %d", e.Module, e.What, e.Status)
+	if e.Requested != "" {
+		msg += " from " + e.Requested
+	}
+	msg += ")"
 	if e.Cause != nil {
 		msg += ": " + e.Cause.Error()
 	}
@@ -34,7 +40,7 @@ func (r *Runner) fetchError(what string) *FetchError {
 	return &FetchError{
 		Module: r.mod.Name, What: what,
 		Status: r.http.ResultCode, Challenge: r.http.Challenged,
-		Cause: r.http.LastErr, URL: r.http.LastURL,
+		Cause: r.http.LastErr, URL: r.http.LastURL, Requested: r.http.RequestURL,
 	}
 }
 

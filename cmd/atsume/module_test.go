@@ -79,10 +79,16 @@ func testSite(t *testing.T) *httptest.Server {
 func TestModuleCommand(t *testing.T) {
 	srv := testSite(t)
 	fmd2 := moduleCheckout(t, srv.URL)
+	// run returns results and the notes about them together; resultsOf
+	// only the results, which is what a pipe gets.
+	resultsOf := func(args ...string) (string, string, error) {
+		var out, notes bytes.Buffer
+		err := runModule(append([]string{"-fmd2", fmd2}, args...), &out, &notes)
+		return out.String(), notes.String(), err
+	}
 	run := func(args ...string) (string, error) {
-		var out bytes.Buffer
-		err := runModule(append([]string{"-fmd2", fmd2}, args...), &out)
-		return out.String(), err
+		out, notes, err := resultsOf(args...)
+		return notes + out, err
 	}
 	cases := []struct {
 		name string
@@ -107,6 +113,47 @@ func TestModuleCommand(t *testing.T) {
 				}
 			}
 		})
+	}
+
+	// A page saved with fetch is what xpath reads without asking the site.
+	saved := filepath.Join(t.TempDir(), "list.html")
+	if out, err := run("fetch", srv.URL+"/list", "-o", saved); err != nil || !strings.Contains(out, "HTTP 200") {
+		t.Fatalf("fetch: %v\n%s", err, out)
+	}
+	if out, err := run("xpath", saved, `//a[@class="t"]`); err != nil || !strings.Contains(out, "2 results") || !strings.Contains(out, "Two") {
+		t.Errorf("xpath on a saved page: %v\n%s", err, out)
+	}
+
+	// record writes a case the recorded test can replay; a run that finds
+	// nothing writes nothing.
+	recorded := t.TempDir()
+	out, err := run("Tester", "record", "/s/one/", "/s/one/1/", "-recorded", recorded)
+	if err != nil || !strings.Contains(out, "1 chapters · 1 pages") {
+		t.Fatalf("record: %v\n%s", err, out)
+	}
+	for _, f := range []string{"case.json", "golden.json", "cassette"} {
+		if _, err := os.Stat(filepath.Join(recorded, "tester", f)); err != nil {
+			t.Errorf("record did not write %s: %v", f, err)
+		}
+	}
+	if _, err := run("Tester", "record", "/s/nothing/", "-recorded", recorded, "-name", "empty"); err == nil {
+		t.Error("a run that extracts nothing should not be recorded")
+	}
+	if _, err := os.Stat(filepath.Join(recorded, "empty")); err == nil {
+		t.Error("a refused recording left a directory behind")
+	}
+
+	// Piped results are only results; counts and statuses go to the notes.
+	if out, notes, err := resultsOf("xpath", srv.URL+"/list", `//a[@class="t"]/@href`); err != nil ||
+		strings.Contains(out, "results") || !strings.Contains(notes, "2 results") {
+		t.Errorf("xpath results %q, notes %q, err %v", out, notes, err)
+	}
+	if out, _, _ := resultsOf("Tester", "list"); strings.Contains(out, "titles") {
+		t.Errorf("list results carry its header: %q", out)
+	}
+	// -html shows how a match is built, not only its text.
+	if out, err := run("xpath", saved, `//a[@class="t"][1]`, "-html"); err != nil || !strings.Contains(out, `<a class="t" href="/s/one/">One</a>`) {
+		t.Errorf("xpath -html: %v\n%s", err, out)
 	}
 
 	if _, err := run("Missing", "list"); err == nil || !strings.Contains(err.Error(), "no module file") {

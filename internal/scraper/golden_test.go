@@ -15,28 +15,6 @@ import (
 
 var updateGolden = flag.Bool("update", false, "rewrite the golden files from the current output")
 
-// goldenInfo is the extracted metadata a golden file pins.
-type goldenInfo struct {
-	Title        string   `json:"title"`
-	AltTitles    string   `json:"alt_titles"`
-	CoverLink    string   `json:"cover_link"`
-	Authors      string   `json:"authors"`
-	Artists      string   `json:"artists"`
-	Genres       string   `json:"genres"`
-	Status       string   `json:"status"`
-	Summary      string   `json:"summary"`
-	ChapterLinks []string `json:"chapter_links"`
-	ChapterNames []string `json:"chapter_names"`
-}
-
-// goldenResult is the whole output of running a module against its fixtures.
-type goldenResult struct {
-	Template  string      `json:"template"`
-	Directory []Entry     `json:"directory,omitempty"`
-	Info      *goldenInfo `json:"info"`
-	Pages     []string    `json:"pages"`
-}
-
 // goldenCase describes one template under test. The module is written here
 // rather than copied from upstream so that no GPL-2.0-only module file enters
 // this repository; it delegates to the real upstream template, which is what
