@@ -38,7 +38,11 @@ flags:
 // line through the same host atsume uses when it runs: what works here works
 // there. It is for fixing a module after its site changed, without starting
 // atsume or writing a test to reach it.
-func runModule(args []string, out io.Writer) error {
+//
+// Results go to out and everything about them — counts, statuses, where a
+// page was saved — to errOut, so a result piped into sort or grep is only the
+// results.
+func runModule(args []string, out, errOut io.Writer) error {
 	fs := flag.NewFlagSet("module", flag.ContinueOnError)
 	fs.SetOutput(out)
 	fmd2 := fs.String("fmd2", defaultFMD2(), "FMD2 checkout to load modules from (default $ATSUME_FMD2_DIR, else ./fmd2)")
@@ -50,6 +54,7 @@ func runModule(args []string, out io.Writer) error {
 	name := fs.String("name", "", "with record: the case's directory name (default: the module name, lowercased)")
 	recordDir := fs.String("recorded", filepath.Join("internal", "scraper", "testdata", "recorded"), "with record: where recorded cases live")
 	note := fs.String("note", "", "with record: why this site was chosen, kept in case.json")
+	asHTML := fs.Bool("html", false, "with xpath: print each match's markup instead of its text")
 	fs.Usage = func() {
 		fmt.Fprint(out, moduleUsage)
 		fs.PrintDefaults()
@@ -75,14 +80,14 @@ func runModule(args []string, out io.Writer) error {
 			fs.Usage()
 			return errors.New("xpath takes a URL or a saved page, and an expression")
 		}
-		return runXPath(ctx, out, rest[1], rest[2])
+		return runXPath(ctx, out, errOut, rest[1], rest[2], *asHTML)
 	}
 	if len(rest) >= 1 && rest[0] == "fetch" {
 		if len(rest) != 2 {
 			fs.Usage()
 			return errors.New("fetch takes a URL")
 		}
-		return runFetch(ctx, out, rest[1], *output)
+		return runFetch(ctx, out, errOut, rest[1], *output)
 	}
 	if len(rest) < 2 {
 		fs.Usage()
@@ -118,7 +123,7 @@ func runModule(args []string, out io.Writer) error {
 	}
 	switch action {
 	case "list":
-		return moduleList(out, r, *dir, arg)
+		return moduleList(out, errOut, r, *dir, arg)
 	case "info":
 		if arg == "" {
 			return errors.New("info takes a series URL")
@@ -128,7 +133,7 @@ func runModule(args []string, out io.Writer) error {
 		if arg == "" {
 			return errors.New("pages takes a chapter URL")
 		}
-		return modulePages(ctx, out, r, arg, *fetchFirst)
+		return modulePages(ctx, out, errOut, r, arg, *fetchFirst)
 	}
 	fs.Usage()
 	return fmt.Errorf("unknown action %q", action)
@@ -141,7 +146,7 @@ func defaultFMD2() string {
 	return "fmd2"
 }
 
-func moduleList(out io.Writer, r *scraper.Runner, dir int, pageArg string) error {
+func moduleList(out, errOut io.Writer, r *scraper.Runner, dir int, pageArg string) error {
 	page := 1
 	if pageArg != "" {
 		n, err := strconv.Atoi(pageArg)
@@ -155,12 +160,12 @@ func moduleList(out io.Writer, r *scraper.Runner, dir int, pageArg string) error
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "%s · directory %d of %d · page %d\n", r.Module().Name, dir+1, r.TotalDirectories(), page)
+	fmt.Fprintf(errOut, "%s · directory %d of %d · page %d\n", r.Module().Name, dir+1, r.TotalDirectories(), page)
 	count := "the module reported no page count"
 	if n := r.DirectoryPageNumber(); n > 0 {
 		count = fmt.Sprintf("the module reports %d pages", n)
 	}
-	fmt.Fprintf(out, "%d titles · %s\n\n", len(entries), count)
+	fmt.Fprintf(errOut, "%d titles · %s\n", len(entries), count)
 	for _, e := range entries {
 		fmt.Fprintf(out, "%s\t%s\n", e.Link, e.Name)
 	}
@@ -205,12 +210,12 @@ func moduleInfo(out io.Writer, r *scraper.Runner, url string) error {
 	return nil
 }
 
-func modulePages(ctx context.Context, out io.Writer, r *scraper.Runner, url string, fetchFirst bool) error {
+func modulePages(ctx context.Context, out, errOut io.Writer, r *scraper.Runner, url string, fetchFirst bool) error {
 	pages, err := r.GetPageNumber(url)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "%d pages\n", len(pages))
+	fmt.Fprintf(errOut, "%d pages\n", len(pages))
 	for _, p := range pages {
 		fmt.Fprintln(out, p)
 	}
@@ -230,7 +235,7 @@ func modulePages(ctx context.Context, out io.Writer, r *scraper.Runner, url stri
 	}
 	defer resp.Body.Close()
 	n, _ := io.Copy(io.Discard, resp.Body)
-	fmt.Fprintf(out, "\nfirst image: HTTP %d · %s · %d bytes\n", resp.StatusCode, resp.Header.Get("Content-Type"), n)
+	fmt.Fprintf(errOut, "first image: HTTP %d · %s · %d bytes\n", resp.StatusCode, resp.Header.Get("Content-Type"), n)
 	return nil
 }
 
@@ -261,20 +266,20 @@ func describe(h *scraper.HTTP) string {
 }
 
 // runFetch saves or prints a page as atsume's HTTP client gets it.
-func runFetch(ctx context.Context, out io.Writer, url, output string) error {
+func runFetch(ctx context.Context, out, errOut io.Writer, url, output string) error {
 	h, err := fetchPage(ctx, url)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintln(errOut, describe(h))
 	if output == "" {
 		_, err := out.Write(h.Document.Bytes())
-		fmt.Fprintln(os.Stderr, describe(h))
 		return err
 	}
 	if err := os.WriteFile(output, h.Document.Bytes(), 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "%s\nsaved to %s\n", describe(h), output)
+	fmt.Fprintf(errOut, "saved to %s\n", output)
 	return nil
 }
 
@@ -293,7 +298,7 @@ func runRecord(ctx context.Context, out io.Writer, luaDir, dir string, c scraper
 
 // runXPath reports what an expression finds on a page, live or saved, with
 // the XPath engine modules run on, FMD2's extensions included.
-func runXPath(ctx context.Context, out io.Writer, src, expr string) error {
+func runXPath(ctx context.Context, out, errOut io.Writer, src, expr string, asHTML bool) error {
 	var doc []byte
 	var head string
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
@@ -313,12 +318,22 @@ func runXPath(ctx context.Context, out io.Writer, src, expr string) error {
 	if err != nil {
 		return err
 	}
-	vals, err := q.Values(expr)
-	fmt.Fprintf(out, "%s · %d results\n", head, len(vals))
+	query := q.Values
+	if asHTML {
+		query = q.HTML
+	}
+	vals, err := query(expr)
+	fmt.Fprintf(errOut, "%s · %d results\n", head, len(vals))
 	if err != nil {
 		return fmt.Errorf("expression: %w", err)
 	}
 	for _, v := range vals {
+		if asHTML {
+			// Markup reads better whole; only runs of space are folded,
+			// and a very long match is cut.
+			fmt.Fprintf(out, "%s\n\n", oneLine(v, 1500))
+			continue
+		}
 		fmt.Fprintln(out, oneLine(v, 200))
 	}
 	return nil

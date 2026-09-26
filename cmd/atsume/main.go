@@ -28,7 +28,7 @@ func main() {
 	// "atsume module …" runs one website module for someone fixing it, and
 	// starts nothing else.
 	if len(os.Args) > 1 && os.Args[1] == "module" {
-		if err := runModule(os.Args[2:], os.Stdout); err != nil {
+		if err := runModule(os.Args[2:], os.Stdout, os.Stderr); err != nil {
 			if !errors.Is(err, flag.ErrHelp) {
 				fmt.Fprintln(os.Stderr, "atsume module:", err)
 			}

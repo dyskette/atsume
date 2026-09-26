@@ -44,6 +44,9 @@ type HTTP struct {
 	RetryCount int
 	ResultCode int
 	LastURL    string
+	// RequestURL is the address the last request asked for, which LastURL
+	// is only once the site answers, and without redirects.
+	RequestURL string
 	Terminated bool
 
 	// LastErr is why the last request got no answer at all: a name that did
@@ -94,6 +97,7 @@ func (h *HTTP) do(method, rawURL, body string) bool {
 	h.Document.Set(nil)
 	h.ResultCode = 0
 	h.LastErr = nil
+	h.RequestURL = rawURL
 
 	for attempt := 0; attempt <= h.RetryCount; attempt++ {
 		if h.ctx.Err() != nil {

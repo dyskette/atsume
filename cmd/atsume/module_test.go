@@ -79,10 +79,16 @@ func testSite(t *testing.T) *httptest.Server {
 func TestModuleCommand(t *testing.T) {
 	srv := testSite(t)
 	fmd2 := moduleCheckout(t, srv.URL)
+	// run returns results and the notes about them together; resultsOf
+	// only the results, which is what a pipe gets.
+	resultsOf := func(args ...string) (string, string, error) {
+		var out, notes bytes.Buffer
+		err := runModule(append([]string{"-fmd2", fmd2}, args...), &out, &notes)
+		return out.String(), notes.String(), err
+	}
 	run := func(args ...string) (string, error) {
-		var out bytes.Buffer
-		err := runModule(append([]string{"-fmd2", fmd2}, args...), &out)
-		return out.String(), err
+		out, notes, err := resultsOf(args...)
+		return notes + out, err
 	}
 	cases := []struct {
 		name string
@@ -135,6 +141,19 @@ func TestModuleCommand(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(recorded, "empty")); err == nil {
 		t.Error("a refused recording left a directory behind")
+	}
+
+	// Piped results are only results; counts and statuses go to the notes.
+	if out, notes, err := resultsOf("xpath", srv.URL+"/list", `//a[@class="t"]/@href`); err != nil ||
+		strings.Contains(out, "results") || !strings.Contains(notes, "2 results") {
+		t.Errorf("xpath results %q, notes %q, err %v", out, notes, err)
+	}
+	if out, _, _ := resultsOf("Tester", "list"); strings.Contains(out, "titles") {
+		t.Errorf("list results carry its header: %q", out)
+	}
+	// -html shows how a match is built, not only its text.
+	if out, err := run("xpath", saved, `//a[@class="t"][1]`, "-html"); err != nil || !strings.Contains(out, `<a class="t" href="/s/one/">One</a>`) {
+		t.Errorf("xpath -html: %v\n%s", err, out)
 	}
 
 	if _, err := run("Missing", "list"); err == nil || !strings.Contains(err.Error(), "no module file") {

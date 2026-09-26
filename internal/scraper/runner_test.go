@@ -360,3 +360,13 @@ func (r *Runner) testCall(event string) error {
 	_, err := r.call(event)
 	return err
 }
+
+// TestFetchErrorNamesTheRequest covers a module's network problem saying
+// which address it asked for, so finding it does not mean reading the Lua.
+func TestFetchErrorNamesTheRequest(t *testing.T) {
+	e := &FetchError{Module: "Site", What: "listing page 1", Status: 404, Requested: "https://site.test/initial/0/?page=1"}
+	want := "Site: network problem listing page 1 (last status 404 from https://site.test/initial/0/?page=1)"
+	if got := e.Error(); got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}

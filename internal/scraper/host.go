@@ -388,7 +388,7 @@ func (r *Runner) GetNameAndLink(page int) ([]Entry, error) {
 		return nil, err
 	}
 	if truncInt(v) == netProblem {
-		return nil, r.fetchError(fmt.Sprintf("listing page %d from %s", page+1, r.mod.RootURL))
+		return nil, r.fetchError(fmt.Sprintf("listing page %d", page+1))
 	}
 
 	links, names := r.links.All(), r.names.All()

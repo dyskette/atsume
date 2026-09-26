@@ -284,6 +284,29 @@ func (q *Query) Values(expr string) ([]string, error) {
 	return out, err
 }
 
+// HTML returns the markup of each node an expression selects, for seeing how
+// a page is built rather than only its text. Attribute matches and results
+// that are not nodes come back as their values, as from Values.
+func (q *Query) HTML(expr string) ([]string, error) {
+	nodes := q.XPath(expr)
+	if len(nodes) == 0 {
+		return q.Values(expr)
+	}
+	out := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if n.hasText || n.n == nil {
+			out = append(out, n.text)
+			continue
+		}
+		var b strings.Builder
+		if err := html.Render(&b, n.n); err != nil {
+			return out, err
+		}
+		out = append(out, b.String())
+	}
+	return out, nil
+}
+
 // XPathValues returns each result as a trimmed string, dropping empty ones.
 // It backs the XPathStringAll(expr, list) overload that fills a TStringList.
 func (q *Query) XPathValues(expr string, ctx *html.Node) []string {
