@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -21,7 +22,10 @@ const moduleUsage = `usage:
   atsume module [flags] <Module> list [page]     titles on one directory page, and the page count
   atsume module [flags] <Module> info <url>      every MANGAINFO field for one series
   atsume module [flags] <Module> pages <url>     image URLs for one chapter
-  atsume module xpath <url> <expression>         what an XPath expression finds on a live page
+  atsume module [flags] <Module> record <series-url> [chapter-url]
+                                                 record a test case into testdata/recorded
+  atsume module fetch <url>                      a page as atsume's HTTP client gets it
+  atsume module xpath <url|file> <expression>    what an XPath expression finds on a page
 
 <Module> is the file name in lua/modules, without .lua. Series and chapter
 URLs are handed to the module as given, the way atsume stores them: usually
@@ -42,6 +46,10 @@ func runModule(args []string, out io.Writer) error {
 	root := fs.String("root", "", "an address to read the site at instead of the module's RootURL")
 	dir := fs.Int("dir", 0, "the directory (section) to list, from 0")
 	fetchFirst := fs.Bool("fetch-first", false, "with pages: download the first image and report what came back")
+	output := fs.String("o", "", "with fetch: the file to save the page to (default: print it)")
+	name := fs.String("name", "", "with record: the case's directory name (default: the module name, lowercased)")
+	recordDir := fs.String("recorded", filepath.Join("internal", "scraper", "testdata", "recorded"), "with record: where recorded cases live")
+	note := fs.String("note", "", "with record: why this site was chosen, kept in case.json")
 	fs.Usage = func() {
 		fmt.Fprint(out, moduleUsage)
 		fs.PrintDefaults()
@@ -65,9 +73,16 @@ func runModule(args []string, out io.Writer) error {
 	if len(rest) >= 1 && rest[0] == "xpath" {
 		if len(rest) != 3 {
 			fs.Usage()
-			return errors.New("xpath takes a URL and an expression")
+			return errors.New("xpath takes a URL or a saved page, and an expression")
 		}
 		return runXPath(ctx, out, rest[1], rest[2])
+	}
+	if len(rest) >= 1 && rest[0] == "fetch" {
+		if len(rest) != 2 {
+			fs.Usage()
+			return errors.New("fetch takes a URL")
+		}
+		return runFetch(ctx, out, rest[1], *output)
 	}
 	if len(rest) < 2 {
 		fs.Usage()
@@ -77,6 +92,18 @@ func runModule(args []string, out io.Writer) error {
 	file := filepath.Join(*fmd2, "lua", "modules", rest[0]+".lua")
 	if _, err := os.Stat(file); err != nil {
 		return fmt.Errorf("no module file %s; name the file in lua/modules without .lua, and use -site for one of several sites it declares", file)
+	}
+	if rest[1] == "record" {
+		if len(rest) < 3 || len(rest) > 4 {
+			fs.Usage()
+			return errors.New("record takes a series URL and, optionally, a chapter URL")
+		}
+		c := scraper.RecordedCase{Module: rest[0], SeriesURL: rest[2], Note: *note}
+		if len(rest) == 4 {
+			c.ChapterURL = rest[3]
+		}
+		dir := filepath.Join(*recordDir, cmp.Or(*name, strings.ToLower(rest[0])))
+		return runRecord(ctx, out, filepath.Join(*fmd2, "lua"), dir, c)
 	}
 	host := &scraper.Host{LuaDir: filepath.Join(*fmd2, "lua")}
 	r, err := host.Open(ctx, file, *site, *root)
@@ -207,25 +234,87 @@ func modulePages(ctx context.Context, out io.Writer, r *scraper.Runner, url stri
 	return nil
 }
 
-// runXPath fetches a page and reports what an expression finds on it, with
+// fetchPage gets a page with the HTTP client modules use — its user agent,
+// retries and, when ATSUME_FLARESOLVERR_URL is set, anti-bot solving — so
+// what is inspected is what a module would get.
+func fetchPage(ctx context.Context, url string) (*scraper.HTTP, error) {
+	h := scraper.NewHTTP(ctx, nil, nil, scraper.NewFlaresolverr(os.Getenv("ATSUME_FLARESOLVERR_URL")))
+	if !h.Get(url) && h.ResultCode == 0 {
+		if h.LastErr != nil {
+			return h, h.LastErr
+		}
+		return h, errors.New("no answer")
+	}
+	return h, nil
+}
+
+// describe is one line about what a fetch got back.
+func describe(h *scraper.HTTP) string {
+	out := fmt.Sprintf("HTTP %d · %d bytes", h.ResultCode, len(h.Document.Bytes()))
+	if h.LastURL != "" {
+		out += " · " + h.LastURL
+	}
+	if h.Challenged {
+		out += " · an anti-bot challenge page"
+	}
+	return out
+}
+
+// runFetch saves or prints a page as atsume's HTTP client gets it.
+func runFetch(ctx context.Context, out io.Writer, url, output string) error {
+	h, err := fetchPage(ctx, url)
+	if err != nil {
+		return err
+	}
+	if output == "" {
+		_, err := out.Write(h.Document.Bytes())
+		fmt.Fprintln(os.Stderr, describe(h))
+		return err
+	}
+	if err := os.WriteFile(output, h.Document.Bytes(), 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s\nsaved to %s\n", describe(h), output)
+	return nil
+}
+
+// runRecord records a case and says what it captured.
+func runRecord(ctx context.Context, out io.Writer, luaDir, dir string, c scraper.RecordedCase) error {
+	sum, err := scraper.RecordCase(ctx, luaDir, dir, c)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "recorded %s in %s\n%q · %d chapters · %d pages · %d responses\n",
+		c.Module, dir, oneLine(sum.Title, 80), sum.Chapters, sum.Pages, sum.Requests)
+	fmt.Fprintf(out, "replay it with: ATSUME_FMD2_DIR=%s go test ./internal/scraper/ -run TestRecorded/%s\n",
+		filepath.Dir(luaDir), filepath.Base(dir))
+	return nil
+}
+
+// runXPath reports what an expression finds on a page, live or saved, with
 // the XPath engine modules run on, FMD2's extensions included.
-func runXPath(ctx context.Context, out io.Writer, url, expr string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
+func runXPath(ctx context.Context, out io.Writer, src, expr string) error {
+	var doc []byte
+	var head string
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		h, err := fetchPage(ctx, src)
+		if err != nil {
+			return err
+		}
+		doc, head = h.Document.Bytes(), fmt.Sprintf("HTTP %d", h.ResultCode)
+	} else {
+		var err error
+		if doc, err = os.ReadFile(src); err != nil {
+			return err
+		}
+		head = src
 	}
-	req.Header.Set("User-Agent", scraper.DefaultUserAgent)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	q, err := txquery.Parse(resp.Body)
+	q, err := txquery.ParseBytes(doc)
 	if err != nil {
 		return err
 	}
 	vals, err := q.Values(expr)
-	fmt.Fprintf(out, "HTTP %d · %d results\n", resp.StatusCode, len(vals))
+	fmt.Fprintf(out, "%s · %d results\n", head, len(vals))
 	if err != nil {
 		return fmt.Errorf("expression: %w", err)
 	}

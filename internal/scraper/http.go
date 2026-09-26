@@ -180,6 +180,11 @@ func (h *HTTP) attempt(method, rawURL, body string) (bool, error) {
 	return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 }
 
+// Get fetches a page the way a module's HTTP.GET does: the same user agent,
+// retries and anti-bot solving, with the outcome recorded on the receiver.
+// It reports whether the request succeeded.
+func (h *HTTP) Get(url string) bool { return h.do(http.MethodGet, url, "") }
+
 // Reset clears per-request state but keeps cookies, matching HTTP.Reset().
 func (h *HTTP) Reset() {
 	h.Headers.Clear()
