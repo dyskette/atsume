@@ -91,7 +91,7 @@ templ CatalogueStatus(v BrowseView) {
 							Count(v.Catalogue.Titles, "title", "titles")) }
 					</p>
 				</div>
-				@updateModulesButton(false)
+				@updateModulesButton(false, v.Module)
 			</div>
 		case v.Incomplete():
 			<div class="banner warn">
@@ -158,7 +158,7 @@ templ BrowseList(v BrowseView) {
 				<p>Titles appear here as they are read. Nothing is lost if you leave.</p>
 			</div>
 		case v.Empty():
-			<div class="empty panel">
+			<div class="empty panel no-titles">
 				<strong>Not read yet</strong>
 				<p>
 					atsume has not read this site’s list of titles. Reading it takes as
@@ -171,7 +171,7 @@ templ BrowseList(v BrowseView) {
 		case v.Catalogue.Titles == 0 && v.Failed():
 			@readFailed(v)
 		case v.Catalogue.Titles == 0 && v.Catalogue.Problem == app.ProblemStopped:
-			<div class="empty panel">
+			<div class="empty panel no-titles">
 				<strong>You stopped the read before it found anything</strong>
 				<div class="actions center">
 					<button type="button" class="primary" hx-post={ SiteURL(v.Module, "/resume") } hx-swap="none">Read the rest</button>
@@ -198,7 +198,7 @@ templ BrowseList(v BrowseView) {
 // readFailed is a failed read of a site with no titles, explained by what it
 // ran into, with what can be done about it.
 templ readFailed(v BrowseView) {
-	<div class="empty panel">
+	<div class="empty panel no-titles">
 		switch v.Catalogue.Problem {
 			case app.ProblemBlocked:
 				<span class="empty-icon bad">⊘</span>
@@ -279,7 +279,7 @@ templ readFailed(v BrowseView) {
 					modules often fixes this.
 				</p>
 				<div class="actions center">
-					@updateModulesButton(true)
+					@updateModulesButton(true, v.Module)
 					@tryAgain(v, false)
 				</div>
 				if l := v.ModulesLine(); l != "" {
@@ -296,7 +296,7 @@ templ readFailed(v BrowseView) {
 // noTitles is a read that finished and found nothing on a site that never
 // listed anything.
 templ noTitles(v BrowseView) {
-	<div class="empty panel">
+	<div class="empty panel no-titles">
 		<span class="empty-icon">▤</span>
 		<strong>{ v.Module } returned no titles</strong>
 		<p>
@@ -308,7 +308,7 @@ templ noTitles(v BrowseView) {
 		<div class="actions center">
 			<a class="button primary" href={ templ.SafeURL(v.SiteURL) } target="_blank" rel="noreferrer noopener">Open site to check</a>
 			@tryAgain(v, false)
-			@updateModulesButton(false)
+			@updateModulesButton(false, v.Module)
 		</div>
 		<p class="muted">
 			{ fmt.Sprintf("Read %s · %s · 0 titles", ago(v.Catalogue.BuiltAt), Count(v.Catalogue.Steps, "page", "pages")) }
@@ -378,14 +378,28 @@ templ tryAgain(v BrowseView, primary bool) {
 	}
 }
 
-templ updateModulesButton(primary bool) {
+// updateModulesButton fetches the modules' latest commit, saying so while
+// it does; site names the site whose page it is on, which is read again
+// after an update. What happens otherwise is said in the note after it.
+templ updateModulesButton(primary bool, site string) {
 	<button
 		type="button"
-		class={ templ.KV("primary", primary) }
+		class={ "update", templ.KV("primary", primary) }
 		hx-post="/modules/update"
-		hx-swap="none"
+		hx-vals={ templ.JSONString(map[string]string{"site": site}) }
+		hx-target="next .update-note"
+		hx-swap="innerHTML"
 		hx-disabled-elt="this"
-	>Update modules</button>
+	>
+		<span class="idle">Update modules</span>
+		<span class="busy">Updating modules…</span>
+	</button>
+	<span class="update-note" aria-live="polite"></span>
+}
+
+// UpdateNote is what an update says when it does not change the page.
+templ UpdateNote(text string, bad bool) {
+	<span class={ templ.KV("bad", bad) }>{ text }</span>
 }
 
 // BrowseRows is the appendable part: the titles plus the control that fetches

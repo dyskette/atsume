@@ -30,8 +30,10 @@ type SitesView struct {
 	Rows  []SiteRow
 	Found int
 
-	// ModulesDate is when the modules' commit was made.
+	// ModulesDate is when the modules' commit was made, and Updated a page
+	// shown right after updating them.
 	ModulesDate time.Time
+	Updated     bool
 }
 
 // SiteCard is a site the library uses.
@@ -80,6 +82,7 @@ type SitesInput struct {
 	HideProblems    bool
 	ShowAll         bool
 	ModulesDate     time.Time
+	Updated         bool
 }
 
 // BuildSites filters the catalogue into the page.
@@ -87,7 +90,7 @@ func BuildSites(in SitesInput) SitesView {
 	v := SitesView{
 		Ref: in.Catalogue.Ref, Total: len(in.Catalogue.Entries),
 		Query: strings.TrimSpace(in.Query), Category: in.Category,
-		HideProblems: in.HideProblems, ShowAll: in.ShowAll, ModulesDate: in.ModulesDate,
+		HideProblems: in.HideProblems, ShowAll: in.ShowAll, ModulesDate: in.ModulesDate, Updated: in.Updated,
 	}
 
 	counts := map[string]int{}

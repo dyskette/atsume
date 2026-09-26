@@ -303,7 +303,8 @@ func (a *App) RecheckSite(ctx context.Context, moduleKey string) (int, error) {
 }
 
 // UpdateModules fetches the latest commit of the modules' ref and switches
-// to it. Downloads already running finish on the files they loaded.
-func (a *App) UpdateModules(ctx context.Context) error {
+// to it, reporting whether there was one. Downloads already running finish
+// on the files they loaded.
+func (a *App) UpdateModules(ctx context.Context) (bool, error) {
 	return a.Registry.Update(ctx)
 }

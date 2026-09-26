@@ -52,6 +52,7 @@ func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
 		Catalogue: s.App.ModuleCatalogue(ctx),
 		Query:     q.Get("q"), Category: q.Get("cat"),
 		HideProblems: q.Get("problems") == "hide", ShowAll: q.Get("all") == "1",
+		Updated:     q.Get("updated") == "1",
 		ModulesDate: s.App.Registry.CommitDate(),
 	}
 	var err error
@@ -154,15 +155,36 @@ func (s *Server) handleUseAddress(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateModules fetches the modules' latest commit. It takes seconds,
 // a shallow clone of a few megabytes, so it is done while the reader waits.
+//
+// What it says afterwards depends on where it was pressed: on a site's page
+// an update is followed by reading that site again, which is why it was
+// pressed; on the Sites page the page reloads saying what it updated to.
+// Nothing newer, or a fetch that failed, is said in place.
 func (s *Server) handleUpdateModules(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
-	if err := s.App.UpdateModules(ctx); err != nil {
-		s.fail(w, r, err)
+	changed, err := s.App.UpdateModules(ctx)
+	date := s.App.Registry.CommitDate().Format("2 Jan 2006")
+	switch {
+	case err != nil:
+		slog.Warn("modules update failed", "err", err)
+		s.render(w, r, ui.UpdateNote("Couldn’t fetch the modules: "+err.Error(), true))
+		return
+	case !changed:
+		s.render(w, r, ui.UpdateNote("Modules are already current ("+date+").", false))
 		return
 	}
 	slog.Info("modules updated", "commit", s.App.Registry.Commit())
-	reloadPage(w)
+	if site := r.FormValue("site"); site != "" {
+		if err := s.App.EnqueueIndex(r.Context(), site, store.SourceSite); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		reloadPage(w)
+		return
+	}
+	w.Header().Set("HX-Redirect", "/modules?updated=1")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // reloadPage answers an htmx request by reloading the page, which is how an

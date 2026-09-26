@@ -10,12 +10,12 @@ templ Sites(v SitesView) {
 			<h1>Sites</h1>
 			<span class="muted">{ v.Counts() }</span>
 			<span class="grow"></span>
-			<span class="muted">
-				if !v.ModulesDate.IsZero() {
-					{ "Modules from " + v.ModulesDate.Format("2 Jan 2006") }
-				}
-			</span>
-			@updateModulesButton(false)
+			if v.Updated {
+				<span class="update-done">{ "Modules updated to " + v.ModulesDate.Format("2 Jan 2006") }</span>
+			} else if !v.ModulesDate.IsZero() {
+				<span class="muted">{ "Modules from " + v.ModulesDate.Format("2 Jan 2006") }</span>
+			}
+			@updateModulesButton(false, "")
 		</div>
 		if len(v.Yours) > 0 {
 			<h2>Your sites</h2>

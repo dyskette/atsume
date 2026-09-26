@@ -77,8 +77,31 @@ func (r *Registry) Fetch(ctx context.Context, ref string) error {
 // Update replaces the checkout of the current ref with its latest commit and
 // makes it current, keeping the one it replaces beside it as .old. A checkout
 // is otherwise never refreshed: "master" means master on the day of the
-// first run until someone asks.
-func (r *Registry) Update(ctx context.Context) error {
+// first run until someone asks. It reports whether there was anything newer;
+// asking the repository first means an up-to-date checkout costs no clone.
+func (r *Registry) Update(ctx context.Context) (bool, error) {
+	if latest := r.latest(ctx); latest != "" && latest == r.Commit() {
+		return false, nil
+	}
+	before := r.Commit()
+	if err := r.replace(ctx); err != nil {
+		return false, err
+	}
+	return r.Commit() != before, nil
+}
+
+// latest asks the repository which commit the current ref is at, "" when it
+// cannot say.
+func (r *Registry) latest(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "git", "ls-remote", r.Repo, r.Ref()).Output()
+	if err != nil {
+		return ""
+	}
+	hash, _, _ := strings.Cut(string(out), "\t")
+	return strings.TrimSpace(hash)
+}
+
+func (r *Registry) replace(ctx context.Context) error {
 	ref := r.Ref()
 	dest := filepath.Join(r.Root, sanitizeRef(ref))
 	tmp, old := dest+".new", dest+".old"

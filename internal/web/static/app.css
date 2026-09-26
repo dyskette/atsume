@@ -948,3 +948,33 @@ table.sites td.status.bad { color: var(--err); }
 	.site-search input[type=search] { width: auto; }
 	table.sites th:nth-child(2), table.sites td:nth-child(2) { display: none; }
 }
+
+/* Update modules says it is working while it fetches, dims the buttons
+   beside it, and says afterwards what happened when the page stays. */
+button.update .busy { display: none; }
+button.update.htmx-request .idle { display: none; }
+button.update.htmx-request .busy { display: inline-flex; align-items: center; gap: 0.5rem; }
+button.update.htmx-request .busy::before {
+	content: "";
+	width: 0.8em;
+	height: 0.8em;
+	border: 2px solid currentColor;
+	border-right-color: transparent;
+	border-radius: 50%;
+	animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { button.update.htmx-request .busy::before { animation: none; } }
+:is(.actions, .banner, .sites-head):has(button.update.htmx-request) :is(button, a.button):not(.update) {
+	opacity: 0.5;
+	pointer-events: none;
+}
+.update-note { font-size: 0.85rem; color: var(--muted); }
+.update-note:empty { display: none; }
+.update-note .bad { color: var(--err); }
+.actions .update-note { flex-basis: 100%; order: 1; text-align: center; }
+.update-done { color: var(--ok); font-size: 0.9rem; }
+
+/* A site with no titles to search shows why instead; the search box would
+   be a field with nothing behind it. */
+main:has(#site-index > .no-titles) #find { display: none; }

@@ -58,10 +58,15 @@ func TestRegistryUpdate(t *testing.T) {
 	if reg.Commit() != first {
 		t.Error("Fetch replaced an existing checkout")
 	}
-	if err := reg.Update(ctx); err != nil {
+	changed, err := reg.Update(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if reg.Commit() == first || len(reg.Modules()) != 2 {
-		t.Errorf("after update: commit %q (was %q), %d modules", reg.Commit(), first, len(reg.Modules()))
+	if !changed || reg.Commit() == first || len(reg.Modules()) != 2 {
+		t.Errorf("after update: changed %v, commit %q (was %q), %d modules", changed, reg.Commit(), first, len(reg.Modules()))
+	}
+	// Nothing newer: it says so without replacing the checkout.
+	if changed, err := reg.Update(ctx); err != nil || changed {
+		t.Errorf("second update: changed %v, err %v", changed, err)
 	}
 }
