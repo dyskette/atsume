@@ -141,9 +141,9 @@ templ CatalogueStatus(v BrowseView) {
 				</div>
 			</div>
 	}
-	if !v.Indexing {
-		<!-- Picks up the list as the read left it, with the search as typed.
-		     Rendered with the page too, where it costs one request. -->
+	if v.Live && !v.Indexing {
+		<!-- A read that ended while the page was open: the list catches up
+		     with it, keeping the search as typed. -->
 		<div hx-get={ SiteURL(v.Module, "/list") } hx-include="#find" hx-trigger="load" hx-target="#site-index" hx-swap="innerHTML"></div>
 	}
 }

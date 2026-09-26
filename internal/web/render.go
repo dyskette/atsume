@@ -12,6 +12,10 @@ import (
 // render writes a component, setting the content type first.
 func (s *Server) render(w http.ResponseWriter, r *http.Request, c templ.Component) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Every page says how things stand now, so a browser going back must not
+	// show a copy from earlier: a site's page saved while its first read ran
+	// came back reading, and polled for a list that was long finished.
+	w.Header().Set("Cache-Control", "no-store")
 	if err := c.Render(r.Context(), w); err != nil {
 		// The status is already sent by this point, so there is nothing to do
 		// but record it.

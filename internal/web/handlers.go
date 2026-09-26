@@ -217,6 +217,7 @@ func (s *Server) catalogueStatus(w http.ResponseWriter, r *http.Request, indexin
 		return
 	}
 	v.Indexing = v.Indexing || indexing
+	v.Live = true
 	s.render(w, r, ui.CatalogueStatus(v))
 }
 

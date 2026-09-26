@@ -125,7 +125,7 @@ func (s *Server) renderEvent(ctx context.Context, e jobs.Event) []sseEvent {
 		if err != nil {
 			return nil
 		}
-		v.Indexing = e.State == "working"
+		v.Indexing, v.Live = e.State == "working", true
 		if v.Indexing {
 			v.Progress.Page, v.Progress.Estimate = e.Done, e.Total
 		}

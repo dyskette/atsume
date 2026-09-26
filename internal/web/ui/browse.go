@@ -51,6 +51,10 @@ type BrowseView struct {
 	OthersWorking bool
 	ModulesDate   time.Time
 	ModuleFile    string
+
+	// Live is a status line arriving as an update to a page already shown,
+	// rather than with the page.
+	Live bool
 }
 
 // staleAfter is when a downloaded catalogue is old enough to say so plainly
