@@ -137,12 +137,11 @@ func (q *Queue) DeletePending(ctx context.Context, kind, key string, value any) 
 	return res.RowsAffected()
 }
 
-// ActiveOfKind returns the payloads of jobs of one kind running or ready to
-// run now, leaving out those waiting for a retry time still to come.
-func (q *Queue) ActiveOfKind(ctx context.Context, kind string) ([]json.RawMessage, error) {
+// ReadyOfKind returns the payloads of jobs of one kind waiting to start and
+// ready to, leaving out those waiting for a retry time still to come.
+func (q *Queue) ReadyOfKind(ctx context.Context, kind string) ([]json.RawMessage, error) {
 	rows, err := q.db.QueryContext(ctx,
-		`SELECT payload FROM jobs WHERE kind = ?
-		 AND (state = 'running' OR (state = 'pending' AND run_after <= CURRENT_TIMESTAMP))`, kind)
+		`SELECT payload FROM jobs WHERE kind = ? AND state = 'pending' AND run_after <= CURRENT_TIMESTAMP`, kind)
 	if err != nil {
 		return nil, err
 	}

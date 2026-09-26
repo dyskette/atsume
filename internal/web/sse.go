@@ -121,15 +121,13 @@ func (s *Server) renderEvent(ctx context.Context, e jobs.Event) []sseEvent {
 		// The status line reports itself while a read runs, so a reader
 		// watching a slow site sees numbers move rather than a spinner that
 		// stopped meaning anything after three seconds.
-		info, err := s.App.Store.SiteCatalogueInfo(ctx, e.Site)
+		v, err := s.siteStatusView(ctx, e.Site)
 		if err != nil {
 			return nil
 		}
-		info.Note = e.Message
-		v := ui.BrowseView{
-			Module:    e.Site,
-			Catalogue: info,
-			Indexing:  e.State == "working",
+		v.Indexing = e.State == "working"
+		if v.Indexing {
+			v.Progress.Page, v.Progress.Estimate = e.Done, e.Total
 		}
 		return []sseEvent{{"site-" + e.Site, renderToString(ctx, ui.CatalogueStatus(v))}}
 	}

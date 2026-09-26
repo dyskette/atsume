@@ -702,3 +702,165 @@ p.catalogue {
 	font-size: 0.9rem;
 }
 p.catalogue.working { color: var(--text); }
+
+/* ── Site page ───────────────────────────────────────────────────────────
+   A site's titles, how its list was read, and what to do when that went
+   wrong. One panel of rows like the chapter list, one status line, and at
+   most one banner explaining the list. */
+a.back { display: inline-block; margin-bottom: 0.9rem; color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+a.back:hover { color: var(--text); }
+.site-head { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+.site-head h1 { margin: 0; }
+.chip {
+	padding: 0.1rem 0.55rem;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--panel-hi);
+	font-size: 0.8rem;
+}
+a.button {
+	display: inline-block;
+	padding: 0.35rem 0.85rem;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	color: var(--text);
+	text-decoration: none;
+	white-space: nowrap;
+}
+a.button:hover { border-color: var(--accent); color: var(--accent); }
+a.button.primary, .empty button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+a.button.primary:hover { color: var(--bg); filter: brightness(1.08); }
+
+.site-status { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.6rem 0 1rem; color: var(--muted); font-size: 0.9rem; }
+.site-status .sep { color: var(--muted); }
+.site-status button.link { color: var(--accent); }
+.dot.ok { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.site-status progress, .banner progress {
+	width: 9rem;
+	height: 0.3rem;
+	appearance: none;
+	border: 0;
+	border-radius: 999px;
+	background: var(--panel-hi);
+	overflow: hidden;
+}
+.site-status progress::-webkit-progress-bar { background: var(--panel-hi); }
+.site-status progress::-webkit-progress-value { background: var(--accent); }
+.site-status progress::-moz-progress-bar { background: var(--accent); }
+/* No page count to measure against: a band moving side to side says work is
+   happening without claiming how much is left. */
+.site-status progress:not([value]) {
+	background: linear-gradient(90deg, transparent 0 35%, var(--accent) 35% 65%, transparent 65%) var(--panel-hi);
+	background-size: 200% 100%;
+	animation: sweep 1.4s ease-in-out infinite alternate;
+}
+.site-status progress:not([value])::-webkit-progress-bar { background: transparent; }
+.site-status progress:not([value])::-moz-progress-bar { background: transparent; }
+@keyframes sweep { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .site-status progress:not([value]) { animation: none; background-position: 50% 0; } }
+
+.banner {
+	display: flex;
+	align-items: center;
+	gap: 0.9rem;
+	margin: 0 0 1rem;
+	padding: 0.8rem 1rem;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--panel);
+}
+.banner strong { display: block; color: var(--text); }
+.banner p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.9rem; }
+.banner-icon { flex: none; width: 1.4rem; text-align: center; color: var(--accent); }
+.banner.accent { border-color: rgb(122 162 247 / 0.45); background: rgb(122 162 247 / 0.06); }
+.banner.warn { border-color: rgb(224 175 104 / 0.5); background: rgb(224 175 104 / 0.08); }
+.banner.warn .banner-icon { color: var(--warn); }
+
+.find { display: flex; gap: 0.8rem; margin: 0 0 1rem; }
+.find input[type=search] {
+	flex: 1;
+	padding: 0.55rem 0.8rem;
+	border-radius: 8px;
+	border: 1px solid var(--line);
+	background: var(--panel);
+	color: var(--text);
+}
+.toggle {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0 0.9rem;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	white-space: nowrap;
+	font-size: 0.88rem;
+	cursor: pointer;
+}
+
+.rows.site-titles {
+	margin: 0;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--panel);
+}
+.rows.site-titles li {
+	margin: 0;
+	min-height: 3.1rem;
+	padding: 0.45rem 1rem;
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	border-radius: 0;
+	background: none;
+}
+.rows.site-titles li:first-child { border-top-left-radius: 9px; border-top-right-radius: 9px; }
+.rows.site-titles li:last-child { border-bottom: 0; border-bottom-left-radius: 9px; border-bottom-right-radius: 9px; }
+.rows.site-titles li:has(.pick:checked) { background: rgb(122 162 247 / 0.07); }
+.rows.site-titles li.more { justify-content: center; border-style: solid; }
+.site-row .pick { width: 1.05rem; height: 1.05rem; accent-color: var(--accent); }
+.site-row form { margin: 0; }
+button.follow { border-color: transparent; color: var(--muted); font-size: 0.85rem; }
+button.follow:hover { border-color: var(--line); color: var(--accent); }
+.pill { padding: 0.05rem 0.55rem; border: 1px solid var(--line); border-radius: 999px; font-size: 0.78rem; white-space: nowrap; text-decoration: none; }
+.pill.new { border-color: rgb(122 162 247 / 0.5); color: var(--accent); }
+.pill.lib { border-color: rgb(121 198 108 / 0.5); color: var(--ok); }
+
+/* The batch bar appears once a row is ticked, and counts the ticks itself:
+   a CSS counter over the checked boxes, no script. */
+main { counter-reset: picked; }
+.site-row .pick:checked { counter-increment: picked; }
+.select-bar .n::before { content: counter(picked); }
+.select-bar {
+	position: fixed;
+	left: 50%;
+	bottom: 4.2rem;
+	transform: translateX(-50%);
+	z-index: 20;
+	display: none;
+	align-items: center;
+	gap: 1rem;
+	padding: 0.55rem 0.6rem 0.55rem 1.1rem;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--panel-hi);
+	box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+	font-size: 0.9rem;
+}
+main:has(.site-row .pick:checked) .select-bar { display: flex; }
+.select-bar button.link { color: var(--muted); text-decoration: none; }
+.select-bar button.link:hover { color: var(--text); }
+.select-bar button.primary { background: var(--accent); color: var(--bg); font-weight: 600; }
+
+.empty.panel { margin: 0; border-style: solid; background: var(--panel); }
+.empty .empty-icon.bad { color: var(--err); background: rgb(240 113 120 / 0.12); }
+.empty .empty-icon.warn { color: var(--warn); background: rgb(224 175 104 / 0.12); }
+.empty .actions form { margin: 0; }
+.moved { display: flex; align-items: center; justify-content: center; gap: 0.7rem; flex-wrap: wrap; margin: 0.6rem 0; color: var(--text); }
+.tech { max-width: 34rem; margin: 1rem auto 0; text-align: left; font-size: 0.85rem; }
+.tech summary { cursor: pointer; color: var(--muted); }
+.tech pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+
+@media (max-width: 40rem) {
+	.find { flex-direction: column; }
+	.toggle { padding: 0.5rem 0.9rem; }
+}

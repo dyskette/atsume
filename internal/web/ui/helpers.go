@@ -220,3 +220,12 @@ func olderThan(t time.Time) string {
 	}
 	return fmt.Sprintf("%d months old", months)
 }
+
+// upper starts a sentence with a capital.
+func upper(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	return strings.ToUpper(string(r[0])) + string(r[1:])
+}

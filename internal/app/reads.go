@@ -31,6 +31,9 @@ type activeReads struct {
 type activeRead struct {
 	cancel context.CancelCauseFunc
 	ReadProgress
+	// ended is a read that has said it is over while its job winds down: no
+	// longer shown as running, still counted so the site is not read twice.
+	ended bool
 }
 
 func (r *activeReads) start(site string, cancel context.CancelCauseFunc, p ReadProgress) {
@@ -50,6 +53,22 @@ func (r *activeReads) progress(site string, p ReadProgress) {
 	}
 }
 
+func (r *activeReads) end(site string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if a := r.m[site]; a != nil {
+		a.ended = true
+	}
+}
+
+// has reports whether a job for site holds an entry, ended or not.
+func (r *activeReads) has(site string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.m[site]
+	return ok
+}
+
 func (r *activeReads) finish(site string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -60,7 +79,7 @@ func (r *activeReads) stop(site string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	a := r.m[site]
-	if a == nil {
+	if a == nil || a.ended {
 		return false
 	}
 	a.cancel(errStopped)
@@ -73,7 +92,9 @@ func (a *App) ActiveReads() map[string]ReadProgress {
 	defer a.reads.mu.Unlock()
 	out := make(map[string]ReadProgress, len(a.reads.m))
 	for site, r := range a.reads.m {
-		out[site] = r.ReadProgress
+		if !r.ended {
+			out[site] = r.ReadProgress
+		}
 	}
 	return out
 }

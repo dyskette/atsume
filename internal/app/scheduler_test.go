@@ -1434,7 +1434,7 @@ func TestSiteCatalogueIsKept(t *testing.T) {
 	}
 
 	// Looking again costs the site nothing. That is the whole point.
-	titles, found, err := st.SearchSiteTitles(ctx, "Sectioned", "", 0, 50)
+	titles, found, err := st.SearchSiteTitles(ctx, "Sectioned", "", false, 0, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1452,7 +1452,7 @@ func TestSiteCatalogueIsKept(t *testing.T) {
 
 	// Search runs over the whole catalogue, not over what a browser happens
 	// to have loaded.
-	titles, found, err = st.SearchSiteTitles(ctx, "Sectioned", "gamma", 0, 50)
+	titles, found, err = st.SearchSiteTitles(ctx, "Sectioned", "gamma", false, 0, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1461,7 +1461,7 @@ func TestSiteCatalogueIsKept(t *testing.T) {
 	}
 
 	// A term with wildcards in it is a term, not a pattern.
-	if _, found, _ = st.SearchSiteTitles(ctx, "Sectioned", "%", 0, 50); found != 0 {
+	if _, found, _ = st.SearchSiteTitles(ctx, "Sectioned", "%", false, 0, 50); found != 0 {
 		t.Errorf("a literal %% matched %d titles", found)
 	}
 
@@ -1630,7 +1630,7 @@ func TestRefreshMarksNewTitles(t *testing.T) {
 	}
 	newNames := func() []string {
 		t.Helper()
-		titles, _, err := st.SearchSiteTitles(ctx, "Sectioned", "", 0, 50)
+		titles, _, err := st.SearchSiteTitles(ctx, "Sectioned", "", false, 0, 50)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1652,7 +1652,7 @@ func TestRefreshMarksNewTitles(t *testing.T) {
 	if info.NewTitles != 1 {
 		t.Errorf("refresh found %d new titles, want 1", info.NewTitles)
 	}
-	titles, _, _ := st.SearchSiteTitles(ctx, "Sectioned", "", 0, 50)
+	titles, _, _ := st.SearchSiteTitles(ctx, "Sectioned", "", false, 0, 50)
 	if len(titles) == 0 || titles[0].Name != "Delta" || !titles[0].New {
 		t.Errorf("the new title should be listed first, got %+v", titles)
 	}
@@ -1751,9 +1751,18 @@ func hookedSite(t *testing.T, hook func(w http.ResponseWriter, r *http.Request) 
 
 func waitIdle(t *testing.T, ctx context.Context, a *App) {
 	t.Helper()
-	waitFor(t, ctx, func() bool {
+	// The checks are not one atomic look, and a job moves from queued to
+	// running between them, so idle has to hold on two looks apart.
+	idle := func() bool {
 		stats, _ := a.Queue.Stats(ctx)
 		return stats["running"] == 0 && len(a.ActiveReads()) == 0 && !a.Indexing(ctx, "Sectioned")
+	}
+	waitFor(t, ctx, func() bool {
+		if !idle() {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+		return idle()
 	}, "the read to end")
 }
 

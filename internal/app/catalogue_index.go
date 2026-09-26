@@ -66,7 +66,9 @@ func (a *App) EnqueueResume(ctx context.Context, site string) error {
 }
 
 func (a *App) enqueueIndex(ctx context.Context, p IndexPayload) error {
-	if a.Indexing(ctx, p.Site) {
+	// A read winding down still counts here, so pressing refresh as it
+	// ends does not start a second one alongside it.
+	if a.reads.has(p.Site) || a.Indexing(ctx, p.Site) {
 		return nil
 	}
 	// A reader asking now replaces an automatic retry waiting for later.
@@ -80,14 +82,15 @@ func (a *App) enqueueIndex(ctx context.Context, p IndexPayload) error {
 	return nil
 }
 
-// Indexing reports whether a read of this site is running or about to, so
-// pressing refresh twice does not read the site twice. A retry waiting for
-// later does not count: until it starts, nothing is being read.
+// Indexing reports whether a read of this site is running or about to. A
+// retry waiting for later does not count: until it starts, nothing is being
+// read. Neither does a read that has ended and whose job is winding down, or
+// a page rendered in that moment would show a read that is over.
 func (a *App) Indexing(ctx context.Context, site string) bool {
 	if _, ok := a.ActiveReads()[site]; ok {
 		return true
 	}
-	active, err := a.Queue.ActiveOfKind(ctx, jobs.KindIndexSite)
+	active, err := a.Queue.ReadyOfKind(ctx, jobs.KindIndexSite)
 	if err != nil {
 		return false
 	}
@@ -111,6 +114,13 @@ func (a *App) indexSite(jobCtx context.Context, raw json.RawMessage) error {
 		return err
 	}
 	startedAt := time.Now()
+	// Registered first, so from the moment the job runs the site counts as
+	// being read; stopping it works once the read itself is under way.
+	ctx, cancel := context.WithCancelCause(jobCtx)
+	defer cancel(nil)
+	a.reads.start(p.Site, cancel, ReadProgress{Page: 1})
+	defer a.reads.finish(p.Site)
+
 	before, err := a.Store.SiteCatalogueInfo(jobCtx, p.Site)
 	if err != nil {
 		return err
@@ -145,12 +155,8 @@ func (a *App) indexSite(jobCtx context.Context, raw json.RawMessage) error {
 		at, steps = store.ReadPos{}, 0
 	}
 
-	// Stopping cancels this context; bookkeeping afterwards uses the job's.
-	ctx, cancel := context.WithCancelCause(jobCtx)
-	defer cancel(nil)
 	progress := ReadProgress{Page: steps + 1, Titles: len(seen)}
-	a.reads.start(p.Site, cancel, progress)
-	defer a.reads.finish(p.Site)
+	a.reads.progress(p.Site, progress)
 	a.publishIndex(p.Site, "working", "Reading the catalogue…", progress)
 
 	// A published snapshot arrives in seconds where reading the site takes
@@ -308,11 +314,11 @@ func (a *App) readEstimate(ctx context.Context, site string, before store.SiteCa
 }
 
 // publishIndex tells anyone watching the site page how the read is going.
-// A read that has ended leaves the running reads first, so what the event
-// triggers — the footer among it — no longer counts it.
+// A read that has ended is marked so first, so what the event triggers — the
+// footer among it — no longer shows it.
 func (a *App) publishIndex(site, state, message string, p ReadProgress) {
 	if state != "working" {
-		a.reads.finish(site)
+		a.reads.end(site)
 	}
 	a.Bus.Publish(jobs.Event{
 		Kind: "site-indexed", State: state, Message: message,

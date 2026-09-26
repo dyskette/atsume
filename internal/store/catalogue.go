@@ -41,6 +41,9 @@ type SiteCatalogue struct {
 	// NewTitles is how many titles the latest read found that the one
 	// before did not.
 	NewTitles int
+	// OverList is a latest read that began with titles already stored: a
+	// refresh rather than a first read.
+	OverList bool
 	// Pages is how many directory pages the last complete read took, and
 	// Steps how many the latest read got through.
 	Pages, Steps int
@@ -287,11 +290,11 @@ func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalog
 		       (SELECT COUNT(*) FROM site_title WHERE site = c.site),
 		       (SELECT COUNT(*) FROM site_title WHERE site = c.site AND c.new_from > 0 AND first_read = c.new_from),
 		       pages, steps, resume_dir, resume_page, ok_at, retry_at, retries,
-		       status, challenged, cause, moved_to
+		       status, challenged, cause, moved_to, new_from > 0
 		FROM site_catalogue c WHERE site = ?`, site).
 		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Problem, &out.Titles, &out.NewTitles,
 			&out.Pages, &out.Steps, &out.Resume.Dir, &out.Resume.Page, &okAt, &retryAt, &out.Retries,
-			&out.Status, &out.Challenged, &out.Cause, &out.MovedTo)
+			&out.Status, &out.Challenged, &out.Cause, &out.MovedTo, &out.OverList)
 	if err == sql.ErrNoRows {
 		return out, nil
 	}
@@ -320,11 +323,18 @@ func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalog
 // hold thousands of titles, and shipping all of them so a script can hide
 // most is how a page becomes unusable on the device most likely to be
 // reading it.
-func (s *Store) SearchSiteTitles(ctx context.Context, site, query string, offset, limit int) ([]SiteTitle, int, error) {
+//
+// hideLibrary leaves out titles already in the library, matched the way
+// TrackedURLs matches them.
+func (s *Store) SearchSiteTitles(ctx context.Context, site, query string, hideLibrary bool, offset, limit int) ([]SiteTitle, int, error) {
 	where, args := `site = ?`, []any{site}
 	if q := strings.TrimSpace(query); q != "" {
 		where += ` AND name LIKE ? ESCAPE '\'`
 		args = append(args, "%"+escapeLike(q)+"%")
+	}
+	if hideLibrary {
+		where += ` AND url NOT IN (SELECT url FROM series WHERE module_key = ? OR module_name = ?)`
+		args = append(args, site, site)
 	}
 
 	var total int

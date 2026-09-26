@@ -2,235 +2,390 @@ package ui
 
 import (
 	"fmt"
-	"time"
 
+	"github.com/dyskette/atsume/internal/app"
 	"github.com/dyskette/atsume/internal/store"
 )
-
-// BrowseView is a site's catalogue as the page shows it.
-//
-// The list is read once and kept. It used to be fetched on every visit and
-// thrown away: MangaToon's module pages the site internally and takes three
-// minutes to hand back 2,677 titles, so looking twice cost six minutes of
-// someone else's bandwidth and a reader who could not leave the page.
-type BrowseView struct {
-	Module string
-	// Catalogue is what is stored, including when it was read. Whether a
-	// cached list is current is the one question it has to answer.
-	Catalogue store.SiteCatalogue
-	// Indexing is true while a read is running, which is when the page has
-	// something to say other than what it holds.
-	Indexing bool
-
-	Titles []store.SiteTitle
-	// Found is how many match the query, which is not how many are shown.
-	Found  int
-	Query  string
-	Offset int
-	Limit  int
-
-	// Tracked maps a title's URL to the series already following it.
-	Tracked map[string]int64
-}
-
-// ListURL is where the rows for the current query are fetched from.
-func (v BrowseView) ListURL() string {
-	return SiteURL(v.Module, fmt.Sprintf("/list?q=%s&offset=%d", queryEscape(v.Query), v.Offset))
-}
-
-// MoreURL fetches the next run of rows to append to what is on screen.
-func (v BrowseView) MoreURL() string {
-	return SiteURL(v.Module, fmt.Sprintf("/list?q=%s&offset=%d&rows=1",
-		queryEscape(v.Query), v.Offset+v.Limit))
-}
-
-// More reports whether anything is left beyond the rows on screen.
-func (v BrowseView) More() bool { return v.Offset+len(v.Titles) < v.Found }
-
-// Empty reports that there is no catalogue at all yet, which is a different
-// thing from a catalogue with nothing in it.
-func (v BrowseView) Empty() bool { return !v.Catalogue.Exists && !v.Indexing }
-
-// staleAfter is when a downloaded catalogue is old enough to say so plainly
-// rather than leave the reader to work it out from a month and a year.
-const staleAfter = 180 * 24 * time.Hour
-
-// Source names where the list came from and how old its titles are.
-func (v BrowseView) Source() string {
-	out := " · from FMD2's published catalogue"
-	if !v.Catalogue.DataAt.IsZero() {
-		out += ", newest entry " + v.Catalogue.DataAt.Format("January 2006")
-	}
-	return out
-}
-
-// StaleSnapshot reports whether a downloaded catalogue is old enough that a
-// reader should be told outright.
-func (v BrowseView) StaleSnapshot() bool {
-	if v.Catalogue.FromSite() || v.Catalogue.Age().IsZero() {
-		return false
-	}
-	return time.Since(v.Catalogue.Age()) > staleAfter
-}
 
 // Browse is a site's page. The catalogue it holds renders at once; a read in
 // progress reports itself as it goes.
 templ Browse(v BrowseView) {
 	@Layout(v.Module) {
-		<div class="head">
+		<a class="back" href="/modules">← All sites</a>
+		<div class="site-head">
 			<h1>{ v.Module }</h1>
-			<a href={ templ.SafeURL(SiteURL(v.Module, "/settings")) }>Site settings</a>
+			if v.Category != "" {
+				<span class="chip">{ v.Category }</span>
+			}
+			<span class="grow"></span>
+			if v.SiteURL != "" {
+				<a class="button" href={ templ.SafeURL(v.SiteURL) } target="_blank" rel="noreferrer noopener">Open site ↗</a>
+			}
+			<a class="button" href={ templ.SafeURL(SiteURL(v.Module, "/settings")) }>Site settings</a>
 		</div>
-		<p class="muted">
-			Following a title downloads new chapters from then on, not the back
-			catalogue.
-		</p>
 		<div id="catalogue-status" sse-swap={ "site-" + v.Module } hx-swap="innerHTML">
 			@CatalogueStatus(v)
 		</div>
-		<form
-			class="filter"
-			hx-get={ SiteURL(v.Module, "/list") }
-			hx-target="#site-index"
-			hx-swap="innerHTML"
-			hx-trigger="submit, input from:find input delay:250ms"
-		>
-			<input
-				type="search"
-				name="q"
-				value={ v.Query }
-				placeholder="Search this site's catalogue…"
-				autocomplete="off"
-			/>
-		</form>
-		<!-- The batch form lives outside the list so appended rows can join it
-		     by id; a form element cannot wrap list items that arrive later. -->
-		<form
-			id="follow-many"
-			class="batch"
-			hx-post={ SiteURL(v.Module, "/follow") }
-			hx-swap="none"
-		>
-			<button type="submit">Follow selected</button>
-			<span class="muted">Tick several titles to follow them in one go.</span>
-		</form>
+		if v.Catalogue.Titles > 0 || v.Indexing {
+			<form
+				id="find"
+				class="find"
+				hx-get={ SiteURL(v.Module, "/list") }
+				hx-target="#site-index"
+				hx-swap="innerHTML"
+				hx-trigger="submit, input from:find input[type=search] delay:250ms, change from:find input[type=checkbox]"
+			>
+				<input type="search" name="q" value={ v.Query } placeholder={ v.SearchPlaceholder() } autocomplete="off"/>
+				<label class="toggle">
+					<input type="checkbox" name="hide" value="1" checked?={ v.HideLibrary }/>
+					Hide titles in my library
+				</label>
+			</form>
+		}
 		<div id="site-index">
 			@BrowseList(v)
 		</div>
-		<script src="/static/site-filter.js"></script>
+		<!-- The batch form lives outside the list so appended rows can join it
+		     by id; a form element cannot wrap list items that arrive later.
+		     It shows once something is ticked, and counts the ticks in CSS. -->
+		<form id="follow-many" class="select-bar" hx-post={ SiteURL(v.Module, "/follow") } hx-swap="none">
+			<span><span class="n"></span> selected</span>
+			<button type="reset" class="link">Clear</button>
+			<button type="submit" class="primary">Follow <span class="n"></span></button>
+		</form>
 	}
 }
 
-// CatalogueStatus says where the list came from and when, and offers the one
-// action that changes the answer.
-//
-// A date on its own is trivia. Next to a way to act on it, it is a decision:
-// this is five months old, do I care. FMD2 has never told anyone how old its
-// prebuilt databases are, and people have been asking since 2021.
+// CatalogueStatus says where the list came from and how the latest read
+// went, with the banner that explains anything a reader should know about
+// it. A read that ends refreshes the list below, keeping the search.
 templ CatalogueStatus(v BrowseView) {
-	<p class={ "catalogue", templ.KV("working", v.Indexing) }>
-		switch {
-			case v.Indexing:
-				<span class="dot working"></span>
-				if v.Catalogue.Note != "" {
-					{ v.Catalogue.Note }
-				} else if v.Catalogue.Titles > 0 {
-					<!-- Counted from what is already stored, so a reader who
-					     reloads mid-read sees progress rather than the same
-					     sentence they left. -->
-					{ fmt.Sprintf("Reading %s's catalogue — %s so far. You can leave this page; it carries on.",
-						v.Module, Count(v.Catalogue.Titles, "title", "titles")) }
-				} else {
-					{ fmt.Sprintf("Reading %s's catalogue. You can leave this page; it carries on.", v.Module) }
-				}
-			case !v.Catalogue.Exists:
-				{ fmt.Sprintf("%s has not been read yet.", v.Module) }
-				<form hx-post={ SiteURL(v.Module, "/index") } hx-swap="none">
-					<button type="submit" class="primary">Read the catalogue</button>
-				</form>
-			default:
-				{ Count(v.Catalogue.Titles, "title", "titles") }
-				if v.Catalogue.FromSite() {
-					{ " · read from the site " + ago(v.Catalogue.BuiltAt) }
-				} else {
-					<!-- Where it came from and how old the titles are, which
-					     for a downloaded list is not when it was downloaded.
-					     A snapshot can be years older than the file holding
-					     it, and a reader deciding whether to spend four
-					     minutes reading the site needs the first number, not
-					     the second. -->
-					<!-- One expression, because templ puts a space between two
-					     and "catalogue , newest entry" is not a sentence. -->
-					{ v.Source() }
-					if v.StaleSnapshot() {
-						<span class="badge failed">{ olderThan(v.Catalogue.Age()) }</span>
-					}
-				}
-				if !v.Catalogue.Complete {
-					<span class="badge failed" title={ v.Catalogue.Note }>partial</span>
-				}
-				<button
-					type="button"
-					class="link"
-					hx-get={ SiteURL(v.Module, "/reread") }
-					hx-target="#catalogue-status"
-					hx-swap="innerHTML"
-				>
-					if v.Catalogue.FromSite() {
-						Read again
-					} else {
-						Read the site for a current list
-					}
-				</button>
+	<p class="site-status">
+		if v.Dot() != "" {
+			<span class={ "dot", v.Dot() }></span>
+		}
+		<span>{ v.Status() }</span>
+		if v.Indexing {
+			if v.Progress.Estimate > 0 {
+				<progress value={ fmt.Sprint(v.Progress.Page) } max={ fmt.Sprint(v.Progress.Estimate) }></progress>
+			} else {
+				<progress></progress>
+			}
+			<button type="button" class="link" hx-post={ SiteURL(v.Module, "/stop") } hx-swap="none">Stop</button>
+			<!-- Live updates carry the read, but one that ends while the page
+			     loads is over before the page listens; this notices. -->
+			<span hx-get={ SiteURL(v.Module, "/status") } hx-trigger="load delay:5s" hx-target="#catalogue-status" hx-swap="innerHTML"></span>
+		} else if v.Catalogue.Exists && !(v.Failed() && v.Catalogue.Titles == 0) {
+			<span class="sep">·</span>
+			<button type="button" class="link" hx-get={ SiteURL(v.Module, "/reread") } hx-target="#catalogue-status" hx-swap="innerHTML">Refresh</button>
 		}
 	</p>
+	switch {
+		case v.Incomplete() && v.KeptTitles():
+			<div class="banner warn">
+				<span class="banner-icon">⚠</span>
+				<div class="grow">
+					<strong>The latest read found no titles</strong>
+					<p>
+						{ fmt.Sprintf("atsume kept the %s from before. The site may have changed its layout, which updating the modules often fixes.",
+							Count(v.Catalogue.Titles, "title", "titles")) }
+					</p>
+				</div>
+				@updateModulesButton(false)
+			</div>
+		case v.Incomplete():
+			<div class="banner warn">
+				<span class="banner-icon">⚠</span>
+				<div class="grow">
+					<strong>This list is incomplete</strong>
+					<p>
+						{ fmt.Sprintf("The read stopped at %s: %s. You can browse and follow the %s here.",
+							v.StoppedAt(), v.Reason(), Count(v.Catalogue.Titles, "title", "titles")) }
+					</p>
+					if r := v.Retry(); r != "" {
+						<p class="muted">{ r }</p>
+					}
+					if v.Failed() && !v.Catalogue.OKAt.IsZero() {
+						<p class="muted">{ "Last successful read: " + v.Catalogue.OKAt.Format("January 2006") }</p>
+					}
+				</div>
+				if v.Resumable() {
+					<button type="button" hx-post={ SiteURL(v.Module, "/resume") } hx-swap="none">
+						if v.Catalogue.Problem == app.ProblemStopped {
+							Read the rest
+						} else {
+							Retry the rest
+						}
+					</button>
+				}
+			</div>
+		case v.Catalogue.NewTitles > 0 && (v.Refreshing() || !v.Indexing):
+			<div class="banner accent">
+				<span class="banner-icon">+</span>
+				<div class="grow">
+					if v.Indexing {
+						<strong>{ Count(v.Catalogue.NewTitles, "new title", "new titles") } so far</strong>
+						<p>Found while refreshing. The rest of the list stays usable while atsume finishes.</p>
+					} else {
+						<strong>{ Count(v.Catalogue.NewTitles, "new title", "new titles") } since the last read</strong>
+						<p>Listed first, and marked New until the next read.</p>
+					}
+				</div>
+			</div>
+		case v.StaleSnapshot() && !v.Indexing:
+			<div class="banner">
+				<span class="banner-icon">◷</span>
+				<div class="grow">
+					<strong>{ "This list is from " + v.Catalogue.Age().Format("January 2006") }</strong>
+					<p>It comes from a shared catalogue, so titles added since then won’t show up. Reading the site can take a few minutes.</p>
+				</div>
+			</div>
+	}
+	if !v.Indexing {
+		<!-- Picks up the list as the read left it, with the search as typed.
+		     Rendered with the page too, where it costs one request. -->
+		<div hx-get={ SiteURL(v.Module, "/list") } hx-include="#find" hx-trigger="load" hx-target="#site-index" hx-swap="innerHTML"></div>
+	}
 }
 
-// BrowseList is the catalogue itself.
+// BrowseList is the catalogue itself, or the state that explains why there
+// is nothing to list.
 templ BrowseList(v BrowseView) {
-	if v.Found == 0 && v.Indexing {
-		<div class="empty">
-			<strong>Nothing yet</strong>
-			Titles appear here as they are read. Nothing is lost if you leave.
-		</div>
-	} else if v.Empty() {
-		<div class="empty">
-			<strong>Nothing read yet</strong>
-			<p>
-				atsume has not read this site's list of titles. Reading it takes
-				as long as the site takes to answer — a few seconds for most, a
-				few minutes for the largest — and then it is kept, so this is a
-				one-off rather than a wait on every visit.
-			</p>
-		</div>
-	} else if v.Found == 0 && v.Query != "" {
-		<div class="empty">
-			<strong>No match</strong>
-			{ fmt.Sprintf("Nothing in the %s read from this site matches that.", Count(v.Catalogue.Titles, "title", "titles")) }
-		</div>
-	} else if v.Found == 0 {
-		<div class="empty">
-			<strong>Nothing listed</strong>
-			The read finished and the site listed no titles.
-		</div>
-	} else if v.Query != "" {
-		<p class="muted">{ fmt.Sprintf("%s match.", Count(v.Found, "title", "titles")) }</p>
+	switch {
+		case v.Catalogue.Titles == 0 && v.Indexing:
+			<div class="empty panel">
+				<strong>Nothing yet</strong>
+				<p>Titles appear here as they are read. Nothing is lost if you leave.</p>
+			</div>
+		case v.Empty():
+			<div class="empty panel">
+				<strong>Not read yet</strong>
+				<p>
+					atsume has not read this site’s list of titles. Reading it takes as
+					long as the site takes to answer, and then it is kept.
+				</p>
+				<div class="actions center">
+					<button type="button" class="primary" hx-post={ SiteURL(v.Module, "/index") } hx-swap="none">Read the site</button>
+				</div>
+			</div>
+		case v.Catalogue.Titles == 0 && v.Failed():
+			@readFailed(v)
+		case v.Catalogue.Titles == 0 && v.Catalogue.Problem == app.ProblemStopped:
+			<div class="empty panel">
+				<strong>You stopped the read before it found anything</strong>
+				<div class="actions center">
+					<button type="button" class="primary" hx-post={ SiteURL(v.Module, "/resume") } hx-swap="none">Read the rest</button>
+				</div>
+			</div>
+		case v.Catalogue.Titles == 0:
+			@noTitles(v)
+		case v.NoMatch():
+			@noMatch(v)
+		default:
+			<ul class="rows site-titles" id="site-rows">
+				@BrowseRows(v)
+			</ul>
 	}
-	<ul class="rows" id="site-rows">
-		@BrowseRows(v)
-	</ul>
 	if v.Indexing {
 		<!-- While a read runs the list catches up with it, so the wait is
 		     until the first titles arrive rather than until the read proves
 		     it has finished. It disarms itself: the reply that comes back
 		     after the read ends carries no trigger. -->
-		<div
-			hx-get={ v.ListURL() }
-			hx-trigger="load delay:5s"
-			hx-target="#site-index"
-			hx-swap="innerHTML"
-		></div>
+		<div hx-get={ SiteURL(v.Module, "/list") } hx-include="#find" hx-trigger="load delay:2s" hx-target="#site-index" hx-swap="innerHTML"></div>
 	}
+}
+
+// readFailed is a failed read of a site with no titles, explained by what it
+// ran into, with what can be done about it.
+templ readFailed(v BrowseView) {
+	<div class="empty panel">
+		switch v.Catalogue.Problem {
+			case app.ProblemBlocked:
+				<span class="empty-icon bad">⊘</span>
+				<strong>{ v.Module } is blocking atsume</strong>
+				<p>
+					if v.Catalogue.Challenged {
+						The site served an anti-bot challenge page.
+					} else {
+						{ fmt.Sprintf("The site refused the request (HTTP %d).", v.Catalogue.Status) }
+					}
+					if v.FlareSolverr {
+						FlareSolverr is set up and could not get past it.
+					} else if v.Catalogue.Challenged {
+						A FlareSolverr instance can usually get past it; you set it up once and every protected site benefits.
+					} else {
+						A FlareSolverr instance may help, if the site is checking for a browser.
+					}
+				</p>
+				<div class="actions center">
+					if !v.FlareSolverr {
+						<a class="button primary" href={ templ.SafeURL(flareSolverrDocs) } target="_blank" rel="noreferrer noopener">Set up FlareSolverr</a>
+					}
+					@openSite(v)
+					@tryAgain(v, v.FlareSolverr)
+				</div>
+				if v.OthersWorking {
+					<p class="muted">Other sites are working, so this isn’t your connection.</p>
+				}
+			case app.ProblemMoved:
+				<span class="empty-icon warn">→|</span>
+				<strong>{ v.Module } may have moved</strong>
+				<p>
+					{ fmt.Sprintf("The address atsume uses answered %d Not Found.", v.Catalogue.Status) }
+					Scanlation sites change domains often; if you know the new one, you can point atsume at it in Site settings.
+				</p>
+				@movedTo(v)
+				<div class="actions center">
+					<a class="button primary" href={ templ.SafeURL(SiteURL(v.Module, "/settings#address")) }>Change address</a>
+					@openSite(v)
+					@tryAgain(v, false)
+				</div>
+				<p class="muted">{ "Address in use: " + v.SiteURL }</p>
+			case app.ProblemDown:
+				<span class="empty-icon warn">▭</span>
+				<strong>{ v.Module } is down right now</strong>
+				<p>{ upper(v.Reason()) + ". This is usually temporary and on their side." }</p>
+				<div class="actions center">
+					@tryAgain(v, true)
+					@openSite(v)
+				</div>
+				if r := v.Retry(); r != "" {
+					<p class="muted">{ r }</p>
+				}
+			case app.ProblemUnreachable:
+				<span class="empty-icon bad">⏻</span>
+				<strong>Couldn’t reach { v.Module }</strong>
+				<p>
+					{ upper(v.Reason()) + "." }
+					if v.OthersWorking {
+						Other sites are loading fine, so the site itself may be gone.
+					}
+				</p>
+				@movedTo(v)
+				<div class="actions center">
+					@tryAgain(v, true)
+					@openSite(v)
+					<a class="button" href={ templ.SafeURL(SiteURL(v.Module, "/settings#address")) }>Change address</a>
+				</div>
+				if r := v.Retry(); r != "" {
+					<p class="muted">{ r }</p>
+				}
+			default:
+				<span class="empty-icon bad">✱</span>
+				<strong>atsume’s reader for { v.Module } is broken</strong>
+				<p>
+					The site is probably fine. The FMD2 module that reads it hit an
+					error, usually because the site changed its layout. Updating
+					modules often fixes this.
+				</p>
+				<div class="actions center">
+					@updateModulesButton(true)
+					@tryAgain(v, false)
+				</div>
+				if l := v.ModulesLine(); l != "" {
+					<p class="muted">{ l }</p>
+				}
+		}
+		<details class="tech">
+			<summary>Technical details</summary>
+			<pre>{ v.Catalogue.Note }</pre>
+		</details>
+	</div>
+}
+
+// noTitles is a read that finished and found nothing on a site that never
+// listed anything.
+templ noTitles(v BrowseView) {
+	<div class="empty panel">
+		<span class="empty-icon">▤</span>
+		<strong>{ v.Module } returned no titles</strong>
+		<p>
+			The read finished without errors but found nothing to list. atsume
+			can’t tell why from here. Usually the site emptied its catalogue,
+			started requiring a login, or changed its layout in a way the reader
+			didn’t notice.
+		</p>
+		<div class="actions center">
+			<a class="button primary" href={ templ.SafeURL(v.SiteURL) } target="_blank" rel="noreferrer noopener">Open site to check</a>
+			@tryAgain(v, false)
+			@updateModulesButton(false)
+		</div>
+		<p class="muted">
+			{ fmt.Sprintf("Read %s · %s · 0 titles", ago(v.Catalogue.BuiltAt), Count(v.Catalogue.Steps, "page", "pages")) }
+		</p>
+	</div>
+}
+
+// noMatch is a search that shows nothing, with the likeliest reason.
+templ noMatch(v BrowseView) {
+	<div class="empty panel">
+		<span class="empty-icon">⌕</span>
+		if v.Query != "" {
+			<strong>{ fmt.Sprintf("No titles on %s match “%s”", v.Module, v.Query) }</strong>
+		} else {
+			<strong>Every title here is in your library</strong>
+		}
+		<p>
+			switch {
+				case v.HiddenMatches > 0:
+					{ fmt.Sprintf("%s in your library, hidden by the filter.", Count(v.HiddenMatches, "match is", "matches are")) }
+				case v.Indexing:
+					atsume is still reading the site, so it may turn up.
+				case v.OfferRefresh():
+					{ fmt.Sprintf("You’re searching the %s %s. A refresh may find newer ones.",
+						Count(v.Catalogue.Titles, "title", "titles"), v.ListedWhen()) }
+				default:
+					{ fmt.Sprintf("You’re searching the %s %s.", Count(v.Catalogue.Titles, "title", "titles"), v.ListedWhen()) }
+			}
+		</p>
+		<div class="actions center">
+			if v.HiddenMatches > 0 {
+				<a class="button primary" href={ templ.SafeURL(v.ShowLibraryURL()) }>Show them</a>
+			} else {
+				<a class="button primary" href={ templ.SafeURL(v.PageURL()) }>Clear search</a>
+				if v.OfferRefresh() {
+					<button type="button" hx-post={ SiteURL(v.Module, "/index") } hx-swap="none">Refresh list</button>
+				}
+			}
+		</div>
+	</div>
+}
+
+// movedTo offers the address a request to the site was redirected to.
+templ movedTo(v BrowseView) {
+	if v.Catalogue.MovedTo != "" {
+		<form class="moved" hx-post={ SiteURL(v.Module, "/address") } hx-swap="none">
+			<input type="hidden" name="address" value={ v.Catalogue.MovedTo }/>
+			<span>{ fmt.Sprintf("%s now answers at %s.", v.Module, host(v.Catalogue.MovedTo)) }</span>
+			<button type="submit">Use this address</button>
+		</form>
+	}
+}
+
+templ openSite(v BrowseView) {
+	if v.SiteURL != "" {
+		<a class="button" href={ templ.SafeURL(v.SiteURL) } target="_blank" rel="noreferrer noopener">Open site</a>
+	}
+}
+
+// tryAgain reads the site again, carrying on from where it stopped when it
+// can.
+templ tryAgain(v BrowseView, primary bool) {
+	if v.Resumable() {
+		<button type="button" class={ templ.KV("primary", primary) } hx-post={ SiteURL(v.Module, "/resume") } hx-swap="none">Try again</button>
+	} else {
+		<button type="button" class={ templ.KV("primary", primary) } hx-post={ SiteURL(v.Module, "/index") } hx-swap="none">Try again</button>
+	}
+}
+
+templ updateModulesButton(primary bool) {
+	<button
+		type="button"
+		class={ templ.KV("primary", primary) }
+		hx-post="/modules/update"
+		hx-swap="none"
+		hx-disabled-elt="this"
+	>Update modules</button>
 }
 
 // BrowseRows is the appendable part: the titles plus the control that fetches
@@ -241,24 +396,21 @@ templ BrowseRows(v BrowseView) {
 	}
 	if v.More() {
 		<li class="more">
-			<button
-				type="button"
-				hx-get={ v.MoreURL() }
-				hx-target="closest li"
-				hx-swap="outerHTML"
-			>Load more</button>
+			<button type="button" class="link" hx-get={ v.MoreURL() } hx-target="closest li" hx-swap="outerHTML">
+				{ fmt.Sprintf("Show more · %d of %d", v.Offset+len(v.Titles), v.Found) }
+			</button>
 		</li>
 	}
 }
 
 // BrowseRow is one title. The title is the link, because in a catalogue you
-// open the thing by clicking the thing; a separate "Preview" beside "Follow"
-// presented navigation and commitment as siblings.
+// open the thing by clicking the thing.
 templ BrowseRow(v BrowseView, i int, t store.SiteTitle) {
 	{{ key := fmt.Sprintf("%d", i) }}
 	{{ label := titleLabel(t) }}
-	<li class="site-row" data-title={ label }>
-		if _, ok := v.Tracked[t.URL]; !ok {
+	{{ id, inLibrary := v.Tracked[t.URL] }}
+	<li class="site-row">
+		if !inLibrary {
 			<input class="pick" type="checkbox" name="sel" value={ key } form="follow-many" aria-label={ "Select " + label }/>
 			<input type="hidden" name={ "u" + key } value={ t.URL } form="follow-many"/>
 			<input type="hidden" name={ "t" + key } value={ label } form="follow-many"/>
@@ -266,16 +418,18 @@ templ BrowseRow(v BrowseView, i int, t store.SiteTitle) {
 			<span class="pick"></span>
 		}
 		<a class="title" href={ templ.SafeURL(previewURL(v.Module, t.URL)) }>{ label }</a>
-		if id, ok := v.Tracked[t.URL]; ok {
-			<span class="badge done">following</span>
-			<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
+		if t.New {
+			<span class="pill new">New</span>
+		}
+		if inLibrary {
+			<a class="pill lib" href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>✓ In library</a>
 		} else {
 			<form hx-post="/series" hx-swap="outerHTML" hx-target="closest li">
 				<input type="hidden" name="module" value={ v.Module }/>
 				<input type="hidden" name="url" value={ t.URL }/>
 				<input type="hidden" name="name" value={ label }/>
 				<input type="hidden" name="context" value="row"/>
-				<button type="submit">Follow</button>
+				<button type="submit" class="follow">+ Follow</button>
 			</form>
 		}
 	</li>
@@ -285,11 +439,10 @@ templ BrowseRow(v BrowseView, i int, t store.SiteTitle) {
 // stays where it was: the reader is mid-scan of a list, and following one
 // title is no reason to move them.
 templ Followed(name string, id int64) {
-	<li class="site-row followed" data-title={ name }>
+	<li class="site-row">
 		<span class="pick"></span>
 		<a class="title" href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>{ name }</a>
-		<span class="badge done">following</span>
-		<a href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>Open</a>
+		<a class="pill lib" href={ templ.SafeURL(fmt.Sprintf("/series/%d", id)) }>✓ In library</a>
 	</li>
 }
 
@@ -301,26 +454,17 @@ templ ConfirmReread(v BrowseView) {
 	<div class="confirm">
 		<p><strong>{ fmt.Sprintf("Read %s's catalogue again?", v.Module) }</strong></p>
 		<p class="muted">
-			atsume asks the site for its whole list of titles, one request a
-			second.
-			if v.Catalogue.FromSite() && v.Catalogue.Note != "" {
-				{ " Last time: " + v.Catalogue.Note + "." }
-			} else if !v.Catalogue.FromSite() {
+			atsume asks the site for its whole list of titles, which can take a
+			few minutes on large sites.
+			if !v.Catalogue.FromSite() {
 				{ " What is here now was downloaded rather than read, so this is the first time the site itself is asked." }
 			}
-			{ fmt.Sprintf(" The %s already here stay usable while it runs, and are replaced only when it finishes.",
+			{ fmt.Sprintf(" The %s already here stay usable while it runs.",
 				Count(v.Catalogue.Titles, "title", "titles")) }
 		</p>
 		<div class="actions">
-			<form hx-post={ SiteURL(v.Module, "/index") } hx-target="#catalogue-status" hx-swap="innerHTML">
-				<button type="submit" class="primary">Read it again</button>
-			</form>
-			<button
-				type="button"
-				hx-get={ SiteURL(v.Module, "/status") }
-				hx-target="#catalogue-status"
-				hx-swap="innerHTML"
-			>Cancel</button>
+			<button type="button" class="primary" hx-post={ SiteURL(v.Module, "/index") } hx-swap="none">Read it again</button>
+			<button type="button" hx-get={ SiteURL(v.Module, "/status") } hx-target="#catalogue-status" hx-swap="innerHTML">Cancel</button>
 		</div>
 	</div>
 }
