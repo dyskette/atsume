@@ -209,6 +209,26 @@ These raise a named error rather than failing quietly:
 |---|---|---|
 | `utils.nodejs` | Comix, RaijinScans, and a fallback in the Madara template | Puppeteer |
 
+## Fixing a module
+
+When a site changes and its module stops working, `atsume module` runs that
+one module from any FMD2 checkout through the same host atsume uses, without
+starting atsume:
+
+```sh
+atsume module -fmd2 ~/src/FMD2 LeerCapitulo list 1                 # titles on page 1, and the page count
+atsume module -fmd2 ~/src/FMD2 LeerCapitulo info /manga/xyz/one/   # every MANGAINFO field
+atsume module -fmd2 ~/src/FMD2 LeerCapitulo pages /leer/xyz/one/1/ -fetch-first
+atsume module xpath https://www.leercapitulo.co/manga/ '//a[contains(@class,"lc-card-name")]'
+```
+
+`info` and `list` show which fields came back empty; `xpath` tries a
+replacement selector against the live page with the XPath engine modules run
+on, so a selector that works there works in the module. Edit the `.lua` file
+and run the first command again. To run atsume itself on a fixed module before
+upstream merges it, point `ATSUME_MODULES_REPO` at the checkout and
+`ATSUME_MODULES_REF` at its branch; for the tests, `ATSUME_FMD2_DIR`.
+
 ## Module load rate
 
 `TestLoadAllModules` opens every upstream module, which runs its `Init()` and so

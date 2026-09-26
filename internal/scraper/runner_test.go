@@ -288,6 +288,16 @@ function GetInfo() return #require('utils.json').decode(DATA).data end`})
 	}
 }
 
+// isLua55Reject reports an error from loading a module that assigns to a for
+// loop's control variable, which Lua 5.5 makes read-only.
+func isLua55Reject(err error) bool {
+	return err != nil && strings.Contains(err.Error(), lua55RejectMessage)
+}
+
+// lua55RejectMessage is how Lua 5.5 rejects an assignment to a for loop's
+// control variable.
+const lua55RejectMessage = "attempt to reassign constant variable"
+
 // lua55Rejects are the upstream modules Lua 5.5 rejects because they assign to
 // a for loop's control variable. GroupLe is a template, so the eight modules
 // that require it fail with it. TestLoadAllModules pins the list; it shrinks
