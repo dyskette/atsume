@@ -12,6 +12,8 @@ type SiteTitle struct {
 	URL  string
 	Name string
 	Seq  int
+	// New is a title the latest read found that the one before did not.
+	New bool
 }
 
 // SiteCatalogue is what is known about a site's stored title list.
@@ -36,6 +38,9 @@ type SiteCatalogue struct {
 	DataAt time.Time
 	// Problem is what kind of failure ended the last read, "" when none.
 	Problem string
+	// NewTitles is how many titles the latest read found that the one
+	// before did not.
+	NewTitles int
 }
 
 // FromSite reports whether atsume read this catalogue itself.
@@ -74,7 +79,9 @@ func (s *Store) BeginSiteCatalogue(ctx context.Context, site string) (int64, err
 		INSERT INTO site_catalogue (site, built_at, complete, note, read_seq)
 		VALUES (?, CURRENT_TIMESTAMP, 0, '', 1)
 		ON CONFLICT (site) DO UPDATE SET
-			complete = 0, note = '', read_seq = read_seq + 1`, site); err != nil {
+			complete = 0, note = '', read_seq = read_seq + 1,
+			new_from = CASE WHEN EXISTS (SELECT 1 FROM site_title WHERE site = excluded.site)
+			                THEN read_seq + 1 ELSE 0 END`, site); err != nil {
 		return 0, err
 	}
 	var seq int64
@@ -104,8 +111,8 @@ func (s *Store) AddSiteTitles(ctx context.Context, site string, read int64, titl
 	// A title already stored is refreshed rather than skipped: its name may
 	// have changed, and seen_at is what marks it as still listed.
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO site_title (site, url, name, seq, seen_at, seen_read)
-		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+		INSERT INTO site_title (site, url, name, seq, seen_at, seen_read, first_read)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
 		ON CONFLICT (site, url) DO UPDATE SET
 			name = excluded.name, seq = excluded.seq,
 			seen_at = CURRENT_TIMESTAMP, seen_read = excluded.seen_read`)
@@ -118,7 +125,7 @@ func (s *Store) AddSiteTitles(ctx context.Context, site string, read int64, titl
 		if t.URL == "" {
 			continue
 		}
-		if _, err := stmt.ExecContext(ctx, site, t.URL, CleanTitle(t.Name), t.Seq, read); err != nil {
+		if _, err := stmt.ExecContext(ctx, site, t.URL, CleanTitle(t.Name), t.Seq, read, read); err != nil {
 			return err
 		}
 	}
@@ -178,9 +185,10 @@ func (s *Store) SiteCatalogueInfo(ctx context.Context, site string) (SiteCatalog
 	var built, data sql.NullString
 	err := s.DB.QueryRowContext(ctx, `
 		SELECT built_at, complete, note, source, data_at, problem,
-		       (SELECT COUNT(*) FROM site_title WHERE site = ?)
-		FROM site_catalogue WHERE site = ?`, site, site).
-		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Problem, &out.Titles)
+		       (SELECT COUNT(*) FROM site_title WHERE site = c.site),
+		       (SELECT COUNT(*) FROM site_title WHERE site = c.site AND c.new_from > 0 AND first_read = c.new_from)
+		FROM site_catalogue c WHERE site = ?`, site).
+		Scan(&built, &out.Complete, &out.Note, &out.Source, &data, &out.Problem, &out.Titles, &out.NewTitles)
 	if err == sql.ErrNoRows {
 		return out, nil
 	}
@@ -217,8 +225,10 @@ func (s *Store) SearchSiteTitles(ctx context.Context, site, query string, offset
 	}
 
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT url, name, seq FROM site_title WHERE `+where+`
-		 ORDER BY seq LIMIT ? OFFSET ?`, append(args, limit, offset)...)
+		`SELECT url, name, seq,
+		        first_read = (SELECT new_from FROM site_catalogue WHERE site = site_title.site AND new_from > 0) AS new
+		 FROM site_title WHERE `+where+`
+		 ORDER BY new DESC, seq LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -227,9 +237,11 @@ func (s *Store) SearchSiteTitles(ctx context.Context, site, query string, offset
 	var out []SiteTitle
 	for rows.Next() {
 		var t SiteTitle
-		if err := rows.Scan(&t.URL, &t.Name, &t.Seq); err != nil {
+		var isNew sql.NullBool
+		if err := rows.Scan(&t.URL, &t.Name, &t.Seq, &isNew); err != nil {
 			return nil, 0, err
 		}
+		t.New = isNew.Bool
 		out = append(out, t)
 	}
 	return out, total, rows.Err()

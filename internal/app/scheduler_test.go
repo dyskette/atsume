@@ -1584,6 +1584,75 @@ func TestReadRecordsWhyItFailed(t *testing.T) {
 	}
 }
 
+// TestRefreshMarksNewTitles covers the New marker: nothing is new on the
+// first read of a site, what a later read adds is new and listed first, and
+// it stays new until the read after.
+func TestRefreshMarksNewTitles(t *testing.T) {
+	var extra atomic.Bool
+	inner := sectionedSite(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if extra.Load() && r.URL.Path == "/dir/2/0" {
+			fmt.Fprint(w, `<ul class="manga-list"><li><a href="/manga/gamma-one/">Gamma One</a></li>`+
+				`<li><a href="/manga/delta/">Delta</a></li></ul>`)
+			return
+		}
+		res, err := http.Get(inner.URL + r.URL.RequestURI())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(srv.Close)
+	a, st, ctx := newCheckoutApp(t, sectionedCheckout(t, srv.URL))
+
+	read := func() store.SiteCatalogue {
+		t.Helper()
+		if err := a.EnqueueIndex(ctx, "Sectioned", store.SourceSite); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, ctx, func() bool {
+			stats, _ := a.Queue.Stats(ctx)
+			return stats["pending"] == 0 && stats["running"] == 0
+		}, "the read")
+		info, _ := st.SiteCatalogueInfo(ctx, "Sectioned")
+		return info
+	}
+	newNames := func() []string {
+		t.Helper()
+		titles, _, err := st.SearchSiteTitles(ctx, "Sectioned", "", 0, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, ti := range titles {
+			if ti.New {
+				out = append(out, ti.Name)
+			}
+		}
+		return out
+	}
+
+	if info := read(); info.NewTitles != 0 || len(newNames()) != 0 {
+		t.Errorf("first read marked %d titles new", info.NewTitles)
+	}
+
+	extra.Store(true)
+	info := read()
+	if info.NewTitles != 1 {
+		t.Errorf("refresh found %d new titles, want 1", info.NewTitles)
+	}
+	titles, _, _ := st.SearchSiteTitles(ctx, "Sectioned", "", 0, 50)
+	if len(titles) == 0 || titles[0].Name != "Delta" || !titles[0].New {
+		t.Errorf("the new title should be listed first, got %+v", titles)
+	}
+
+	if info := read(); info.NewTitles != 0 {
+		t.Errorf("a title stayed new past the read after, %d new", info.NewTitles)
+	}
+}
+
 // countingSite is the sectioned test site with a request counter, so a test
 // can tell whether looking at a catalogue went back to the network.
 func countingSite(t *testing.T, reads *atomic.Int32) *httptest.Server {
