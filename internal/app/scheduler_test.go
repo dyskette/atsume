@@ -28,11 +28,20 @@ import (
 // growingSite serves a chapter list whose length the test controls, so a second
 // check sees chapters the first one did not.
 func growingSite(t *testing.T, chapters *atomic.Int32) *httptest.Server {
+	return flakySite(t, chapters, nil)
+}
+
+// flakySite is growingSite whose series page answers 500 while down is set.
+func flakySite(t *testing.T, chapters *atomic.Int32, down *atomic.Bool) *httptest.Server {
 	t.Helper()
 	var base string
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/manga/grow/", func(w http.ResponseWriter, r *http.Request) {
+		if down != nil && down.Load() {
+			http.Error(w, "down", http.StatusInternalServerError)
+			return
+		}
 		fmt.Fprintf(w, `<html><body>
 			<div class="post-title"><h1>Growing Series</h1></div>
 			<div class="author-content"><a>Someone</a></div>`)
@@ -194,6 +203,56 @@ func TestNewChaptersAreDownloaded(t *testing.T) {
 				t.Errorf("pre-existing chapter %q is %q, want pending", c.Name, c.State)
 			}
 		}
+	}
+}
+
+// TestFailedCheckIsRecorded covers a check that fails on a series already in
+// the library: the failure is noted on the series, with its kind, and the
+// next check that works clears it.
+func TestFailedCheckIsRecorded(t *testing.T) {
+	var chapters atomic.Int32
+	var down atomic.Bool
+	chapters.Store(1)
+	srv := flakySite(t, &chapters, &down)
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{})
+	url := srv.URL + "/manga/grow/"
+
+	series := func() store.Series {
+		all, _ := st.ListSeries(ctx)
+		if len(all) != 1 {
+			return store.Series{}
+		}
+		return all[0]
+	}
+
+	if err := a.EnqueueRefresh(ctx, "TestMadara", url); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool { return series().CheckedAt.Valid }, "the first check")
+	checked := series().CheckedAt
+
+	down.Store(true)
+	if err := a.EnqueueRefresh(ctx, "TestMadara", url); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool { return series().CheckError != "" }, "the failed check to be noted")
+	s := series()
+	if s.CheckProblem != ProblemDown || !s.CheckFailedAt.Valid {
+		t.Errorf("failed check = problem %q, failed at %v; want %q with a time",
+			s.CheckProblem, s.CheckFailedAt, ProblemDown)
+	}
+	if !s.CheckedAt.Time.Equal(checked.Time) {
+		t.Errorf("checked_at moved to %v on a failed check; it is when a check last worked", s.CheckedAt)
+	}
+
+	down.Store(false)
+	if err := a.EnqueueRefresh(ctx, "TestMadara", url); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool { return series().CheckError == "" }, "a working check to clear it")
+	if s := series(); s.CheckProblem != "" || s.CheckFailedAt.Valid {
+		t.Errorf("after a working check: problem %q, failed at %v; want both cleared",
+			s.CheckProblem, s.CheckFailedAt)
 	}
 }
 

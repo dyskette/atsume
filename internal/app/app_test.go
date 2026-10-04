@@ -79,7 +79,7 @@ end
 local Template = require 'templates.Madara'
 
 function GetNameAndLink() Template.GetNameAndLink() return no_error end
-function GetInfo()        Template.GetInfo()        return no_error end
+function GetInfo()        return Template.GetInfo() end
 function GetPageNumber()  return Template.GetPageNumber() end
 `, rootURL)
 	if err := os.WriteFile(filepath.Join(luaDir, "modules", "TestMadara.lua"), []byte(src), 0o644); err != nil {

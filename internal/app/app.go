@@ -263,7 +263,21 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 // refresh fetches a series' details and chapter list from its site and stores
 // them. The series row is created if it is not there, followed; an existing
 // row keeps whether it is followed.
-func (a *App) refresh(ctx context.Context, module, seriesURL string) error {
+//
+// A failure is noted on the series, so the library can tell a site that broke
+// from one with nothing new. A check cut short by shutdown says nothing about
+// the site and is not noted.
+func (a *App) refresh(ctx context.Context, module, seriesURL string) (err error) {
+	defer func() {
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		rerr := a.Store.RecordCheckFailure(ctx, module, seriesURL, classifyProblem(err), err.Error())
+		if rerr != nil {
+			slog.Warn("could not record failed check", "url", seriesURL, "err", rerr)
+		}
+	}()
+
 	r, err := a.openModule(ctx, module)
 	if err != nil {
 		return err
