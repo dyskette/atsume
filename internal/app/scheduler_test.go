@@ -364,6 +364,39 @@ func TestSchedulerSweepEnqueues(t *testing.T) {
 	}
 }
 
+// TestSchedulerNextSweep covers the time the library gives for the next
+// check: a minute after start, an interval after each sweep, and none once
+// the scheduler stops or when checking is off.
+func TestSchedulerNextSweep(t *testing.T) {
+	a, _, ctx := newTestApp(t, "http://127.0.0.1:1", &config.Config{CheckInterval: 6 * time.Hour, CheckBatch: 5})
+	s := NewScheduler(a)
+	if _, ok := s.NextSweep(); ok {
+		t.Error("a scheduler not running has a next sweep")
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+
+	near := func(at, want time.Time) bool { d := at.Sub(want); return d > -5*time.Second && d < 5*time.Second }
+	waitFor(t, ctx, func() bool {
+		at, ok := s.NextSweep()
+		return ok && near(at, time.Now().Add(time.Minute))
+	}, "the first sweep to be a minute away")
+
+	s.CheckNow()
+	waitFor(t, ctx, func() bool {
+		at, ok := s.NextSweep()
+		return ok && near(at, time.Now().Add(6*time.Hour))
+	}, "the next sweep to be an interval after the one asked for")
+
+	cancel()
+	<-done
+	if _, ok := s.NextSweep(); ok {
+		t.Error("a stopped scheduler still has a next sweep")
+	}
+}
+
 // TestSchedulerDisabled covers CheckInterval=0: Run must not sweep, and must
 // return when the context is cancelled rather than spinning.
 func TestSchedulerDisabled(t *testing.T) {

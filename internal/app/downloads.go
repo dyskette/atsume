@@ -132,3 +132,10 @@ func (a *App) ResumeQueue() { a.Pool.Resume() }
 
 // QueuePaused reports whether the queue is paused.
 func (a *App) QueuePaused() bool { return a.Pool.Paused() }
+
+// ChecksInFlight is how many series checks are running or about to, for the
+// library to say a check is under way rather than when the last one ran. A
+// failed check waiting to be retried is not under way.
+func (a *App) ChecksInFlight(ctx context.Context) (int, error) {
+	return a.Queue.InFlight(ctx, jobs.KindRefreshSeries)
+}

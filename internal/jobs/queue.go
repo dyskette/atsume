@@ -124,6 +124,16 @@ func (q *Queue) PendingOfKind(ctx context.Context, kind string) ([]json.RawMessa
 	return out, rows.Err()
 }
 
+// InFlight counts the jobs of one kind running or ready to run, leaving out
+// those waiting out a retry delay, which are not under way.
+func (q *Queue) InFlight(ctx context.Context, kind string) (int, error) {
+	var n int
+	err := q.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM jobs WHERE kind = ?
+		 AND (state = 'running' OR (state = 'pending' AND run_after <= CURRENT_TIMESTAMP))`, kind).Scan(&n)
+	return n, err
+}
+
 // DeletePending removes the jobs of one kind that have not started and whose
 // payload has key set to value, and reports how many it removed. A job
 // already running is left alone; stopping it is the handler's business.
