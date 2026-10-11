@@ -26,6 +26,9 @@ type Scheduler struct {
 	// that has stopped looks exactly like one with nothing to do, and the
 	// page would go on quietly claiming everything is up to date.
 	lastSweep atomic.Int64
+	// nextSweep is when the timer will next start a sweep, in Unix seconds,
+	// and zero while the scheduler is not running.
+	nextSweep atomic.Int64
 }
 
 // NewScheduler builds a scheduler from the app's configuration.
@@ -42,6 +45,16 @@ func NewScheduler(a *App) *Scheduler {
 // this process.
 func (s *Scheduler) LastSweep() (time.Time, bool) {
 	sec := s.lastSweep.Load()
+	if sec == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(sec, 0), true
+}
+
+// NextSweep reports when the next sweep is due, and false when none is
+// scheduled: checking is off, or the scheduler is not running.
+func (s *Scheduler) NextSweep() (time.Time, bool) {
+	sec := s.nextSweep.Load()
 	if sec == 0 {
 		return time.Time{}, false
 	}
@@ -76,6 +89,8 @@ func (s *Scheduler) Run(ctx context.Context) {
 	// restart does not stampede every tracked site at once.
 	timer := time.NewTimer(time.Minute)
 	defer timer.Stop()
+	s.nextSweep.Store(time.Now().Add(time.Minute).Unix())
+	defer s.nextSweep.Store(0)
 
 	for {
 		select {
@@ -98,6 +113,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 		}
 
 		timer.Reset(s.interval)
+		s.nextSweep.Store(time.Now().Add(s.interval).Unix())
 	}
 }
 

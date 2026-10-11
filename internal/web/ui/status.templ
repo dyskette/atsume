@@ -19,7 +19,7 @@ templ QueueStatus(v QueueView) {
 			<span>{ queueText(v) }</span>
 		case len(v.Reading) > 0:
 			<span class="dot working"></span>
-		case v.Failed > 0:
+		case v.Failed > 0 || v.CheckFailing > 0:
 			<span class="dot bad"></span>
 			<span>Nothing in progress</span>
 		default:
@@ -34,7 +34,10 @@ templ QueueStatus(v QueueView) {
 		<span class="pages">{ fmt.Sprintf("%d / %d pages", v.Done, v.Total) }</span>
 	}
 	if v.Failed > 0 {
-		<a class="failed-link" href="/">{ fmt.Sprintf("%d failed", v.Failed) }</a>
+		<a class="failed-link" href={ templ.SafeURL(problemsURL) }>{ fmt.Sprintf("%d failed", v.Failed) }</a>
+	}
+	if v.CheckFailing > 0 {
+		<a class="failed-link" href={ templ.SafeURL(problemsURL) }>{ Count(v.CheckFailing, "check failing", "checks failing") }</a>
 	}
 	if v.Paused {
 		<button type="button" class="push" hx-post="/queue/resume" hx-target="#queue-status" hx-swap="innerHTML">Resume</button>

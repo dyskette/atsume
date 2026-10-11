@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dyskette/atsume/internal/app"
 	"github.com/dyskette/atsume/internal/store"
 )
 
@@ -96,4 +97,26 @@ func TestSeriesPageStates(t *testing.T) {
 		// Nothing left to download, so no download button.
 		mustNotContain(t, page, "↓ Download")
 	})
+}
+
+// TestSeriesPageCheckFailure covers the banner a failing check puts on the
+// series page: when, why, when it last worked, and the fix for its kind.
+func TestSeriesPageCheckFailure(t *testing.T) {
+	v := SeriesView{Series: store.Series{
+		ID: 7, Title: "Frieren", ModuleName: "MangaDex", ModuleKey: "MangaDex", Subscribed: true,
+		CheckedAt:     sql.NullTime{Time: time.Now().Add(-72 * time.Hour), Valid: true},
+		CheckFailedAt: sql.NullTime{Time: time.Now().Add(-2 * time.Hour), Valid: true},
+		CheckProblem:  app.ProblemBlocked, CheckError: "403 Forbidden at https://mangadex.org/title/x",
+		CheckFailure: store.Failure{Status: 403, Challenged: true},
+	}}
+	page := renderPage(t, v)
+	mustContain(t, page, "The last check failed 2h ago",
+		"MangaDex answered with an anti-bot challenge page. The last check that worked was 3d ago.",
+		"Set up FlareSolverr", "Technical details", "403 Forbidden at https://mangadex.org/title/x", `hx-post="/series/7/refresh"`)
+
+	v.FlareSolverr = true
+	mustContain(t, renderPage(t, v), "Site settings")
+
+	v.Series.CheckFailedAt = sql.NullTime{}
+	mustNotContain(t, renderPage(t, v), "The last check failed")
 }

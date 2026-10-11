@@ -76,7 +76,36 @@ type Series struct {
 	Status     string
 	Summary    string
 	Subscribed bool
-	CheckedAt  sql.NullTime
+	// CheckedAt is when a check of the series last worked.
+	CheckedAt sql.NullTime
+	// CheckProblem is the kind of failure that ended the latest check, one of
+	// the site problem kinds, CheckError its message and CheckFailedAt when it
+	// happened. All are empty once a check works again. A failed check leaves
+	// CheckedAt alone, so without these a broken series reads as a quiet one.
+	CheckProblem  string
+	CheckError    string
+	CheckFailedAt sql.NullTime
+	// CheckFailure is what the site's answer to the failed check said: its
+	// HTTP status, whether it was a challenge page, and why it did not answer.
+	// MovedTo is never set for a series.
+	CheckFailure Failure
+	// CreatedAt is when the series entered the library.
+	CreatedAt time.Time
+}
+
+// seriesColumns is what scanSeries reads, in its order.
+const seriesColumns = `id, module_id, module_key, module_name, url, title, cover_url, authors,
+	artists, genres, status, summary, subscribed, checked_at, check_problem, check_error, check_failed_at,
+	check_status, check_challenged, check_cause, created_at`
+
+// scanSeries reads one row selected with seriesColumns.
+func scanSeries(row interface{ Scan(...any) error }) (Series, error) {
+	var v Series
+	err := row.Scan(&v.ID, &v.ModuleID, &v.ModuleKey, &v.ModuleName, &v.URL, &v.Title,
+		&v.CoverURL, &v.Authors, &v.Artists, &v.Genres, &v.Status, &v.Summary,
+		&v.Subscribed, &v.CheckedAt, &v.CheckProblem, &v.CheckError, &v.CheckFailedAt,
+		&v.CheckFailure.Status, &v.CheckFailure.Challenged, &v.CheckFailure.Cause, &v.CreatedAt)
+	return v, err
 }
 
 // Chapter is one downloadable chapter.
@@ -92,6 +121,21 @@ type Chapter struct {
 	Error    string
 	Pages    int
 	Position int
+	// DownloadedAt is when the file was written, and null for a chapter not
+	// on disk or one downloaded before the time was recorded.
+	DownloadedAt sql.NullTime
+}
+
+// chapterColumns is what scanChapter reads, in its order.
+const chapterColumns = `id, series_id, url, name, number, volume, state, file_path, error,
+	pages, position, downloaded_at`
+
+// scanChapter reads one row selected with chapterColumns.
+func scanChapter(row interface{ Scan(...any) error }) (Chapter, error) {
+	var c Chapter
+	err := row.Scan(&c.ID, &c.SeriesID, &c.URL, &c.Name, &c.Number, &c.Volume,
+		&c.State, &c.FilePath, &c.Error, &c.Pages, &c.Position, &c.DownloadedAt)
+	return c, err
 }
 
 // Chapter states.
@@ -208,7 +252,10 @@ func (s *Store) UpsertSeries(ctx context.Context, v Series) (int64, error) {
 			cover_url = CASE WHEN excluded.cover_url <> '' THEN excluded.cover_url ELSE series.cover_url END,
 			authors = excluded.authors, artists = excluded.artists,
 			genres = excluded.genres, status = excluded.status,
-			summary = excluded.summary, checked_at = excluded.checked_at
+			summary = excluded.summary, checked_at = excluded.checked_at,
+			-- Getting this far means the check worked.
+			check_problem = '', check_error = '', check_failed_at = NULL,
+			check_status = 0, check_challenged = 0, check_cause = ''
 		RETURNING id`
 	var id int64
 	err := s.DB.QueryRowContext(ctx, q, v.ModuleID, v.ModuleKey, v.ModuleName, v.URL,
@@ -219,11 +266,7 @@ func (s *Store) UpsertSeries(ctx context.Context, v Series) (int64, error) {
 
 // ListSeries returns every tracked series, newest first.
 func (s *Store) ListSeries(ctx context.Context) ([]Series, error) {
-	const q = `
-		SELECT id, module_id, module_key, module_name, url, title, cover_url, authors,
-		       artists, genres, status, summary, subscribed, checked_at
-		FROM series ORDER BY title`
-	rows, err := s.DB.QueryContext(ctx, q)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+seriesColumns+` FROM series ORDER BY title`)
 	if err != nil {
 		return nil, err
 	}
@@ -231,10 +274,8 @@ func (s *Store) ListSeries(ctx context.Context) ([]Series, error) {
 
 	var out []Series
 	for rows.Next() {
-		var v Series
-		if err := rows.Scan(&v.ID, &v.ModuleID, &v.ModuleKey, &v.ModuleName, &v.URL, &v.Title,
-			&v.CoverURL, &v.Authors, &v.Artists, &v.Genres, &v.Status,
-			&v.Summary, &v.Subscribed, &v.CheckedAt); err != nil {
+		v, err := scanSeries(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -247,6 +288,8 @@ type QueueStatus struct {
 	Downloading int
 	Queued      int
 	Failed      int
+	// CheckFailing is how many series the latest check of failed.
+	CheckFailing int
 }
 
 // Busy reports whether anything is in flight.
@@ -278,7 +321,12 @@ func (s *Store) Queue(ctx context.Context) (QueueStatus, error) {
 			out.Failed = n
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	err = s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM series WHERE check_problem <> '' OR check_failed_at IS NOT NULL`).Scan(&out.CheckFailing)
+	return out, err
 }
 
 // SeriesByModule lists the series that came from one site.
@@ -343,6 +391,28 @@ type SeriesProgress struct {
 	// NewestArrival is when a chapter last turned up for this series,
 	// downloaded or not.
 	NewestArrival sql.NullTime
+	// LastDownload is when a chapter of the series was last written to disk,
+	// and null when none has been since the time was recorded.
+	LastDownload sql.NullTime
+
+	// Downloading is the part of Active that has started, the rest waiting
+	// in the queue.
+	Downloading int
+	// NewActive is the part of New already queued or downloading, which the
+	// library says as "1 new, queued" rather than as something to act on.
+	NewActive int
+	// Latest is the number of the highest-numbered chapter on disk, "" when
+	// none on disk has a number. The highest rather than the latest written,
+	// since a back catalogue fetched today is not the series' newest chapter.
+	Latest string
+}
+
+// later returns whichever of two optional times is later.
+func later(a, b sql.NullTime) sql.NullTime {
+	if !b.Valid || (a.Valid && !b.Time.After(a.Time)) {
+		return a
+	}
+	return b
 }
 
 // Progress returns the tally for every series in one query.
@@ -351,7 +421,7 @@ type SeriesProgress struct {
 // per series on the page a reader looks at most.
 func (s *Store) Progress(ctx context.Context) (map[int64]SeriesProgress, error) {
 	const q = `
-		SELECT series_id, state, backlog, COUNT(*), MAX(arrived_at)
+		SELECT series_id, state, backlog, COUNT(*), MAX(arrived_at), MAX(downloaded_at)
 		FROM chapters GROUP BY series_id, state, backlog`
 	rows, err := s.DB.QueryContext(ctx, q)
 	if err != nil {
@@ -365,26 +435,30 @@ func (s *Store) Progress(ctx context.Context) (map[int64]SeriesProgress, error) 
 		var state string
 		var backlog bool
 		var n int
-		var newest sql.NullString
-		if err := rows.Scan(&id, &state, &backlog, &n, &newest); err != nil {
+		var newest, downloaded sql.NullString
+		if err := rows.Scan(&id, &state, &backlog, &n, &newest, &downloaded); err != nil {
 			return nil, err
 		}
-		arrived := parseTimestamp(newest)
 		p := out[id]
 		p.Total += n
 		if !backlog {
 			if state != ChapterDone {
 				p.New += n
 			}
-			if arrived.Valid && (!p.NewestArrival.Valid || arrived.Time.After(p.NewestArrival.Time)) {
-				p.NewestArrival = arrived
-			}
+			p.NewestArrival = later(p.NewestArrival, parseTimestamp(newest))
 		}
+		p.LastDownload = later(p.LastDownload, parseTimestamp(downloaded))
 		switch state {
 		case ChapterDone:
 			p.Done += n
 		case ChapterQueued, ChapterDownloading:
 			p.Active += n
+			if state == ChapterDownloading {
+				p.Downloading += n
+			}
+			if !backlog {
+				p.NewActive += n
+			}
 		case ChapterFailed:
 			p.Failed += n
 			p.Waiting += n
@@ -393,7 +467,37 @@ func (s *Store) Progress(ctx context.Context) (map[int64]SeriesProgress, error) 
 		}
 		out[id] = p
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.latestChapters(ctx, out)
+}
+
+// latestChapters fills in each series' highest-numbered chapter on disk.
+//
+// It relies on SQLite taking a bare column from the row that holds the MAX of
+// an aggregate query, so the number comes back as written ("2.001", not 2.001
+// read back as a float).
+func (s *Store) latestChapters(ctx context.Context, out map[int64]SeriesProgress) error {
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT series_id, number, MAX(CAST(number AS REAL)) FROM chapters
+		WHERE state = ? AND number <> '' GROUP BY series_id`, ChapterDone)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var number string
+		var max float64
+		if err := rows.Scan(&id, &number, &max); err != nil {
+			return err
+		}
+		p := out[id]
+		p.Latest = number
+		out[id] = p
+	}
+	return rows.Err()
 }
 
 // parseTimestamp reads a SQLite timestamp that arrived as text.
@@ -416,15 +520,8 @@ func parseTimestamp(v sql.NullString) sql.NullTime {
 
 // GetSeries reads one series by id.
 func (s *Store) GetSeries(ctx context.Context, id int64) (Series, error) {
-	const q = `
-		SELECT id, module_id, module_key, module_name, url, title, cover_url, authors,
-		       artists, genres, status, summary, subscribed, checked_at
-		FROM series WHERE id = ?`
-	var v Series
-	err := s.DB.QueryRowContext(ctx, q, id).Scan(&v.ID, &v.ModuleID, &v.ModuleKey,
-		&v.ModuleName, &v.URL, &v.Title, &v.CoverURL, &v.Authors, &v.Artists,
-		&v.Genres, &v.Status, &v.Summary, &v.Subscribed, &v.CheckedAt)
-	return v, err
+	return scanSeries(s.DB.QueryRowContext(ctx,
+		`SELECT `+seriesColumns+` FROM series WHERE id = ?`, id))
 }
 
 // ReplaceChapters records a series' chapter list, returning the chapters that
@@ -510,8 +607,7 @@ func knownChapterURLs(ctx context.Context, tx *sql.Tx, seriesID int64) (map[stri
 // whichever series happens to sort last.
 func (s *Store) SeriesDueForCheck(ctx context.Context, interval time.Duration, limit int) ([]Series, error) {
 	const q = `
-		SELECT id, module_id, module_key, module_name, url, title, cover_url, authors,
-		       artists, genres, status, summary, subscribed, checked_at
+		SELECT ` + seriesColumns + `
 		FROM series
 		WHERE subscribed = 1 AND (checked_at IS NULL OR checked_at < ?)
 		ORDER BY checked_at IS NOT NULL, checked_at
@@ -524,10 +620,8 @@ func (s *Store) SeriesDueForCheck(ctx context.Context, interval time.Duration, l
 
 	var out []Series
 	for rows.Next() {
-		var v Series
-		if err := rows.Scan(&v.ID, &v.ModuleID, &v.ModuleKey, &v.ModuleName, &v.URL, &v.Title,
-			&v.CoverURL, &v.Authors, &v.Artists, &v.Genres, &v.Status,
-			&v.Summary, &v.Subscribed, &v.CheckedAt); err != nil {
+		v, err := scanSeries(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -555,9 +649,7 @@ func (s *Store) SetSubscribed(ctx context.Context, id int64, on bool) error {
 
 // ListChapters returns a series' chapters in reading order.
 func (s *Store) ListChapters(ctx context.Context, seriesID int64) ([]Chapter, error) {
-	const q = `
-		SELECT id, series_id, url, name, number, volume, state, file_path, error, pages, position
-		FROM chapters WHERE series_id = ? ORDER BY position`
+	const q = `SELECT ` + chapterColumns + ` FROM chapters WHERE series_id = ? ORDER BY position`
 	rows, err := s.DB.QueryContext(ctx, q, seriesID)
 	if err != nil {
 		return nil, err
@@ -566,9 +658,8 @@ func (s *Store) ListChapters(ctx context.Context, seriesID int64) ([]Chapter, er
 
 	var out []Chapter
 	for rows.Next() {
-		var c Chapter
-		if err := rows.Scan(&c.ID, &c.SeriesID, &c.URL, &c.Name, &c.Number,
-			&c.Volume, &c.State, &c.FilePath, &c.Error, &c.Pages, &c.Position); err != nil {
+		c, err := scanChapter(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -578,13 +669,8 @@ func (s *Store) ListChapters(ctx context.Context, seriesID int64) ([]Chapter, er
 
 // GetChapter reads one chapter by id.
 func (s *Store) GetChapter(ctx context.Context, id int64) (Chapter, error) {
-	const q = `
-		SELECT id, series_id, url, name, number, volume, state, file_path, error, pages, position
-		FROM chapters WHERE id = ?`
-	var c Chapter
-	err := s.DB.QueryRowContext(ctx, q, id).Scan(&c.ID, &c.SeriesID, &c.URL,
-		&c.Name, &c.Number, &c.Volume, &c.State, &c.FilePath, &c.Error, &c.Pages, &c.Position)
-	return c, err
+	return scanChapter(s.DB.QueryRowContext(ctx,
+		`SELECT `+chapterColumns+` FROM chapters WHERE id = ?`, id))
 }
 
 // ChapterByFile returns the ID of the chapter recorded as written to path, or
@@ -599,9 +685,31 @@ func (s *Store) ChapterByFile(ctx context.Context, path string) (int64, error) {
 }
 
 // SetChapterState records progress or the outcome of a download.
+//
+// Reaching done stamps the download time; any other state clears it, since a
+// chapter going back to pending or queued is one whose file is gone or about
+// to be replaced.
 func (s *Store) SetChapterState(ctx context.Context, id int64, state, filePath, errMsg string, pages int) error {
-	const q = `UPDATE chapters SET state = ?, file_path = ?, error = ?, pages = ? WHERE id = ?`
-	_, err := s.DB.ExecContext(ctx, q, state, filePath, errMsg, pages, id)
+	const q = `
+		UPDATE chapters SET state = ?, file_path = ?, error = ?, pages = ?,
+			downloaded_at = CASE WHEN ? = 'done' THEN CURRENT_TIMESTAMP END
+		WHERE id = ?`
+	_, err := s.DB.ExecContext(ctx, q, state, filePath, errMsg, pages, state, id)
+	return err
+}
+
+// RecordCheckFailure notes on a series that a check of it failed: the kind of
+// problem, the error, and what the site's answer says about it.
+//
+// The series is found the way a refresh names it, by site and address. A
+// series not yet in the library has no row to mark, and that is not an error:
+// the caller reports the failure to whoever asked for the check.
+func (s *Store) RecordCheckFailure(ctx context.Context, site, url, problem, msg string, f Failure) error {
+	const q = `
+		UPDATE series SET check_problem = ?, check_error = ?, check_failed_at = CURRENT_TIMESTAMP,
+			check_status = ?, check_challenged = ?, check_cause = ?
+		WHERE url = ? AND COALESCE(NULLIF(module_key, ''), module_name) = ?`
+	_, err := s.DB.ExecContext(ctx, q, problem, msg, f.Status, f.Challenged, f.Cause, url, site)
 	return err
 }
 

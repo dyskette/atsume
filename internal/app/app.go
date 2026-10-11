@@ -263,7 +263,21 @@ func (a *App) refreshSeries(ctx context.Context, raw json.RawMessage) error {
 // refresh fetches a series' details and chapter list from its site and stores
 // them. The series row is created if it is not there, followed; an existing
 // row keeps whether it is followed.
-func (a *App) refresh(ctx context.Context, module, seriesURL string) error {
+//
+// A failure is noted on the series, so the library can tell a site that broke
+// from one with nothing new. A check cut short by shutdown says nothing about
+// the site and is not noted.
+func (a *App) refresh(ctx context.Context, module, seriesURL string) (err error) {
+	defer func() {
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		rerr := a.Store.RecordCheckFailure(ctx, module, seriesURL, classifyProblem(err), err.Error(), failureOf(err))
+		if rerr != nil {
+			slog.Warn("could not record failed check", "url", seriesURL, "err", rerr)
+		}
+	}()
+
 	r, err := a.openModule(ctx, module)
 	if err != nil {
 		return err
@@ -327,7 +341,14 @@ func (a *App) refresh(ctx context.Context, module, seriesURL string) error {
 		}
 		a.Notifier.Notify(ctx, newChaptersMessage(id, info.Title, mod.Name, names))
 
-		if a.Cfg.AutoDownload {
+		// Only a followed series fetches what comes out by itself. A saved
+		// one was kept without asking for its future chapters, and a check
+		// of it is the reader looking, not asking for downloads.
+		following, err := a.following(ctx, id)
+		if err != nil {
+			return err
+		}
+		if a.Cfg.AutoDownload && following {
 			for _, c := range added {
 				if err := a.EnqueueDownload(ctx, c.ID); err != nil {
 					return err
@@ -349,6 +370,12 @@ func (a *App) refresh(ctx context.Context, module, seriesURL string) error {
 		Kind: "series-updated", SeriesID: id, State: "done", Message: message,
 	})
 	return nil
+}
+
+// following reports whether a series in the library is followed.
+func (a *App) following(ctx context.Context, id int64) (bool, error) {
+	s, err := a.Store.GetSeries(ctx, id)
+	return s.Subscribed, err
 }
 
 // reconcileFiles marks chapters whose file has left as outstanding again,

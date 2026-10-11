@@ -221,9 +221,10 @@ func olderThan(t time.Time) string {
 	return fmt.Sprintf("%d months old", months)
 }
 
-// upper starts a sentence with a capital.
+// upper starts a sentence with a capital, except atsume's own name, which is
+// written in lower case wherever it stands.
 func upper(s string) string {
-	if s == "" {
+	if s == "" || strings.HasPrefix(s, "atsume") {
 		return s
 	}
 	r := []rune(s)

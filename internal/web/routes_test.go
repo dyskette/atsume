@@ -21,8 +21,8 @@ func TestCrossOriginRequestsAreRefused(t *testing.T) {
 		headers map[string]string
 		refused bool
 	}{
-		{"cross-site form post", "POST", "/check", map[string]string{"Sec-Fetch-Site": "cross-site"}, true},
-		{"same-site but other origin", "POST", "/check", map[string]string{"Sec-Fetch-Site": "same-site"}, true},
+		{"cross-site form post", "POST", "/library/check", map[string]string{"Sec-Fetch-Site": "cross-site"}, true},
+		{"same-site but other origin", "POST", "/library/check", map[string]string{"Sec-Fetch-Site": "same-site"}, true},
 		{"older browser, foreign Origin", "POST", "/download", map[string]string{"Origin": "https://evil.example"}, true},
 		{"the page itself", "POST", "/nope", map[string]string{"Sec-Fetch-Site": "same-origin"}, false},
 		{"older browser, own Origin", "POST", "/nope", map[string]string{"Origin": "http://atsume.test"}, false},

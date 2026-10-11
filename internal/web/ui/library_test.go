@@ -1,7 +1,10 @@
 package ui
 
 import (
+	"bytes"
+	"context"
 	"database/sql"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -10,179 +13,306 @@ import (
 	"github.com/dyskette/atsume/internal/store"
 )
 
-// TestLibraryRowState pins the one-line answer each row gives.
-//
-// "Is this up to date" is the question the library exists to answer; the old
-// row reported when the program last ran instead, which nobody asked.
-func TestLibraryRowState(t *testing.T) {
-	checked := sql.NullTime{Time: time.Now(), Valid: true}
+// TestLibraryPill pins the one-line answer each row gives, and the order in
+// which a row's states outrank each other: what needs the reader first, then
+// what is moving, then what is merely true.
+func TestLibraryPill(t *testing.T) {
+	now := sql.NullTime{Time: time.Now(), Valid: true}
+	following := store.Series{Subscribed: true, CheckedAt: now}
+	failing := following
+	failing.CheckProblem, failing.CheckFailedAt = app.ProblemBlocked, now
+	unknown := following
+	unknown.CheckFailedAt = now
+	ended := following
+	ended.Status = "Completed"
 
 	cases := []struct {
-		name  string
-		row   LibraryRow
-		label string
-		kind  string
+		name        string
+		row         LibraryRow
+		label, tone string
 	}{
-		{
-			name:  "everything on disk",
-			row:   LibraryRow{Progress: store.SeriesProgress{Total: 40, Done: 40}},
-			label: "up to date", kind: "done",
-		},
-		{
-			// A download finishes on its own; a failure waits for the reader.
-			// Reporting the download first hid the row that needed them.
-			name:  "a failure outranks work in progress",
-			row:   LibraryRow{Progress: store.SeriesProgress{Total: 40, Done: 10, Active: 2, Waiting: 28, Failed: 1}},
-			label: "1 chapter failed", kind: "failed",
-		},
-		{
-			name:  "work in progress otherwise wins",
-			row:   LibraryRow{Progress: store.SeriesProgress{Total: 40, Done: 10, Active: 2, Waiting: 28}},
-			label: "2 downloading", kind: "downloading",
-		},
-		{
-			name:  "failures outrank merely waiting",
-			row:   LibraryRow{Progress: store.SeriesProgress{Total: 40, Done: 38, Waiting: 2, Failed: 2}},
-			label: "2 chapters failed", kind: "failed",
-		},
-		{
-			// The distinction the whole change exists for: a chapter that came
-			// out reads differently from a back catalogue that was always
-			// there, even though both are "not downloaded".
-			name:  "a new chapter is not a backlog",
-			row:   LibraryRow{Progress: store.SeriesProgress{Total: 40, Done: 39, Waiting: 1, New: 1}},
-			label: "1 new chapter", kind: "new",
-		},
-		{
-			name:  "waiting",
-			row:   LibraryRow{Progress: store.SeriesProgress{Total: 40, Done: 37, Waiting: 3}},
-			label: "3 not downloaded", kind: "waiting",
-		},
-		{
-			name:  "never checked is not a failure",
-			row:   LibraryRow{Series: store.Series{}},
-			label: "not checked yet", kind: "",
-		},
-		{
-			// Not the same as a failed download, and not fixed the same way:
-			// the check worked, the site listed nothing.
-			name:  "checked and found nothing is its own state",
-			row:   LibraryRow{Series: store.Series{CheckedAt: checked}},
-			label: "no chapters found", kind: "empty",
-		},
+		{"everything on disk", LibraryRow{Series: following, Progress: store.SeriesProgress{Total: 40, Done: 40}}, "Up to date", "ok"},
+		{"a failing check names its kind", LibraryRow{Series: failing, Progress: store.SeriesProgress{Total: 40, Done: 39, Failed: 1, Waiting: 1}}, "Site blocked", "bad"},
+		{"a failure of no known kind", LibraryRow{Series: unknown, Progress: store.SeriesProgress{Total: 4, Done: 4}}, "Check failing", "bad"},
+		{"a failed download outranks one running", LibraryRow{Series: following, Progress: store.SeriesProgress{Total: 40, Done: 10, Active: 2, Downloading: 1, Waiting: 28, Failed: 2}}, "2 failed", "bad"},
+		{"downloading", LibraryRow{Series: following, Progress: store.SeriesProgress{Total: 40, Done: 10, Active: 2, Downloading: 1}}, "Downloading", "active"},
+		{"a new chapter in the queue", LibraryRow{Series: following, Progress: store.SeriesProgress{Total: 40, Done: 39, Active: 1, New: 1, NewActive: 1}}, "1 new, queued", "new"},
+		{"a back catalogue in the queue", LibraryRow{Series: following, Progress: store.SeriesProgress{Total: 40, Done: 37, Active: 3}}, "3 queued", "active"},
+		// A chapter that came out reads differently from a back catalogue
+		// that was always there, though both are "not downloaded".
+		{"a new chapter is not a backlog", LibraryRow{Series: following, Progress: store.SeriesProgress{Total: 40, Done: 38, Waiting: 2, New: 1}}, "1 new", "new"},
+		{"a backlog alone is up to date", LibraryRow{Series: following, Progress: store.SeriesProgress{Total: 40, Done: 12, Waiting: 28}}, "Up to date", "ok"},
+		{"the site listed nothing", LibraryRow{Series: following}, "No chapters found", "warn"},
+		{"never checked", LibraryRow{Series: store.Series{Subscribed: true}}, "Not checked yet", "muted"},
+		// Not checked automatically, so "up to date" would be a claim.
+		{"saved", LibraryRow{Series: store.Series{CheckedAt: now}, Progress: store.SeriesProgress{Total: 3, Done: 3}}, "Saved", "muted"},
+		{"ended with everything on disk", LibraryRow{Series: ended, Progress: store.SeriesProgress{Total: 3, Done: 3}}, "Complete", "neutral"},
+		{"ended with chapters left is not complete", LibraryRow{Series: ended, Progress: store.SeriesProgress{Total: 3, Done: 2, Waiting: 1}}, "Up to date", "ok"},
 	}
-
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			label, kind := c.row.State()
-			if label != c.label || kind != c.kind {
-				t.Errorf("got (%q, %q), want (%q, %q)", label, kind, c.label, c.kind)
+			label, tone := c.row.Pill()
+			if label != c.label || tone != c.tone {
+				t.Errorf("Pill() = %q, %q; want %q, %q", label, tone, c.label, c.tone)
 			}
 		})
 	}
 }
 
-func TestLibraryRowDetail(t *testing.T) {
-	r := LibraryRow{
-		Series: store.Series{
-			ModuleName: "Madara", ModuleKey: "Madara",
-			Status: "ongoing", Subscribed: true,
-			CheckedAt: sql.NullTime{Time: time.Now(), Valid: true},
-		},
-		Progress: store.SeriesProgress{Total: 40, Done: 12},
-	}
-	// The site is rendered separately so it can be a link to its settings,
-	// which is where a failing row is usually fixed.
-	if got, want := r.Site(), "Madara"; got != want {
-		t.Errorf("site = %q, want %q", got, want)
-	}
-	if got, want := r.Detail(), " · ongoing · 12 of 40 downloaded · checked just now"; got != want {
-		t.Errorf("got %q, want %q", got, want)
+// TestLibraryRowLines covers the meta line and the newest-chapter column.
+func TestLibraryRowLines(t *testing.T) {
+	hours := func(n int) sql.NullTime {
+		return sql.NullTime{Time: time.Now().Add(-time.Duration(n) * time.Hour), Valid: true}
 	}
 
-	// When it was last looked at is on every row: without it the page looks
-	// the same whether checking works or stopped weeks ago.
+	r := LibraryRow{
+		Series:   store.Series{Subscribed: true, CheckedAt: hours(72), CheckFailedAt: hours(2), CheckProblem: app.ProblemMoved},
+		Progress: store.SeriesProgress{Total: 20, Done: 12, Waiting: 8, New: 3, NewActive: 1, Latest: "142", LastDownload: hours(5)},
+	}
+	if text, tone := r.Evidence(); text != "check failed 2h ago · last worked 3d ago" || tone != "bad" {
+		t.Errorf("evidence = %q %q", text, tone)
+	}
+	// Eight waiting, two of them new and not yet queued: six are older.
+	if r.Older() != 6 {
+		t.Errorf("older = %d, want 6", r.Older())
+	}
+	if r.Newest() != "Ch. 142" {
+		t.Errorf("newest = %q", r.Newest())
+	}
+	if when, recent := r.Downloaded(); when != "downloaded 5h ago" || !recent {
+		t.Errorf("downloaded = %q recent=%v", when, recent)
+	}
+
 	r.Series.CheckedAt = sql.NullTime{}
-	if got := r.Detail(); !strings.Contains(got, "never checked") {
-		t.Errorf("got %q, want it to say it has never been checked", got)
+	if text, _ := r.Evidence(); !strings.HasSuffix(text, "never worked") {
+		t.Errorf("a check that never worked: %q", text)
 	}
 
-	// Not following is worth saying: the row would otherwise look the same as
-	// one that is being kept current.
-	r.Series.Subscribed = false
-	if got := r.Detail(); !strings.Contains(got, "not following") {
-		t.Errorf("got %q, want it to mention not following", got)
+	// Downloaded before download times were kept: say nothing rather than
+	// guess, and leave the numberless chapters counted.
+	old := LibraryRow{Progress: store.SeriesProgress{Total: 3, Done: 3}}
+	if when, _ := old.Downloaded(); when != "" || old.Newest() != "3 chapters" {
+		t.Errorf("unknown download time: %q, newest %q", when, old.Newest())
+	}
+	if when, _ := (LibraryRow{}).Downloaded(); when != "nothing downloaded" || (LibraryRow{}).Newest() != "—" {
+		t.Errorf("nothing on disk: %q", when)
+	}
+
+	for in, want := range map[string]string{"004": "4", "0.5": "0.5", "000": "0", "2.001": "2.001", "10": "10"} {
+		if got := trimNumber(in); got != want {
+			t.Errorf("trimNumber(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	failed := LibraryRow{Progress: store.SeriesProgress{Total: 3, Done: 1, Failed: 2, Waiting: 2}}
+	if text, _ := failed.Evidence(); text != "2 chapters failed to download" {
+		t.Errorf("failed downloads: %q", text)
 	}
 }
 
-// TestSections covers the grouping that lets the page answer "is there
-// anything new" without the reader scanning every row for it.
-func TestSections(t *testing.T) {
-	checked := sql.NullTime{Time: time.Now(), Valid: true}
+// TestCheckReason covers the plain words for a failing check.
+func TestCheckReason(t *testing.T) {
+	s := func(kind string, f store.Failure) store.Series {
+		return store.Series{ModuleName: "MangaDex", CheckProblem: kind, CheckFailure: f}
+	}
+	cases := []struct {
+		s    store.Series
+		want string
+	}{
+		{s(app.ProblemBlocked, store.Failure{Status: 403, Challenged: true}), "MangaDex answered with an anti-bot challenge page"},
+		{s(app.ProblemBlocked, store.Failure{Status: 403}), "MangaDex refused the request (HTTP 403)"},
+		{s(app.ProblemMoved, store.Failure{Status: 410}), "the series' address answered 410 Not Found"},
+		{s(app.ProblemDown, store.Failure{Status: 429}), "MangaDex asked atsume to slow down (HTTP 429)"},
+		{s(app.ProblemDown, store.Failure{Status: 502}), "MangaDex's server returned an error (HTTP 502)"},
+		{s(app.ProblemUnreachable, store.Failure{Cause: "dns"}), "MangaDex's name no longer resolves; the domain may have expired or moved"},
+		{s(app.ProblemUnreachable, store.Failure{}), "MangaDex didn't answer"},
+		{s(app.ProblemBroken, store.Failure{}), "atsume's reader for MangaDex hit an error"},
+	}
+	for _, c := range cases {
+		if got := checkReason(c.s); got != c.want {
+			t.Errorf("%s %+v: %q, want %q", c.s.CheckProblem, c.s.CheckFailure, got, c.want)
+		}
+	}
+}
+
+// TestLibraryQuery covers the tabs, filters and orders, and the addresses
+// that change one of them and keep the rest.
+func TestLibraryQuery(t *testing.T) {
+	at := func(days int) time.Time { return time.Now().Add(-time.Duration(days) * 24 * time.Hour) }
+	dl := func(days int) sql.NullTime { return sql.NullTime{Time: at(days), Valid: true} }
+	row := func(title, site string, follow bool, added int, p store.SeriesProgress) LibraryRow {
+		return LibraryRow{Series: store.Series{Title: title, ModuleKey: site, ModuleName: site, Subscribed: follow,
+			CheckedAt: dl(0), CreatedAt: at(added)}, Progress: p}
+	}
 	rows := []LibraryRow{
-		{Series: store.Series{Title: "Calm"}, Progress: store.SeriesProgress{Total: 1, Done: 1}},
-		{Series: store.Series{Title: "Broken"}, Progress: store.SeriesProgress{Total: 2, Done: 1, Failed: 1, Waiting: 1}},
-		{Series: store.Series{Title: "Empty", CheckedAt: checked}},
-		{Series: store.Series{Title: "Arrived"}, Progress: store.SeriesProgress{Total: 3, Done: 2, Waiting: 1, New: 1}},
-		{Series: store.Series{Title: "Backlog"}, Progress: store.SeriesProgress{Total: 30, Waiting: 30}},
+		row("Dandadan", "MangaDex", true, 5, store.SeriesProgress{Total: 2, Done: 2, LastDownload: dl(1)}),
+		row("chainsaw Man", "MangaDex", true, 1, store.SeriesProgress{Total: 2, Done: 2}),
+		row("Blue Lock", "Comick", true, 9, store.SeriesProgress{Total: 2, Done: 1, Waiting: 1, New: 1, LastDownload: dl(3)}),
+		row("Akira", "Comick", false, 3, store.SeriesProgress{Total: 2, Done: 2, LastDownload: dl(0)}),
+	}
+	titles := func(q LibraryQuery) string {
+		var out []string
+		for _, r := range (LibraryView{Rows: rows, Query: q}).Shown() {
+			out = append(out, r.Series.Title)
+		}
+		return strings.Join(out, ", ")
 	}
 
-	got := LibraryView{Rows: rows}.Sections()
-	if len(got) != 4 {
-		t.Fatalf("got %d sections, want 4", len(got))
+	cases := []struct {
+		q    LibraryQuery
+		want string
+	}{
+		// No download time goes last, whatever its title.
+		{LibraryQuery{}, "Akira, Dandadan, Blue Lock, chainsaw Man"},
+		{LibraryQuery{Sort: "title"}, "Akira, Blue Lock, chainsaw Man, Dandadan"},
+		{LibraryQuery{Sort: "added"}, "chainsaw Man, Akira, Dandadan, Blue Lock"},
+		{LibraryQuery{Tab: "saved"}, "Akira"},
+		{LibraryQuery{Tab: "following", Site: "Comick"}, "Blue Lock"},
+		{LibraryQuery{Q: "MAN"}, "chainsaw Man"},
+		{LibraryQuery{Status: "new"}, "Blue Lock"},
+		{LibraryQuery{Status: "uptodate", Sort: "title"}, "chainsaw Man, Dandadan"},
 	}
-	// Order is the order of the reader's questions: what produced nothing,
-	// what broke, what is new, then the collection. The first two used to
-	// share a heading, which offered one answer to two different problems.
-	if got[0].Title != "Nothing found on the site" || len(got[0].Rows) != 1 {
-		t.Errorf("first section = %q with %d rows", got[0].Title, len(got[0].Rows))
-	}
-	if got[0].Rows[0].Series.Title != "Empty" {
-		t.Errorf("first section holds %q", got[0].Rows[0].Series.Title)
-	}
-	if got[1].Title != "Downloads failed" || len(got[1].Rows) != 1 {
-		t.Errorf("second section = %q with %d rows", got[1].Title, len(got[1].Rows))
-	}
-	if got[1].Rows[0].Series.Title != "Broken" {
-		t.Errorf("second section holds %q", got[1].Rows[0].Series.Title)
-	}
-	if got[2].Title != "New chapters" || len(got[2].Rows) != 1 {
-		t.Errorf("third section = %q with %d rows", got[2].Title, len(got[2].Rows))
-	}
-	if got[2].Rows[0].Series.Title != "Arrived" {
-		t.Errorf("new section holds %q", got[2].Rows[0].Series.Title)
-	}
-	// A backlog is not news, however large it is.
-	if got[3].Title != "Everything else" || len(got[3].Rows) != 2 {
-		t.Errorf("last section = %q with %d rows", got[3].Title, len(got[3].Rows))
+	for _, c := range cases {
+		if got := titles(c.q); got != c.want {
+			t.Errorf("%+v: %s, want %s", c.q, got, c.want)
+		}
 	}
 
-	// With nothing wrong and nothing new there is one group, and calling it
-	// "Everything else" would be answering a question nobody asked.
-	only := LibraryView{Rows: rows[:1]}.Sections()
-	if len(only) != 1 || only[0].Title != "Library" {
-		t.Errorf("single section = %+v", only)
+	q := LibraryQueryFrom(url.Values{"tab": {"saved"}, "status": {"nonsense"}, "site": {"Comick"}, "q": {" a "}, "sort": {"title"}})
+	if q != (LibraryQuery{Tab: "saved", Site: "Comick", Q: "a", Sort: "title"}) {
+		t.Errorf("parsed %+v; an unknown status is dropped and the search trimmed", q)
+	}
+	if got := q.With("site", ""); got != "/?q=a&sort=title&tab=saved" {
+		t.Errorf("With = %q", got)
+	}
+	if got := q.Cleared(); got != "/?sort=title&tab=saved" {
+		t.Errorf("Cleared = %q", got)
+	}
+	if got := (LibraryQuery{}).With("tab", ""); got != "/" {
+		t.Errorf("an empty query is %q", got)
+	}
+
+	v := LibraryView{Rows: rows, Query: LibraryQuery{Site: "Comick", Status: "new"}}
+	if chips := v.Chips(); len(chips) != 2 || chips[0].Label != "Status: New chapters" || chips[1].Remove != "/?status=new" {
+		t.Errorf("chips = %+v", chips)
+	}
+	if items := v.SiteItems(); len(items) != 3 || items[1].Label != "Comick (2)" || !items[1].Current {
+		t.Errorf("site menu = %+v", items)
+	}
+	if all, following, saved := v.Counts(); all != 4 || following != 3 || saved != 1 {
+		t.Errorf("counts = %d %d %d", all, following, saved)
 	}
 }
 
-// TestDetailShowsArrival covers the evidence for a "new" claim.
-func TestDetailShowsArrival(t *testing.T) {
-	r := LibraryRow{
-		Series: store.Series{ModuleName: "Madara", Subscribed: true},
-		Progress: store.SeriesProgress{
-			Total: 3, Done: 2, Waiting: 1, New: 1,
-			NewestArrival: sql.NullTime{Time: time.Now().Add(-3 * time.Hour), Valid: true},
-		},
+// TestAttention covers the line above the list: what kinds of problem there
+// are, and one site named when its checks are all that is wrong.
+func TestAttention(t *testing.T) {
+	failedAt := sql.NullTime{Time: time.Now().Add(-2 * time.Hour), Valid: true}
+	check := func(site, kind string) LibraryRow {
+		return LibraryRow{Series: store.Series{ModuleKey: site, ModuleName: site, Subscribed: true,
+			CheckProblem: kind, CheckFailedAt: failedAt, CheckFailure: store.Failure{Status: 403, Challenged: true}}}
 	}
-	if got := r.Detail(); !strings.Contains(got, "arrived 3h ago") {
-		t.Errorf("got %q, want it to say when the chapter arrived", got)
+	fine := LibraryRow{Series: store.Series{Subscribed: true, CheckedAt: failedAt}, Progress: store.SeriesProgress{Total: 1, Done: 1}}
+	failed := LibraryRow{Series: store.Series{Subscribed: true}, Progress: store.SeriesProgress{Total: 2, Failed: 2, Waiting: 2}}
+	empty := LibraryRow{Series: store.Series{Subscribed: true, CheckedAt: failedAt}}
+
+	a := LibraryView{Rows: []LibraryRow{fine, check("A", app.ProblemBlocked), failed, empty}}.Attention()
+	if a.Series != 3 || a.Site != "" || a.Parts() != "1 check failing · 1 with failed downloads · 1 found no chapters" {
+		t.Errorf("mixed = %+v %q", a, a.Parts())
 	}
 
-	// A backlog has no arrival worth reporting: it was there all along.
-	r.Progress.New = 0
-	if got := r.Detail(); strings.Contains(got, "arrived") {
-		t.Errorf("got %q, want no arrival for a backlog", got)
+	a = LibraryView{Rows: []LibraryRow{fine, check("A", app.ProblemBlocked), check("A", app.ProblemBlocked)}}.Attention()
+	if a.Site != "A" || a.Headline() != "A is blocking atsume" || !a.Challenged || a.Reason != "A answered with an anti-bot challenge page" {
+		t.Errorf("one site = %+v", a)
 	}
+
+	// Two sites, or two kinds, or one series alone, are not one site breaking.
+	for name, rows := range map[string][]LibraryRow{
+		"two sites": {check("A", app.ProblemBlocked), check("B", app.ProblemBlocked)},
+		"two kinds": {check("A", app.ProblemBlocked), check("A", app.ProblemDown)},
+		"alone":     {check("A", app.ProblemBlocked)},
+		"and more":  {check("A", app.ProblemBlocked), check("A", app.ProblemBlocked), failed},
+	} {
+		if a := (LibraryView{Rows: rows}).Attention(); a.Site != "" {
+			t.Errorf("%s: named site %q", name, a.Site)
+		}
+	}
+}
+
+// TestCheckLine covers the head's line on whether checking happens.
+func TestCheckLine(t *testing.T) {
+	rows := []LibraryRow{{Series: store.Series{Title: "Anything"}}}
+	cases := []struct {
+		name string
+		v    LibraryView
+		want CheckLine
+	}{
+		{"working", LibraryView{Rows: rows, CheckInterval: 6 * time.Hour, Swept: true,
+			LastSweep: time.Now().Add(-12 * time.Minute), NextSweep: time.Now().Add(5*time.Hour + 48*time.Minute + 20*time.Second)},
+			CheckLine{Dot: "ok", Text: "Checked for new chapters 12m ago · next in 5 h 48 min"}},
+		{"checking", LibraryView{Rows: rows, CheckInterval: time.Hour, Checking: 3},
+			CheckLine{Dot: "working", Text: "Checking for new chapters · 3 series left"}},
+		{"just started", LibraryView{Rows: rows, CheckInterval: time.Hour, Uptime: time.Minute, NextSweep: time.Now().Add(2*time.Minute + 10*time.Second)},
+			CheckLine{Text: "First check in 2 min", Offer: true}},
+		{"stalled", LibraryView{Rows: rows, CheckInterval: 6 * time.Hour, Swept: true, LastSweep: time.Now().Add(-72 * time.Hour)},
+			CheckLine{Dot: "bad", Text: "Checking has stopped — last ran 3 days ago, due every 6 hours", Offer: true}},
+		{"never ran", LibraryView{Rows: rows, CheckInterval: time.Hour, Uptime: 14 * time.Hour},
+			CheckLine{Dot: "bad", Text: "No check has run since atsume started 14 hours ago", Offer: true}},
+		{"off", LibraryView{Rows: rows, Uptime: 14 * time.Hour},
+			CheckLine{Text: "Automatic checks off", Offer: true}},
+	}
+	for _, c := range cases {
+		if got := c.v.CheckLine(); got != c.want {
+			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestHomeDir covers the library folder as a reader would type it.
+func TestHomeDir(t *testing.T) {
+	for _, c := range []struct{ path, home, want string }{
+		{"/home/a/manga/library", "/home/a", "~/manga/library"},
+		{"/home/a", "/home/a/", "~"},
+		{"/home/ab/manga", "/home/a", "/home/ab/manga"},
+		{"/data", "", "/data"},
+	} {
+		if got := HomeDir(c.path, c.home); got != c.want {
+			t.Errorf("HomeDir(%q, %q) = %q, want %q", c.path, c.home, got, c.want)
+		}
+	}
+}
+
+// TestLibraryPage renders the page with a failing site and checks what a
+// reader needs from it is there.
+func TestLibraryPage(t *testing.T) {
+	failedAt := sql.NullTime{Time: time.Now().Add(-2 * time.Hour), Valid: true}
+	check := func(id int64, title string) LibraryRow {
+		return LibraryRow{Series: store.Series{ID: id, Title: title, ModuleKey: "MangaDex", ModuleName: "MangaDex", Subscribed: true,
+			CheckProblem: app.ProblemBlocked, CheckFailedAt: failedAt, CheckError: "403 Forbidden",
+			CheckFailure: store.Failure{Status: 403, Challenged: true}}, Progress: store.SeriesProgress{Total: 3, Done: 3}}
+	}
+	v := LibraryView{Rows: []LibraryRow{check(1, "Frieren"), check(2, "Dandadan")}, OthersWorking: true}
+	var buf bytes.Buffer
+	if err := Library(v).Render(context.Background(), &buf); err != nil {
+		t.Fatal(err)
+	}
+	page := buf.String()
+	mustContain(t, page, "MangaDex is blocking atsume", "checks failing for 2 series", "Other sites are working.",
+		"Set up FlareSolverr", "Site blocked", `title="403 Forbidden"`, "Check failed 2h ago",
+		"2 series · 2 following", `id="library-bulk"`, "Stop following")
+
+	v.FlareSolverr = true
+	buf.Reset()
+	if err := Library(v).Render(context.Background(), &buf); err != nil {
+		t.Fatal(err)
+	}
+	mustNotContain(t, buf.String(), "Set up FlareSolverr")
+
+	buf.Reset()
+	if err := Library(LibraryView{Sites: 658, Destination: "~/manga/library"}).Render(context.Background(), &buf); err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, buf.String(), "Your library is empty", "one of 658 sites", "~/manga/library", "Browse sites")
 }
 
 // TestBuildSites covers the grouping that makes several hundred sites usable.
@@ -310,27 +440,6 @@ func TestStalled(t *testing.T) {
 				t.Error("a warning with nothing to say is no warning")
 			}
 		})
-	}
-}
-
-// TestLibraryWaiting covers what the page can act on.
-func TestLibraryWaiting(t *testing.T) {
-	v := LibraryView{Rows: []LibraryRow{
-		{Progress: store.SeriesProgress{Total: 4, Done: 4}},
-		{Progress: store.SeriesProgress{Total: 4, Done: 1, Waiting: 3}},
-		{Progress: store.SeriesProgress{Total: 2, Waiting: 2}},
-		// Already running: nothing to queue, so nothing to offer.
-		{Progress: store.SeriesProgress{Total: 5, Active: 5}},
-	}}
-	series, chapters := v.Waiting()
-	if series != 2 || chapters != 5 {
-		t.Errorf("waiting = %d series / %d chapters, want 2 / 5", series, chapters)
-	}
-	if v.Rows[0].Actionable() || v.Rows[3].Actionable() {
-		t.Error("a row with nothing to fetch offers nothing")
-	}
-	if !v.Rows[1].Actionable() || v.Rows[1].Waiting() != 3 {
-		t.Error("a row with a backlog offers to fetch it")
 	}
 }
 

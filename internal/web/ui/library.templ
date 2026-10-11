@@ -1,113 +1,311 @@
 package ui
 
-import "fmt"
+import (
+	"fmt"
 
-// Library is the home page: what is being followed and whether it is current.
+	"github.com/dyskette/atsume/internal/app"
+)
+
+// Library is the home page: what is in the library, whether it is current,
+// and what needs the reader.
 templ Library(v LibraryView) {
 	@Layout("Library") {
-		<div class="head">
-			<h1>Library</h1>
-			if len(v.Rows) > 0 {
-				<form hx-post="/check" hx-swap="none">
-					<button type="submit">Check all now</button>
-				</form>
-			}
-		</div>
 		if len(v.Rows) == 0 {
-			<div class="empty">
-				<strong>Nothing here yet</strong>
-				<p>
-					atsume watches manga sites and writes finished chapters to
-					<code>{ v.Destination }</code>, where Komga — or whatever reads that
-					folder — picks them up.
-				</p>
-				<p>
-					Pick a site, find a title, and follow it. New chapters are downloaded
-					automatically from then on. Chapters already published are not:
-					fetching a backlog stays your decision.
-				</p>
-				<p><a class="cta" href="/modules">Browse sites</a></p>
+			@libraryEmpty(v)
+		} else {
+			{{ all, following, _ := v.Counts() }}
+			<div class="lib-head">
+				<h1>Library</h1>
+				<span class="muted">{ Count(all, "series", "series") } · { fmt.Sprint(following) } following</span>
+				@checkLine(v.CheckLine())
 			</div>
-		}
-		if series, chapters := v.Waiting(); series > 0 {
-			<!-- The batch form sits outside the lists so rows in any section
-			     can join it by id; a form cannot wrap list items spread over
-			     several lists. -->
-			<form
-				id="download-many"
-				class="batch"
-				hx-post="/download"
-				hx-target="#download-result"
-				hx-swap="innerHTML"
-			>
-				<button type="submit">Download selected</button>
-				<span class="muted">
-					{ Count(chapters, "chapter is", "chapters are") } waiting across
-					{ Count(series, "series", "series") }.
-				</span>
-				<span id="download-result"></span>
+			@libraryTabs(v)
+			<div class="lib-tools">
+				<!-- Typing narrows the list in place; the menus and tabs come
+				     along so their links keep the search. -->
+				<form
+					class="lib-search"
+					action="/"
+					hx-get="/"
+					hx-target="#library-list"
+					hx-select="#library-list"
+					hx-select-oob="#library-menus,#library-tabs"
+					hx-swap="outerHTML"
+					hx-push-url="true"
+					hx-trigger="input changed delay:200ms from:find input[type=search], search"
+				>
+					if v.Query.Tab != "" {
+						<input type="hidden" name="tab" value={ v.Query.Tab }/>
+					}
+					if v.Query.Status != "" {
+						<input type="hidden" name="status" value={ v.Query.Status }/>
+					}
+					if v.Query.Site != "" {
+						<input type="hidden" name="site" value={ v.Query.Site }/>
+					}
+					if v.Query.Sort != "" {
+						<input type="hidden" name="sort" value={ v.Query.Sort }/>
+					}
+					<input type="search" name="q" value={ v.Query.Q } placeholder="Filter by title" aria-label="Filter by title" autocomplete="off"/>
+				</form>
+				@libraryMenus(v)
+			</div>
+			<div id="library-notice"></div>
+			<div id="remove"></div>
+			@attention(v)
+			@libraryList(v)
+			<!-- The batch form lives outside the list so rows can join it by
+			     id. It shows once something is ticked, and counts the ticks
+			     in CSS. -->
+			<form id="library-bulk" class="select-bar" hx-target="#library-notice" hx-swap="innerHTML">
+				<span><span class="n"></span> selected</span>
+				<button type="reset" class="link">Clear</button>
+				<button type="button" class="primary" hx-post="/download">Download</button>
+				<button type="button" hx-post="/library/check">Check now</button>
+				<button type="button" hx-post="/library/follow" hx-vals='{"on": "1"}'>Follow</button>
+				<button type="button" hx-post="/library/follow" hx-vals='{"on": "0"}'>Stop following</button>
 			</form>
-		}
-		if stalled, why := v.Stalled(); stalled {
-			<p class="attention">
-				<strong>Checking has stopped.</strong>
-				{ " " + why }
-			</p>
-		}
-		for _, section := range v.Sections() {
-			<div class="section-head">
-				<h2>{ section.Title }</h2>
-				<span class="count">{ Count(len(section.Rows), "series", "series") }</span>
-			</div>
-			if section.Blurb != "" {
-				<p class="muted">{ section.Blurb }</p>
-			}
-			<ul class="rows library">
-				for _, row := range section.Rows {
-					@LibraryItem(row)
-				}
-			</ul>
 		}
 	}
 }
 
-// LibraryItem is one series: cover, what it is, and whether it is current.
-templ LibraryItem(r LibraryRow) {
-	{{ label, kind := r.State() }}
-	<li>
-		if r.Actionable() {
-			<input
-				class="pick"
-				type="checkbox"
-				name="sel"
-				value={ fmt.Sprintf("%d", r.Series.ID) }
-				form="download-many"
-				aria-label={ "Select " + r.Series.Title }
-			/>
-		} else {
-			<span class="pick"></span>
+// libraryEmpty is the first run: what atsume does and where to start.
+templ libraryEmpty(v LibraryView) {
+	<div class="empty panel lib-empty">
+		<div class="empty-icon" aria-hidden="true">
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h4v16H4z"></path><path d="M10 4h4v16h-4z"></path><path d="m16 5 3.5-.8 3 15.6-3.5.8z"></path></svg>
+		</div>
+		<h1>Your library is empty</h1>
+		<p>
+			Find a series on one of { fmt.Sprint(v.Sites) } sites and follow it. atsume
+			downloads new chapters as they come out, ready for Komga, Kavita or any
+			reader pointed at your library folder.
+		</p>
+		<p class="dest">Chapters are saved to <code>{ v.Destination }</code></p>
+		<p><a class="cta" href="/modules">Browse sites</a></p>
+	</div>
+}
+
+// checkLine says whether automatic checking is happening.
+templ checkLine(c CheckLine) {
+	<p class={ "check-line", templ.KV("bad", c.Dot == "bad") }>
+		<span class={ "dot", c.Dot }></span>
+		<span>{ c.Text }</span>
+		if c.Offer {
+			<span class="muted">·</span>
+			<button type="button" class="link" hx-post="/library/check" hx-vals='{"all": "1"}' hx-target="#library-notice" hx-swap="innerHTML">Check now</button>
 		}
-		<a class="thumb" href={ templ.SafeURL(fmt.Sprintf("/series/%d", r.Series.ID)) }>
+	</p>
+}
+
+templ libraryTabs(v LibraryView) {
+	<nav id="library-tabs" class="lib-tabs" aria-label="Library">
+		for _, t := range v.Tabs() {
+			if t.Current {
+				<a href={ templ.SafeURL(t.URL) } class="current" aria-current="page">{ t.Label } <span class="count">{ fmt.Sprint(t.Count) }</span></a>
+			} else {
+				<a href={ templ.SafeURL(t.URL) }>{ t.Label } <span class="count">{ fmt.Sprint(t.Count) }</span></a>
+			}
+		}
+	</nav>
+}
+
+templ libraryMenus(v LibraryView) {
+	<div id="library-menus" class="lib-menus">
+		@filterMenu("Status", v.StatusLabel(), v.Query.Status != "", v.StatusItems())
+		@filterMenu("Site", v.SiteLabel(), v.Query.Site != "", v.SiteItems())
+		@filterMenu("Sort", v.SortLabel(), false, v.SortItems())
+	</div>
+}
+
+// filterMenu is one of the toolbar's menus: its name, what it is set to, and
+// the choices as links.
+templ filterMenu(name, current string, on bool, items []MenuItem) {
+	<details class={ "menu", "lib-menu", templ.KV("on", on) }>
+		<summary><span class="k">{ name }:</span> { current }</summary>
+		<div class="menu-items">
+			for _, it := range items {
+				<a href={ templ.SafeURL(it.URL) } class={ templ.KV("current", it.Current) }>{ it.Label }</a>
+			}
+		</div>
+	</details>
+}
+
+// attention is the banner above the list saying what needs the reader, or,
+// when one site's checks are all failing, that site and its fix. It counts
+// the whole library, so a filter cannot hide a broken series.
+templ attention(v LibraryView) {
+	{{ a := v.Attention() }}
+	if a.Site != "" {
+		<div class="banner bad" role="status">
+			<span class="banner-icon" aria-hidden="true">⚠</span>
+			<div class="grow">
+				<strong>{ a.Headline() } <span class="muted">— checks failing for { Count(a.Checks, "series", "series") } since { ago(a.Since) }</span></strong>
+				<p>
+					{ upper(a.Reason) }.
+					if v.OthersWorking {
+						Other sites are working.
+					}
+				</p>
+				<p class="banner-actions">
+					switch {
+						case a.Kind == app.ProblemBlocked && a.Challenged && !v.FlareSolverr:
+							<a href={ templ.SafeURL(flareSolverrDocs) } target="_blank" rel="noreferrer noopener">Set up FlareSolverr</a>
+						case a.Kind == app.ProblemBlocked || a.Kind == app.ProblemMoved:
+							<a href={ templ.SafeURL(SiteURL(a.Site, "/settings")) }>Site settings</a>
+						case a.Kind == app.ProblemBroken:
+							<button type="button" class="link" hx-post="/modules/update" hx-swap="none">Update modules</button>
+					}
+					<a href={ templ.SafeURL(SiteURL(a.Site)) }>View site</a>
+					<button type="button" class="link" hx-post="/library/check" hx-vals={ fmt.Sprintf(`{"site": %q}`, a.Site) } hx-target="#library-notice" hx-swap="innerHTML">Check again</button>
+				</p>
+			</div>
+		</div>
+	} else if a.Series > 0 {
+		<div class="banner bad slim" role="status">
+			<span class="banner-icon" aria-hidden="true">⚠</span>
+			<p class="grow">
+				<strong>{ Count(a.Series, "series needs", "series need") } attention</strong>
+				<span class="muted">{ a.Parts() }</span>
+			</p>
+			if v.Query.Status != "problems" {
+				<a href={ templ.SafeURL(v.ProblemsURL()) }>Show them</a>
+			}
+		</div>
+	}
+}
+
+// libraryList is the rows the tab and filters leave, with the active filters
+// above and the count below.
+templ libraryList(v LibraryView) {
+	{{ shown := v.Shown() }}
+	<div id="library-list">
+		if v.Query.Filtered() {
+			<p class="chip-row">
+				for _, c := range v.Chips() {
+					<span class="filter-chip">
+						{ c.Label }
+						<a href={ templ.SafeURL(c.Remove) } aria-label={ "Remove " + c.Label }>×</a>
+					</span>
+				}
+				<span class="muted">· Showing { fmt.Sprint(len(shown)) } of { fmt.Sprint(v.TabTotal()) }</span>
+				<a href={ templ.SafeURL(v.Query.Cleared()) }>Clear filters</a>
+			</p>
+		}
+		if len(shown) == 0 {
+			<div class="empty">
+				if v.Query.Filtered() {
+					<strong>No series match</strong>
+					<p><a href={ templ.SafeURL(v.Query.Cleared()) }>Clear filters</a></p>
+				} else if v.Query.Tab == "saved" {
+					<strong>Nothing saved</strong>
+					<p class="muted">A series you download from without following it is kept here.</p>
+				} else {
+					<strong>Not following anything</strong>
+					<p class="muted">Follow a series to have its new chapters downloaded as they come out.</p>
+				}
+			</div>
+		} else {
+			<ul class="lib-rows">
+				for _, r := range shown {
+					@LibraryItem(r)
+				}
+			</ul>
+			<p class="lib-foot muted">Showing { fmt.Sprint(len(shown)) } of { Count(v.TabTotal(), "series", "series") }</p>
+		}
+	</div>
+}
+
+// LibraryItem is one series: cover, what it is and what is on disk, the one
+// thing to know about it, and what can be done.
+templ LibraryItem(r LibraryRow) {
+	{{ label, tone := r.Pill() }}
+	{{ evidence, evidenceTone := r.Evidence() }}
+	{{ when, recent := r.Downloaded() }}
+	<li class={ "lib-row", templ.KV("problem", tone == "bad") } title={ r.Series.CheckError }>
+		<input
+			class="pick"
+			type="checkbox"
+			name="sel"
+			value={ fmt.Sprint(r.Series.ID) }
+			form="library-bulk"
+			aria-label={ "Select " + r.Series.Title }
+		/>
+		<a class="thumb" href={ templ.SafeURL(r.URL()) } tabindex="-1" aria-hidden="true">
 			if r.Series.CoverURL != "" {
-				<img
-					src={ fmt.Sprintf("/series/%d/cover", r.Series.ID) }
-					alt=""
-					loading="lazy"
-				/>
+				<img src={ fmt.Sprintf("/series/%d/cover", r.Series.ID) } alt="" loading="lazy"/>
 			}
 		</a>
 		<div class="grow">
-			<a class="title" href={ templ.SafeURL(fmt.Sprintf("/series/%d", r.Series.ID)) }>{ r.Series.Title }</a>
-			<div class="muted">
-				<a class="site" href={ templ.SafeURL(SiteURL(r.Site(), "/settings")) }>{ r.Series.ModuleName }</a>
-				{ r.Detail() }
+			<a class="title" href={ templ.SafeURL(r.URL()) }>{ r.Series.Title }</a>
+			<div class="lib-meta">
+				<a class="site" href={ templ.SafeURL(SiteURL(r.Site())) }>{ r.Series.ModuleName }</a>
+				if r.Status() != "" {
+					<span>· { r.Status() }</span>
+				}
+				<span>· { fmt.Sprint(r.Progress.Done) } downloaded</span>
+				if r.Older() > 0 && evidence == "" {
+					<span>· { fmt.Sprint(r.Older()) } older not downloaded</span>
+				}
 			</div>
+			if evidence != "" {
+				<div class={ "lib-evidence", evidenceTone }>
+					{ evidence }
+					if r.Progress.Failed > 0 && !r.CheckFailing() {
+						<button type="button" class="link" hx-post="/download" hx-vals={ fmt.Sprintf(`{"sel": "%d"}`, r.Series.ID) } hx-target="#library-notice" hx-swap="innerHTML">Retry</button>
+					}
+				</div>
+			}
 		</div>
-		<span class={ "badge", kind }>{ label }</span>
-		if r.Actionable() {
-			<form hx-post={ fmt.Sprintf("/series/%d/download", r.Series.ID) } hx-swap="none">
-				<button type="submit">{ "Download " + Count(r.Waiting(), "chapter", "chapters") }</button>
-			</form>
-		}
+		<div class="lib-side">
+			<div class="newest">
+				<div>{ r.Newest() }</div>
+				if when != "" {
+					<div class={ "when", templ.KV("recent", recent) }>{ when }</div>
+				}
+			</div>
+			<div class="pill-slot"><span class={ "pill", tone }>{ label }</span></div>
+		</div>
+		@libraryRowMenu(r)
 	</li>
+}
+
+// libraryRowMenu holds what can be done to one series, headed by why its
+// check fails when it does, since the row has room only to name the kind.
+templ libraryRowMenu(r LibraryRow) {
+	{{ id := fmt.Sprintf(`{"sel": "%d"}`, r.Series.ID) }}
+	<details class="row-menu">
+		<summary class="icon" aria-label={ "More for " + r.Series.Title }>⋯</summary>
+		<div class="menu-items">
+			if r.CheckFailing() {
+				<div class="why">
+					<strong>Check failed { ago(r.Series.CheckFailedAt.Time) }</strong>
+					<span>{ upper(r.Reason()) }</span>
+					if r.Series.CheckedAt.Valid {
+						<span>Last worked { ago(r.Series.CheckedAt.Time) }</span>
+					}
+				</div>
+			}
+			<button type="button" hx-post="/library/check" hx-vals={ id } hx-target="#library-notice" hx-swap="innerHTML">Check now</button>
+			if r.Progress.Waiting > 0 {
+				<button type="button" hx-post="/download" hx-vals={ id } hx-target="#library-notice" hx-swap="innerHTML">
+					if r.Progress.Failed > 0 {
+						Retry failed downloads
+					} else {
+						Download { Count(r.Progress.Waiting, "remaining chapter", "remaining chapters") }
+					}
+				</button>
+			}
+			<a href={ templ.SafeURL(SiteURL(r.Site(), "/settings")) }>{ r.Series.ModuleName } settings</a>
+			if r.Link != "" {
+				<a href={ templ.SafeURL(r.Link) } target="_blank" rel="noreferrer noopener">Open on { r.Series.ModuleName } ↗</a>
+			}
+			if r.Series.Subscribed {
+				<button type="button" hx-post="/library/follow" hx-vals={ fmt.Sprintf(`{"sel": "%d", "on": "0"}`, r.Series.ID) }>Stop following</button>
+			} else {
+				<button type="button" hx-post="/library/follow" hx-vals={ fmt.Sprintf(`{"sel": "%d", "on": "1"}`, r.Series.ID) }>Follow</button>
+			}
+			<button type="button" class="danger-text" hx-get={ fmt.Sprintf("/series/%d/remove", r.Series.ID) } hx-target="#remove" hx-swap="innerHTML">Remove from library</button>
+		</div>
+	</details>
 }

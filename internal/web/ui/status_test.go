@@ -30,6 +30,9 @@ func TestQueueStatus(t *testing.T) {
 	mustContain(t, paused, "Paused · 1 finishing, 5 queued", `hx-post="/queue/resume"`, "Resume")
 	mustNotContain(t, paused, "Pause all")
 
+	failing := render(QueueView{QueueStatus: store.QueueStatus{Failed: 2, CheckFailing: 5}})
+	mustContain(t, failing, "dot bad", "2 failed", "5 checks failing", `href="/?status=problems"`)
+
 	reading := render(QueueView{Reading: []string{"KKJ"}})
 	mustContain(t, reading, "Reading KKJ catalogue", "dot working")
 	mustNotContain(t, reading, "Nothing in progress", "Pause all")

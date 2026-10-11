@@ -149,3 +149,38 @@ func TestFailedJobWaitsOutItsBackoff(t *testing.T) {
 		})
 	}
 }
+
+// TestInFlight covers what the library calls a check under way: running or
+// ready, not one waiting out a retry delay, and not another kind of job.
+func TestInFlight(t *testing.T) {
+	q, ctx := newQueue(t), context.Background()
+	count := func() int {
+		t.Helper()
+		n, err := q.InFlight(ctx, "check")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for _, kind := range []string{"check", "check", "other"} {
+		if _, err := q.Enqueue(ctx, kind, struct{}{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := count(); n != 2 {
+		t.Errorf("two ready checks counted as %d", n)
+	}
+	j, err := q.Claim(ctx)
+	if err != nil || j == nil {
+		t.Fatalf("claim: %v %v", j, err)
+	}
+	if n := count(); n != 2 {
+		t.Errorf("one running and one ready counted as %d", n)
+	}
+	if err := q.Fail(ctx, j, context.DeadlineExceeded); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(); n != 1 {
+		t.Errorf("a check waiting to retry was counted: %d", n)
+	}
+}
