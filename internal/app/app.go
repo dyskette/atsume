@@ -341,7 +341,14 @@ func (a *App) refresh(ctx context.Context, module, seriesURL string) (err error)
 		}
 		a.Notifier.Notify(ctx, newChaptersMessage(id, info.Title, mod.Name, names))
 
-		if a.Cfg.AutoDownload {
+		// Only a followed series fetches what comes out by itself. A saved
+		// one was kept without asking for its future chapters, and a check
+		// of it is the reader looking, not asking for downloads.
+		following, err := a.following(ctx, id)
+		if err != nil {
+			return err
+		}
+		if a.Cfg.AutoDownload && following {
 			for _, c := range added {
 				if err := a.EnqueueDownload(ctx, c.ID); err != nil {
 					return err
@@ -363,6 +370,12 @@ func (a *App) refresh(ctx context.Context, module, seriesURL string) (err error)
 		Kind: "series-updated", SeriesID: id, State: "done", Message: message,
 	})
 	return nil
+}
+
+// following reports whether a series in the library is followed.
+func (a *App) following(ctx context.Context, id int64) (bool, error) {
+	s, err := a.Store.GetSeries(ctx, id)
+	return s.Subscribed, err
 }
 
 // reconcileFiles marks chapters whose file has left as outstanding again,

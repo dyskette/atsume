@@ -291,6 +291,48 @@ func TestAutoDownloadOff(t *testing.T) {
 	}
 }
 
+// TestSavedSeriesDoesNotAutoDownload covers a check of a series kept without
+// following it: what it finds is recorded, and nothing is queued.
+func TestSavedSeriesDoesNotAutoDownload(t *testing.T) {
+	var chapters atomic.Int32
+	chapters.Store(1)
+	srv := growingSite(t, &chapters)
+
+	a, st, ctx := newTestApp(t, srv.URL, &config.Config{AutoDownload: true})
+
+	if err := a.EnqueueRefresh(ctx, "TestMadara", srv.URL+"/manga/grow/"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		s, _ := st.ListSeries(ctx)
+		return len(s) == 1
+	}, "series to be stored")
+
+	all, _ := st.ListSeries(ctx)
+	if err := st.SetSubscribed(ctx, all[0].ID, false); err != nil {
+		t.Fatal(err)
+	}
+	chapters.Store(2)
+	if err := a.EnqueueRefresh(ctx, "TestMadara", srv.URL+"/manga/grow/"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		chs, _ := st.ListChapters(ctx, all[0].ID)
+		return len(chs) == 2
+	}, "the new chapter to be recorded")
+
+	time.Sleep(300 * time.Millisecond)
+	chs, _ := st.ListChapters(ctx, all[0].ID)
+	for _, c := range chs {
+		if c.State != store.ChapterPending {
+			t.Errorf("chapter %q is %q; a saved series downloads nothing by itself", c.Name, c.State)
+		}
+	}
+	if s, _ := st.GetSeries(ctx, all[0].ID); s.Subscribed {
+		t.Error("a check followed a saved series")
+	}
+}
+
 // TestSeriesDueForCheck covers the query the scheduler sweeps with.
 func TestSeriesDueForCheck(t *testing.T) {
 	dir := t.TempDir()
