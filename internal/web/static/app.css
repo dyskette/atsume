@@ -192,7 +192,6 @@ a:visited { color: var(--accent); }
 	white-space: nowrap;
 }
 .badge.done { color: var(--ok); border-color: var(--ok); }
-.badge.downloading, .badge.queued { color: var(--warn); border-color: var(--warn); }
 .badge.failed { color: var(--err); border-color: var(--err); }
 .error { color: var(--err); font-size: 0.8rem; }
 
@@ -494,11 +493,6 @@ a.show-all { display: block; padding: 0.9rem; text-align: center; }
 	.cover { width: 8rem; }
 }
 
-/* ── Library ─────────────────────────────────────────────────────────────
-   A row answers "what is it" and "is it current". When it last ran is the
-   program's business, not the reader's. */
-.rows.library li { gap: 1rem; padding: 0.7rem; }
-
 .thumb {
 	flex: none;
 	display: block;
@@ -514,20 +508,6 @@ a.show-all { display: block; padding: 0.9rem; text-align: center; }
 .grow { flex: 1; min-width: 0; }
 .grow .title { display: block; }
 .grow .muted { font-size: 0.82rem; }
-
-.badge.waiting { color: var(--accent); border-color: var(--accent); }
-/* News reads as news. A backlog keeps the quieter accent. */
-.badge.new { color: var(--bg); background: var(--ok); border-color: var(--ok); }
-
-.attention {
-	margin: 1rem 0 0;
-	padding: 0.6rem 0.8rem;
-	border: 1px solid var(--err);
-	border-left-width: 3px;
-	border-radius: 8px;
-	color: var(--err);
-	font-size: 0.9rem;
-}
 
 .empty p { margin: 0.8rem auto; max-width: 34rem; }
 .empty code { color: var(--text); }
@@ -598,19 +578,6 @@ h2.category .muted { font-size: 0.82rem; font-weight: 400; }
 }
 
 /* ── Site index ──────────────────────────────────────────────────────── */
-.filter { display: flex; align-items: center; gap: 0.8rem; margin: 1rem 0 0.4rem; }
-.filter input {
-	flex: 1;
-	padding: 0.5rem 0.7rem;
-	border-radius: 8px;
-	border: 1px solid var(--line);
-	background: var(--panel);
-	color: var(--text);
-}
-
-.batch { display: flex; align-items: center; gap: 0.8rem; margin: 0.5rem 0 0.2rem; }
-.batch .muted { font-size: 0.82rem; }
-
 .pick { width: 1rem; flex: none; }
 .site-row[hidden] { display: none; }
 li.more { justify-content: center; border-style: dashed; }
@@ -628,28 +595,10 @@ li.more { justify-content: center; border-style: dashed; }
 }
 .notice a { color: var(--accent); margin-left: auto; }
 
-/* ── Library sections ────────────────────────────────────────────────── */
-/* One alphabetical list could not say what was new, so the page is grouped
-   by the reader's question instead of by the first letter of a title. */
-.section-head {
-	display: flex;
-	align-items: baseline;
-	gap: 0.6rem;
-	margin: 1.8rem 0 0.2rem;
-}
-.section-head h2 { font-size: 1rem; margin: 0; }
-.section-head .count { color: var(--muted); font-size: 0.82rem; }
-.section-head + .muted { margin-bottom: 0.4rem; }
-
 /* A site whose module will not load is listed, because a reader looking for
    one they know should not have to wonder. It does not pretend to work. */
 .grid a.broken { color: var(--muted); text-decoration: line-through; }
 .grid .mirrors { font-size: 0.78rem; }
-/* The site a series came from, linked to its settings: a failing row is
-   usually failing for a reason only that page can fix. */
-.rows.library .muted a.site { color: var(--muted); text-decoration: none; }
-.rows.library .muted a.site:hover { color: var(--accent); text-decoration: underline; }
-.rows.library .pick { align-self: center; }
 
 /* Removing is the one thing on a series page that cannot be undone, so it is
    quiet until it is asked for, and explicit once it is. */
@@ -776,6 +725,16 @@ a.button.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .banner.accent { border-color: rgb(122 162 247 / 0.45); background: rgb(122 162 247 / 0.06); }
 .banner.warn { border-color: rgb(224 175 104 / 0.5); background: rgb(224 175 104 / 0.08); }
 .banner.warn .banner-icon { color: var(--warn); }
+.banner.bad { border-color: rgb(240 113 120 / 0.45); background: rgb(240 113 120 / 0.07); }
+.banner.bad .banner-icon { color: var(--err); }
+.banner strong .muted { font-weight: 400; }
+.banner .banner-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 1rem; margin-top: 0.4rem; }
+.banner .banner-actions a, .banner .banner-actions button.link { color: var(--accent); }
+.banner .tech { margin: 0.5rem 0 0; max-width: none; }
+.banner.slim { padding: 0.55rem 0.9rem; }
+.banner.slim p { margin: 0; color: var(--text); }
+.banner.slim strong { display: inline; margin-right: 0.6rem; }
+.banner.slim > a { color: var(--accent); white-space: nowrap; }
 
 .find { display: flex; gap: 0.8rem; margin: 0 0 1rem; }
 .find input[type=search] {
@@ -828,7 +787,7 @@ button.follow:hover { border-color: var(--line); color: var(--accent); }
 /* The batch bar appears once a row is ticked, and counts the ticks itself:
    a CSS counter over the checked boxes, no script. */
 main { counter-reset: picked; }
-.site-row .pick:checked { counter-increment: picked; }
+.site-row .pick:checked, .lib-row .pick:checked { counter-increment: picked; }
 .select-bar .n::before { content: counter(picked); }
 .select-bar {
 	position: fixed;
@@ -846,7 +805,7 @@ main { counter-reset: picked; }
 	box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
 	font-size: 0.9rem;
 }
-main:has(.site-row .pick:checked) .select-bar { display: flex; }
+main:has(.site-row .pick:checked, .lib-row .pick:checked) .select-bar { display: flex; }
 .select-bar button.link { color: var(--muted); text-decoration: none; }
 .select-bar button.link:hover { color: var(--text); }
 .select-bar button.primary { background: var(--accent); color: var(--bg); font-weight: 600; }
@@ -978,3 +937,117 @@ button.update.htmx-request .busy::before {
 /* A site with no titles to search shows why instead; the search box would
    be a field with nothing behind it. */
 main:has(#site-index > .no-titles) #find { display: none; }
+
+/* ── Library ─────────────────────────────────────────────────────────────
+   One row per series: what it is and what is on disk, the one thing to
+   know about it, and what can be done. What needs the reader is said once
+   above the list, whatever the filters show. */
+.lib-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.3rem 0.9rem; margin-bottom: 1rem; }
+.lib-head h1 { margin: 0; font-size: 1.9rem; }
+.lib-head > .muted { font-size: 0.9rem; }
+.check-line { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0 auto; font-size: 0.86rem; color: var(--muted); }
+.check-line.bad { color: var(--err); }
+.check-line .dot { flex: none; }
+.check-line button.link { color: var(--accent); }
+
+.lib-tabs { display: flex; gap: 1.6rem; margin-bottom: 1rem; border-bottom: 1px solid var(--line); }
+.lib-tabs a { padding: 0.45rem 0.1rem; margin-bottom: -1px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; }
+.lib-tabs a:hover { color: var(--text); }
+.lib-tabs a.current { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.lib-tabs .count { margin-left: 0.25rem; color: var(--muted); font-weight: 400; }
+
+.lib-tools { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.8rem; }
+.lib-search { flex: 1 1 16rem; margin: 0; }
+.lib-search input[type=search] {
+	width: 100%;
+	height: 2.3rem;
+	padding: 0 0.8rem;
+	border-radius: 8px;
+	border: 1px solid var(--line);
+	background: var(--panel);
+	color: var(--text);
+	font: inherit;
+	font-size: 0.9rem;
+}
+.lib-menus { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.lib-menu summary { height: 2.3rem; display: flex; align-items: center; gap: 0.3rem; padding: 0 0.8rem; font-size: 0.88rem; white-space: nowrap; }
+.lib-menu summary .k { color: var(--muted); }
+.lib-menu.on summary { border-color: var(--accent); background: rgb(122 162 247 / 0.08); }
+.lib-menu .menu-items { left: auto; right: 0; min-width: 12rem; max-height: 22rem; overflow-y: auto; }
+.lib-menu .menu-items a.current { color: var(--text); background: var(--panel-hi); }
+.lib-menu .menu-items a.current::before { content: "✓ "; color: var(--accent); }
+
+.chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.8rem; font-size: 0.84rem; }
+.chip-row > a { color: var(--accent); }
+.filter-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	padding: 0.1rem 0.3rem 0.1rem 0.6rem;
+	border: 1px solid rgb(122 162 247 / 0.5);
+	border-radius: 6px;
+	background: rgb(122 162 247 / 0.08);
+}
+.filter-chip a { color: var(--muted); text-decoration: none; padding: 0 0.3rem; }
+.filter-chip a:hover { color: var(--text); }
+
+.lib-rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.lib-row { display: flex; align-items: center; gap: 0.9rem; padding: 0.6rem 0.9rem; }
+.lib-row + .lib-row { border-top: 1px solid var(--line); }
+.lib-row.problem { background: rgb(240 113 120 / 0.035); }
+.lib-row .pick { width: 1.05rem; height: 1.05rem; accent-color: var(--accent); }
+.lib-row .thumb { width: 2.3rem; }
+.lib-row a.title { color: var(--text); font-weight: 600; text-decoration: none; }
+.lib-row a.title:hover { color: var(--accent); }
+.lib-row .lib-meta { display: flex; flex-wrap: wrap; gap: 0 0.3rem; margin: 0; font-size: 0.8rem; color: var(--muted); }
+.lib-row .lib-meta a.site { color: var(--muted); text-decoration: none; }
+.lib-row .lib-meta a.site:hover { color: var(--accent); text-decoration: underline; }
+.lib-evidence { font-size: 0.8rem; }
+.lib-evidence.bad { color: #f4a3a8; }
+.lib-evidence.warn { color: #e8c48e; }
+.lib-evidence button.link { margin-left: 0.4rem; color: var(--accent); font-size: inherit; }
+.lib-side { flex: none; display: flex; align-items: center; gap: 0.9rem; }
+.lib-row .newest { width: 9.5rem; text-align: right; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+.lib-row .newest > div { white-space: nowrap; }
+.lib-row .when { font-size: 0.75rem; color: var(--muted); }
+.lib-row .when.recent { color: var(--accent); }
+.lib-row .pill-slot { width: 9rem; display: flex; justify-content: flex-end; }
+.lib-row .pill.ok { color: var(--ok); border-color: rgb(121 198 108 / 0.5); }
+.lib-row .pill.new { color: var(--warn); border-color: rgb(224 175 104 / 0.5); background: rgb(224 175 104 / 0.08); }
+.lib-row .pill.warn { color: var(--warn); border-color: rgb(224 175 104 / 0.5); }
+.lib-row .pill.bad { color: var(--err); border-color: rgb(240 113 120 / 0.55); background: rgb(240 113 120 / 0.08); }
+.lib-row .pill.active { color: var(--accent); border-color: rgb(122 162 247 / 0.5); }
+.lib-row .pill.neutral { color: var(--text); }
+.lib-row .pill.muted { color: var(--muted); }
+.lib-row .row-menu .menu-items { min-width: 15rem; }
+.row-menu .why { display: flex; flex-direction: column; gap: 0.1rem; margin-bottom: 0.3rem; padding: 0.4rem 0.6rem 0.6rem; border-bottom: 1px solid var(--line); font-size: 0.8rem; color: var(--muted); }
+.row-menu .why strong { color: #f4a3a8; font-weight: 500; }
+.lib-foot { margin: 0.7rem 0 0; text-align: center; font-size: 0.82rem; }
+
+.lib-empty { margin-top: 3rem; padding: 3rem var(--gutter); }
+.lib-empty h1 { margin: 0 0 0.6rem; font-size: 1.4rem; color: var(--text); }
+.lib-empty .empty-icon { color: var(--accent); }
+.lib-empty p.dest { font-size: 0.85rem; }
+.lib-empty .cta { padding: 0.55rem 1.2rem; border: none; background: var(--accent); color: var(--bg); font-weight: 600; }
+.lib-empty .cta:hover { background: #a9c1fa; }
+
+@media (max-width: 40rem) {
+	.check-line { margin-left: 0; width: 100%; }
+	.lib-row {
+		display: grid;
+		grid-template-columns: auto 2.3rem minmax(0, 1fr) auto;
+		grid-template-areas: "pick thumb main menu" "pick thumb side side";
+		gap: 0.3rem 0.8rem;
+		align-items: start;
+	}
+	.lib-row .pick { grid-area: pick; align-self: center; }
+	.lib-row .thumb { grid-area: thumb; }
+	.lib-row .grow { grid-area: main; }
+	.lib-row .row-menu { grid-area: menu; }
+	.lib-side { grid-area: side; justify-content: space-between; }
+	.lib-row .newest { width: auto; text-align: left; display: flex; align-items: baseline; gap: 0.5rem; }
+	.lib-row .pill-slot { width: auto; }
+	.banner.slim { flex-wrap: wrap; }
+	.banner.slim strong { display: block; }
+	.select-bar { flex-wrap: wrap; justify-content: center; width: calc(100% - 2rem); }
+}

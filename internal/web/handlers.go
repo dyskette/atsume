@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,27 +23,126 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	series, err := s.App.Store.ListSeries(r.Context())
+	ctx := r.Context()
+	series, err := s.App.Store.ListSeries(ctx)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	progress, err := s.App.Store.Progress(r.Context())
+	progress, err := s.App.Store.Progress(ctx)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
 
+	home, _ := os.UserHomeDir()
 	v := ui.LibraryView{
-		Destination:   s.App.Cfg.LibraryDir,
+		Query:         ui.LibraryQueryFrom(r.URL.Query()),
+		Destination:   ui.HomeDir(s.App.Cfg.LibraryDir, home),
+		Sites:         len(s.App.Registry.Modules()),
 		CheckInterval: s.App.Cfg.CheckInterval,
 		Uptime:        s.App.Uptime(),
+		FlareSolverr:  s.App.Cfg.FlaresolverrURL != "",
 	}
 	v.LastSweep, v.Swept = s.App.Scheduler.LastSweep()
+	v.NextSweep, _ = s.App.Scheduler.NextSweep()
+	if v.Checking, err = s.App.ChecksInFlight(ctx); err != nil {
+		slog.Warn("counting series checks", "err", err)
+	}
 	for _, item := range series {
-		v.Rows = append(v.Rows, ui.LibraryRow{Series: item, Progress: progress[item.ID]})
+		v.Rows = append(v.Rows, ui.LibraryRow{
+			Series: item, Progress: progress[item.ID],
+			Link: s.App.SiteLink(ctx, item.Key(), item.URL),
+		})
+	}
+	if a := v.Attention(); a.Site != "" {
+		v.OthersWorking, _ = s.App.Store.OthersWorking(ctx, a.Site)
 	}
 	s.render(w, r, ui.Library(v))
+}
+
+// selectedSeries reads the series ids a library form sent.
+func selectedSeries(r *http.Request) []int64 {
+	var out []int64
+	for _, raw := range r.PostForm["sel"] {
+		if id, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// handleCheckSeries queues a check of the series picked in the library, of
+// every series from one site, or of every followed series.
+//
+// Every followed series rather than a sweep: a sweep checks only what is due,
+// and does nothing at all with automatic checks off, which is exactly when a
+// reader asks for one.
+func (s *Server) handleCheckSeries(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	var targets []store.Series
+	switch {
+	case r.PostForm.Get("site") != "":
+		list, err := s.App.Store.SeriesByModule(ctx, r.PostForm.Get("site"))
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		targets = list
+	case r.PostForm.Get("all") != "":
+		list, err := s.App.Store.ListSeries(ctx)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		for _, v := range list {
+			if v.Subscribed {
+				targets = append(targets, v)
+			}
+		}
+	default:
+		for _, id := range selectedSeries(r) {
+			v, err := s.App.Store.GetSeries(ctx, id)
+			if err != nil {
+				continue // removed meanwhile
+			}
+			targets = append(targets, v)
+		}
+	}
+	if len(targets) == 0 {
+		s.render(w, r, ui.Notice("Nothing to check.", ""))
+		return
+	}
+	for _, v := range targets {
+		if err := s.App.EnqueueRefresh(ctx, v.Key(), v.URL); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	slog.Info("queued series checks", "series", len(targets))
+	s.render(w, r, ui.Notice("Checking "+ui.Count(len(targets), "series", "series")+" for new chapters.", ""))
+}
+
+// handleFollowSeries follows or stops following the series picked in the
+// library. Stopping keeps a series in the library, as Saved.
+func (s *Server) handleFollowSeries(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	on := r.PostForm.Get("on") == "1"
+	for _, id := range selectedSeries(r) {
+		if err := s.App.Store.SetSubscribed(r.Context(), id, on); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	// Tabs, counts and pills all change with it.
+	reloadPage(w)
 }
 
 func (s *Server) handleModules(w http.ResponseWriter, r *http.Request) {
@@ -720,18 +820,14 @@ func (s *Server) handleDownloadMany(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	selected := r.PostForm["sel"]
+	selected := selectedSeries(r)
 	if len(selected) == 0 {
 		s.render(w, r, ui.Notice("Nothing selected.", ""))
 		return
 	}
 
 	var chapters, series int
-	for _, raw := range selected {
-		id, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil {
-			continue
-		}
+	for _, id := range selected {
 		n, err := s.App.EnqueueAllPending(r.Context(), id)
 		if err != nil {
 			s.fail(w, r, err)
@@ -826,12 +922,6 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, r, ui.SeriesActions(s.seriesView(r.Context(), series, chapters)))
-}
-
-// handleCheckNow asks the scheduler for an immediate sweep.
-func (s *Server) handleCheckNow(w http.ResponseWriter, r *http.Request) {
-	s.App.Scheduler.CheckNow()
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleQueue serves the status line, which the footer fetches on load.
