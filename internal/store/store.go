@@ -85,18 +85,26 @@ type Series struct {
 	CheckProblem  string
 	CheckError    string
 	CheckFailedAt sql.NullTime
+	// CheckFailure is what the site's answer to the failed check said: its
+	// HTTP status, whether it was a challenge page, and why it did not answer.
+	// MovedTo is never set for a series.
+	CheckFailure Failure
+	// CreatedAt is when the series entered the library.
+	CreatedAt time.Time
 }
 
 // seriesColumns is what scanSeries reads, in its order.
 const seriesColumns = `id, module_id, module_key, module_name, url, title, cover_url, authors,
-	artists, genres, status, summary, subscribed, checked_at, check_problem, check_error, check_failed_at`
+	artists, genres, status, summary, subscribed, checked_at, check_problem, check_error, check_failed_at,
+	check_status, check_challenged, check_cause, created_at`
 
 // scanSeries reads one row selected with seriesColumns.
 func scanSeries(row interface{ Scan(...any) error }) (Series, error) {
 	var v Series
 	err := row.Scan(&v.ID, &v.ModuleID, &v.ModuleKey, &v.ModuleName, &v.URL, &v.Title,
 		&v.CoverURL, &v.Authors, &v.Artists, &v.Genres, &v.Status, &v.Summary,
-		&v.Subscribed, &v.CheckedAt, &v.CheckProblem, &v.CheckError, &v.CheckFailedAt)
+		&v.Subscribed, &v.CheckedAt, &v.CheckProblem, &v.CheckError, &v.CheckFailedAt,
+		&v.CheckFailure.Status, &v.CheckFailure.Challenged, &v.CheckFailure.Cause, &v.CreatedAt)
 	return v, err
 }
 
@@ -246,7 +254,8 @@ func (s *Store) UpsertSeries(ctx context.Context, v Series) (int64, error) {
 			genres = excluded.genres, status = excluded.status,
 			summary = excluded.summary, checked_at = excluded.checked_at,
 			-- Getting this far means the check worked.
-			check_problem = '', check_error = '', check_failed_at = NULL
+			check_problem = '', check_error = '', check_failed_at = NULL,
+			check_status = 0, check_challenged = 0, check_cause = ''
 		RETURNING id`
 	var id int64
 	err := s.DB.QueryRowContext(ctx, q, v.ModuleID, v.ModuleKey, v.ModuleName, v.URL,
@@ -279,6 +288,8 @@ type QueueStatus struct {
 	Downloading int
 	Queued      int
 	Failed      int
+	// CheckFailing is how many series the latest check of failed.
+	CheckFailing int
 }
 
 // Busy reports whether anything is in flight.
@@ -310,7 +321,12 @@ func (s *Store) Queue(ctx context.Context) (QueueStatus, error) {
 			out.Failed = n
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	err = s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM series WHERE check_problem <> '' OR check_failed_at IS NOT NULL`).Scan(&out.CheckFailing)
+	return out, err
 }
 
 // SeriesByModule lists the series that came from one site.
@@ -378,6 +394,17 @@ type SeriesProgress struct {
 	// LastDownload is when a chapter of the series was last written to disk,
 	// and null when none has been since the time was recorded.
 	LastDownload sql.NullTime
+
+	// Downloading is the part of Active that has started, the rest waiting
+	// in the queue.
+	Downloading int
+	// NewActive is the part of New already queued or downloading, which the
+	// library says as "1 new, queued" rather than as something to act on.
+	NewActive int
+	// Latest is the number of the highest-numbered chapter on disk, "" when
+	// none on disk has a number. The highest rather than the latest written,
+	// since a back catalogue fetched today is not the series' newest chapter.
+	Latest string
 }
 
 // later returns whichever of two optional times is later.
@@ -426,6 +453,12 @@ func (s *Store) Progress(ctx context.Context) (map[int64]SeriesProgress, error) 
 			p.Done += n
 		case ChapterQueued, ChapterDownloading:
 			p.Active += n
+			if state == ChapterDownloading {
+				p.Downloading += n
+			}
+			if !backlog {
+				p.NewActive += n
+			}
 		case ChapterFailed:
 			p.Failed += n
 			p.Waiting += n
@@ -434,7 +467,37 @@ func (s *Store) Progress(ctx context.Context) (map[int64]SeriesProgress, error) 
 		}
 		out[id] = p
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.latestChapters(ctx, out)
+}
+
+// latestChapters fills in each series' highest-numbered chapter on disk.
+//
+// It relies on SQLite taking a bare column from the row that holds the MAX of
+// an aggregate query, so the number comes back as written ("2.001", not 2.001
+// read back as a float).
+func (s *Store) latestChapters(ctx context.Context, out map[int64]SeriesProgress) error {
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT series_id, number, MAX(CAST(number AS REAL)) FROM chapters
+		WHERE state = ? AND number <> '' GROUP BY series_id`, ChapterDone)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var number string
+		var max float64
+		if err := rows.Scan(&id, &number, &max); err != nil {
+			return err
+		}
+		p := out[id]
+		p.Latest = number
+		out[id] = p
+	}
+	return rows.Err()
 }
 
 // parseTimestamp reads a SQLite timestamp that arrived as text.
@@ -636,16 +699,17 @@ func (s *Store) SetChapterState(ctx context.Context, id int64, state, filePath, 
 }
 
 // RecordCheckFailure notes on a series that a check of it failed: the kind of
-// problem and the error.
+// problem, the error, and what the site's answer says about it.
 //
 // The series is found the way a refresh names it, by site and address. A
 // series not yet in the library has no row to mark, and that is not an error:
 // the caller reports the failure to whoever asked for the check.
-func (s *Store) RecordCheckFailure(ctx context.Context, site, url, problem, msg string) error {
+func (s *Store) RecordCheckFailure(ctx context.Context, site, url, problem, msg string, f Failure) error {
 	const q = `
-		UPDATE series SET check_problem = ?, check_error = ?, check_failed_at = CURRENT_TIMESTAMP
+		UPDATE series SET check_problem = ?, check_error = ?, check_failed_at = CURRENT_TIMESTAMP,
+			check_status = ?, check_challenged = ?, check_cause = ?
 		WHERE url = ? AND COALESCE(NULLIF(module_key, ''), module_name) = ?`
-	_, err := s.DB.ExecContext(ctx, q, problem, msg, url, site)
+	_, err := s.DB.ExecContext(ctx, q, problem, msg, f.Status, f.Challenged, f.Cause, url, site)
 	return err
 }
 

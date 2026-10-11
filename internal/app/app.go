@@ -272,7 +272,7 @@ func (a *App) refresh(ctx context.Context, module, seriesURL string) (err error)
 		if err == nil || ctx.Err() != nil {
 			return
 		}
-		rerr := a.Store.RecordCheckFailure(ctx, module, seriesURL, classifyProblem(err), err.Error())
+		rerr := a.Store.RecordCheckFailure(ctx, module, seriesURL, classifyProblem(err), err.Error(), failureOf(err))
 		if rerr != nil {
 			slog.Warn("could not record failed check", "url", seriesURL, "err", rerr)
 		}
