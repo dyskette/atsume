@@ -1,6 +1,10 @@
 package ui
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/dyskette/atsume/internal/app"
+)
 
 // SeriesPage is one series, in the library or not. Being in the library is a
 // state of the series, not a different page, so the page is the same however
@@ -55,6 +59,9 @@ templ SeriesPage(v SeriesView) {
 // swap it in place.
 templ SeriesActions(v SeriesView) {
 	<div id="series-actions">
+		if v.CheckFailing() {
+			@checkFailure(v)
+		}
 		<div class="actions">
 			@followButton(v)
 			if v.ToDownload() > 0 {
@@ -161,6 +168,39 @@ templ ConfirmRemove(v SeriesView) {
 				hx-target="#remove"
 				hx-swap="innerHTML"
 			>Cancel</button>
+		</div>
+	</div>
+}
+
+// checkFailure says that the latest check of the series failed, why, and
+// what fixes it: a failed check leaves the chapter list as it was, so without
+// this a broken series reads as a quiet one.
+templ checkFailure(v SeriesView) {
+	<div class="banner bad">
+		<span class="banner-icon" aria-hidden="true">⚠</span>
+		<div class="grow">
+			<strong>The last check failed { ago(v.Series.CheckFailedAt.Time) }</strong>
+			<p>{ v.CheckReason() }</p>
+			<p class="banner-actions">
+				<button type="button" class="link" hx-post={ fmt.Sprintf("/series/%d/refresh", v.Series.ID) } hx-swap="none">Check now</button>
+				switch {
+					case v.Series.CheckProblem == app.ProblemBlocked && v.Series.CheckFailure.Challenged && !v.FlareSolverr:
+						<a href={ templ.SafeURL(flareSolverrDocs) } target="_blank" rel="noreferrer noopener">Set up FlareSolverr</a>
+					case v.Series.CheckProblem == app.ProblemBlocked:
+						<a href={ templ.SafeURL(v.SettingsURL()) }>Site settings</a>
+					case v.Series.CheckProblem == app.ProblemMoved:
+						<a href={ templ.SafeURL(v.SettingsURL()) }>Change address</a>
+					case v.Series.CheckProblem == app.ProblemBroken:
+						<button type="button" class="link" hx-post="/modules/update" hx-swap="none">Update modules</button>
+				}
+				<a href={ templ.SafeURL(SiteURL(v.Series.Key())) }>View site</a>
+			</p>
+			if v.Series.CheckError != "" {
+				<details class="tech">
+					<summary>Technical details</summary>
+					<pre>{ v.Series.CheckError }</pre>
+				</details>
+			}
 		</div>
 	</div>
 }

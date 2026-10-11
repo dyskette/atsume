@@ -509,6 +509,7 @@ func (s *Server) seriesView(ctx context.Context, series store.Series, chapters [
 		Missing:       s.App.MissingFiles(chapters),
 		SiteURL:       s.App.SiteLink(ctx, series.Key(), series.URL),
 		Rows:          s.rowStates(ctx),
+		FlareSolverr:  s.App.Cfg.FlaresolverrURL != "",
 	}
 	if info, ok := s.App.SiteInfo(ctx, series.Key()); ok {
 		v.SiteNeedsLogin = info.NeedsLogin

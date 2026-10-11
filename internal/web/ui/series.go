@@ -76,6 +76,8 @@ type SeriesView struct {
 	// list is worth blaming on a missing account.
 	SiteNeedsLogin     bool
 	SiteHasCredentials bool
+	// FlareSolverr reports that a solver for anti-bot challenges is set up.
+	FlareSolverr bool
 
 	// Missing holds the chapters atsume believes it wrote whose file is no
 	// longer there. The library directory belongs to whatever reads it, and
@@ -243,4 +245,17 @@ func humanDuration(d time.Duration) string {
 
 func plural(n int, unit string) string {
 	return Count(n, unit, unit+"s")
+}
+
+// CheckFailing reports whether the latest check of a series in the library
+// failed.
+func (v SeriesView) CheckFailing() bool { return v.Tracked() && v.Series.CheckFailedAt.Valid }
+
+// CheckReason says why the latest check failed, as a sentence.
+func (v SeriesView) CheckReason() string {
+	out := upper(checkReason(v.Series)) + "."
+	if v.Series.CheckedAt.Valid {
+		return out + " The last check that worked was " + ago(v.Series.CheckedAt.Time) + "."
+	}
+	return out + " No check of it has worked yet."
 }
