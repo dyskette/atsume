@@ -156,14 +156,31 @@ func moduleList(out, errOut io.Writer, r *scraper.Runner, dir int, pageArg strin
 		page = n
 	}
 	r.SetDirectoryIndex(dir)
+	// FMD2 asks for the page count before reading any page, and most modules
+	// answer it there, through PAGENUMBER; Madara-style ones instead set
+	// UPDATELIST.CurrentDirectoryPageNumber while reading a page. Both are
+	// asked for, in that order, and the one given on the page wins.
+	_, counts := r.Module().Handler("OnGetDirectoryPageNumber")
+	var pageCount int
+	var countErr error
+	if counts {
+		pageCount, countErr = r.GetDirectoryPageNumber()
+	}
 	entries, err := r.GetNameAndLink(page - 1)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(errOut, "%s · directory %d of %d · page %d\n", r.Module().Name, dir+1, r.TotalDirectories(), page)
 	count := "the module reported no page count"
-	if n := r.DirectoryPageNumber(); n > 0 {
+	switch n := r.DirectoryPageNumber(); {
+	case n > 0:
 		count = fmt.Sprintf("the module reports %d pages", n)
+	case countErr != nil:
+		// The titles are still worth showing: a broken count and a broken
+		// list are different fixes.
+		count = fmt.Sprintf("the page count failed: %v", countErr)
+	case counts:
+		count = fmt.Sprintf("the module reports %d pages", pageCount)
 	}
 	fmt.Fprintf(errOut, "%d titles · %s\n", len(entries), count)
 	for _, e := range entries {
