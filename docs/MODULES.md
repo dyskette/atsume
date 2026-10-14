@@ -123,6 +123,15 @@ One matching parity detail, from `baseunits/XQueryEngineHTML.pas`: `XPathString`
 does **not** trim its result, while `XPathStringAll` trims every value and skips
 the empty ones. Modules rely on both behaviours.
 
+JSON is read as leniently as `json()` reads it upstream: a trailing comma
+before `]` or `}` is accepted, because internettools gives `json()` a parser
+configured with `jpoAllowTrailingComma`. Sites that embed a JavaScript object
+literal as page data depend on it — the MultiChan template's chapters had no
+pages without it. Upstream's `parse-json()` is stricter and rejects the same
+input; atsume parses both the same way, so there it is the more lenient of the
+two. That can turn an upstream failure into a result, never change the reading
+of valid JSON.
+
 ## JavaScript execution
 
 Several sites encrypt their page lists and ship the decryption routine in the

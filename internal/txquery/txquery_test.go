@@ -291,6 +291,62 @@ func TestJSONOfDocumentStillWorks(t *testing.T) {
 	}
 }
 
+// TestJSONTrailingComma covers page data written as a JavaScript object
+// literal. The MultiChan template (MangaChan, HenChan, YaoiChan) cuts
+// `var data = {…};` out of a script, reparses it with ParseHTML and reads
+// json(*).fullimg(); the sites end objects with a trailing comma, which
+// FMD2's json() accepts, so a strict parse lost every page of the chapter.
+func TestJSONTrailingComma(t *testing.T) {
+	const page = `<html><body><script>
+	var data = { "meta":{ "name":"One", }, "fullimg":["https://img.example/1.png","https://img.example/2.png",], };
+	</script></body></html>`
+
+	q, err := ParseString(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := q.XPathString(`//script[contains(., "var data")]/substring-before(substring-after(., "var data = "), ";")`)
+	data, err := ParseString(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := data.XPathStringAll(`json(*).fullimg()`, ","), "https://img.example/1.png,https://img.example/2.png"; got != want {
+		t.Errorf("fullimg = %q, want %q", got, want)
+	}
+	if got := data.XPathString(`json(*).meta.name`); got != "One" {
+		t.Errorf("meta.name = %q, want One", got)
+	}
+}
+
+func TestDropTrailingCommas(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+		changed        bool
+	}{
+		{"object", `{"a":1,}`, `{"a":1}`, true},
+		{"array across lines", "[1,\n\t2,\r\n]", "[1,\n\t2\r\n]", true},
+		{"nested", `{"a":[1,],"b":{"c":2,},}`, `{"a":[1],"b":{"c":2}}`, true},
+		// Commas inside strings are content, escaped quotes included.
+		{"in a string", `{"a":",}","b":"\",]"}`, `{"a":",}","b":"\",]"}`, false},
+		{"strict JSON", `{"a":[1,2]}`, `{"a":[1,2]}`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, changed := dropTrailingCommas([]byte(c.in))
+			if string(got) != c.want || changed != c.changed {
+				t.Errorf("got %q (changed %v), want %q (changed %v)", got, changed, c.want, c.changed)
+			}
+		})
+	}
+
+	// Leniency covers the trailing comma and nothing else.
+	for _, bad := range []string{`{"a":1,,}`, `{a:1}`, `[1 2]`} {
+		if _, err := ParseJSONTree([]byte(bad)); err == nil {
+			t.Errorf("%s parsed; only a trailing comma should be forgiven", bad)
+		}
+	}
+}
+
 // TestHREFAllFallsBackToTitle covers a directory whose anchors wrap an image.
 //
 // FanFox lists each title as an anchor around a cover, with the name only in
