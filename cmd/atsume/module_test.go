@@ -55,6 +55,42 @@ end
 	if err := os.WriteFile(filepath.Join(mods, "Tester.lua"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The other ways a module can answer, or not answer, how many pages its
+	// list has. Tester above sets UPDATELIST while reading a page, as Madara
+	// does; most modules give PAGENUMBER from GetDirectoryPageNumber instead.
+	for _, m := range []struct{ name, count string }{
+		{"Counter", `PAGENUMBER = 12; return no_error`},
+		{"BadCount", `error('no pagination on the page')`},
+		{"Uncounted", ``},
+	} {
+		handler := ""
+		if m.count != "" {
+			handler = `m.OnGetDirectoryPageNumber = 'GetDirectoryPageNumber'`
+		}
+		src := fmt.Sprintf(`
+function Init()
+	local m = NewWebsiteModule()
+	m.ID = '%[1]s'
+	m.Name = '%[1]s'
+	m.RootURL = '%[2]s'
+	m.OnGetNameAndLink = 'GetNameAndLink'
+	%[3]s
+end
+
+function GetDirectoryPageNumber()
+	%[4]s
+end
+
+function GetNameAndLink()
+	if not HTTP.GET(MODULE.RootURL .. '/list?page=' .. (URL + 1)) then return net_problem end
+	CreateTXQuery(HTTP.Document).XPathHREFAll('//a[@class="t"]', LINKS, NAMES)
+	return no_error
+end
+`, m.name, root, handler, m.count)
+		if err := os.WriteFile(filepath.Join(mods, m.name+".lua"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return dir
 }
 
@@ -96,6 +132,9 @@ func TestModuleCommand(t *testing.T) {
 		want []string
 	}{
 		{"list", []string{"Tester", "list"}, []string{"2 titles · the module reports 7 pages", "/s/one/\tOne", "/s/two/\tTwo"}},
+		{"list counted before reading", []string{"Counter", "list"}, []string{"2 titles · the module reports 12 pages"}},
+		{"list with a broken count", []string{"BadCount", "list"}, []string{"2 titles · the page count failed:", "no pagination on the page", "/s/two/\tTwo"}},
+		{"list with no count", []string{"Uncounted", "list"}, []string{"2 titles · the module reported no page count"}},
 		{"info", []string{"Tester", "info", "/s/one/"}, []string{"Title      One", "Summary    (empty)", "1 chapters", "/s/one/1/\tChapter 1"}},
 		// A flag after the arguments counts as much as one before them.
 		{"pages", []string{"Tester", "pages", "/s/one/1/", "-fetch-first"}, []string{"1 pages", "first image: HTTP 200 · image/png · 4 bytes"}},
