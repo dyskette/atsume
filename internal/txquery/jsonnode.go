@@ -55,10 +55,68 @@ func appendValue(parent *html.Node, v any) {
 }
 
 // ParseJSONTree decodes src and renders it via BuildJSONTree.
+//
+// A trailing comma before a closing bracket or brace is accepted, as FMD2
+// accepts it: internettools gives json() its default parser, which FMD2's
+// engine configures with jpoAllowTrailingComma (data/xquery.pas, where
+// DefaultJSONParser.options is set). Sites that embed a JavaScript object
+// literal as their page data, such as the MultiChan template's `var data`,
+// rely on it; strict decoding rejected the whole object and the chapter came
+// back with no pages.
+//
+// Upstream's parse-json() is stricter and would reject the same input. Both
+// share one parse here, so atsume is the more lenient of the two there; that
+// can only turn a failure into a result, never change a valid document's.
 func ParseJSONTree(src []byte) (*html.Node, error) {
 	var v any
 	if err := json.Unmarshal(src, &v); err != nil {
-		return nil, err
+		lenient, changed := dropTrailingCommas(src)
+		if !changed || json.Unmarshal(lenient, &v) != nil {
+			return nil, err
+		}
 	}
 	return BuildJSONTree(v), nil
+}
+
+// dropTrailingCommas removes each comma that only whitespace separates from
+// the `]` or `}` after it, leaving string contents alone. It reports whether
+// it removed any, so a document it cannot help is not decoded twice.
+func dropTrailingCommas(src []byte) ([]byte, bool) {
+	out := make([]byte, 0, len(src))
+	changed := false
+	inString, escaped := false, false
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			out = append(out, c)
+			continue
+		}
+		if c == '"' {
+			inString = true
+		} else if c == ',' {
+			j := i + 1
+			for j < len(src) && isJSONSpace(src[j]) {
+				j++
+			}
+			if j < len(src) && (src[j] == ']' || src[j] == '}') {
+				changed = true
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	return out, changed
+}
+
+// isJSONSpace reports whether c is whitespace in JSON's grammar.
+func isJSONSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
