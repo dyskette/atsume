@@ -12,35 +12,35 @@ use crate::module::split_lines;
 
 /// An ordered list of strings.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Strings {
+pub(crate) struct Strings {
     items: Vec<String>,
 }
 
 impl Strings {
     /// Returns the items.
     #[must_use]
-    pub fn items(&self) -> &[String] {
+    pub(crate) fn items(&self) -> &[String] {
         &self.items
     }
 
     /// Appends an item.
-    pub fn add(&mut self, item: impl Into<String>) {
+    pub(crate) fn add(&mut self, item: impl Into<String>) {
         self.items.push(item.into());
     }
 
     /// Removes every item.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.items.clear();
     }
 
     /// Replaces every item.
-    pub fn set(&mut self, items: Vec<String>) {
+    pub(crate) fn set(&mut self, items: Vec<String>) {
         self.items = items;
     }
 
     /// Returns the item at a 0-based index, or `""` when out of range.
     #[must_use]
-    pub fn get(&self, index: i64) -> &str {
+    pub(crate) fn get(&self, index: i64) -> &str {
         usize::try_from(index)
             .ok()
             .and_then(|i| self.items.get(i))
@@ -48,7 +48,7 @@ impl Strings {
     }
 
     /// Writes the item at a 0-based index, growing the list as needed.
-    pub fn put(&mut self, index: i64, item: String) {
+    pub(crate) fn put(&mut self, index: i64, item: String) {
         let Ok(index) = usize::try_from(index) else {
             return;
         };
@@ -59,7 +59,7 @@ impl Strings {
     }
 
     /// Removes the item at a 0-based index, if there is one.
-    pub fn delete(&mut self, index: i64) {
+    pub(crate) fn delete(&mut self, index: i64) {
         if let Some(i) = usize::try_from(index)
             .ok()
             .filter(|&i| i < self.items.len())
@@ -70,14 +70,14 @@ impl Strings {
 
     /// Returns the 0-based index of the first item equal to `item`, or -1.
     #[must_use]
-    pub fn index_of(&self, item: &str) -> i64 {
+    pub(crate) fn index_of(&self, item: &str) -> i64 {
         let position = self.items.iter().position(|it| it == item);
         position.map_or(-1, |i| i64::try_from(i).unwrap_or(i64::MAX))
     }
 
     /// Reads the value of the `name=value` pair named `name`, ignoring case.
     #[must_use]
-    pub fn value(&self, name: &str) -> &str {
+    pub(crate) fn value(&self, name: &str) -> &str {
         self.position_of(name)
             .and_then(|i| self.items[i].split_once('='))
             .map_or("", |(_, value)| value)
@@ -85,7 +85,7 @@ impl Strings {
 
     /// Writes a `name=value` pair, replacing any with the same name. An empty
     /// value removes the pair.
-    pub fn set_value(&mut self, name: &str, value: &str) {
+    pub(crate) fn set_value(&mut self, name: &str, value: &str) {
         let position = self.position_of(name);
         match (position, value.is_empty()) {
             (Some(i), true) => {
@@ -98,7 +98,7 @@ impl Strings {
     }
 
     /// Returns the `name=value` pairs as separate names and values.
-    pub fn pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+    pub(crate) fn pairs(&self) -> impl Iterator<Item = (&str, &str)> {
         self.items
             .iter()
             .filter_map(|item| item.split_once('='))
@@ -119,7 +119,7 @@ impl Strings {
     /// Renders the list as Pascal's `CommaText`: comma-separated, with an item
     /// quoted when it holds a comma, a quote or a space.
     #[must_use]
-    pub fn comma_text(&self) -> String {
+    pub(crate) fn comma_text(&self) -> String {
         let quote = |item: &String| {
             if item.contains([',', '"', ' ']) {
                 format!("\"{}\"", item.replace('"', "\"\""))
@@ -131,7 +131,7 @@ impl Strings {
     }
 
     /// Replaces the items by parsing a `CommaText` value.
-    pub fn set_comma_text(&mut self, text: &str) {
+    pub(crate) fn set_comma_text(&mut self, text: &str) {
         self.items.clear();
         let mut current = String::new();
         let mut quoted = false;

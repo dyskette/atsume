@@ -53,6 +53,31 @@ impl Default for HttpConfig {
     }
 }
 
+impl HttpConfig {
+    /// Returns a configuration that refuses every request, for loading the
+    /// catalog: declaring a website needs no network access.
+    pub(crate) fn offline() -> Self {
+        Self {
+            transport: Arc::new(Offline),
+            limiter: Arc::new(Unlimited),
+            solver: None,
+            backoff: Duration::ZERO,
+        }
+    }
+}
+
+/// A transport that refuses every request.
+struct Offline;
+
+impl Transport for Offline {
+    fn send(&self, request: &Request) -> Result<Response, TransportError> {
+        Err(TransportError(format!(
+            "{}: no network access while loading the catalog",
+            request.url
+        )))
+    }
+}
+
 /// What the last request a module made got back, for explaining a failure.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LastRequest {

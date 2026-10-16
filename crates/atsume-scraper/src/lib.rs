@@ -1,30 +1,46 @@
 //! Runs the website modules from [FMD2](https://github.com/dazedcat19/FMD2).
 //!
-//! This crate hosts those modules in a sandboxed Lua 5.4 runtime ([`sandbox`])
-//! with a CPU budget and cancellation on every call ([`budget`]). [`Host`]
-//! loads a module file, and the [`Runner`] it returns runs its handlers.
+//! A [`Catalog`] lists the websites the modules in a checkout declare. Each
+//! [`Site`] opens a [`Session`] for one scrape, which runs the module in a
+//! sandboxed Lua 5.4 runtime with a CPU budget and cancellation on every call.
+//!
+//! ```no_run
+//! use atsume_scraper::{CancelToken, Catalog, http::HttpConfig};
+//!
+//! # fn main() -> atsume_scraper::Result<()> {
+//! let catalog = Catalog::load("/data/modules/lua")?;
+//! let site = catalog.site("MangaDex", None).expect("declared by the checkout");
+//! let session = site.open(&HttpConfig::default(), CancelToken::new())?;
+//! println!("{} has {} directory pages", site.module().name, session.directory_pages()?);
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! The modules are GPL-2.0-only, which is incompatible with atsume's
 //! GPL-3.0-only, so they are cloned at run time and never built in. See
 //! `docs/MODULES.md`.
 
 mod bind;
-pub mod budget;
+mod budget;
+mod catalog;
 mod convert;
 mod document;
 mod error;
 mod globals;
-mod host;
 pub mod http;
 mod libs;
-pub mod module;
-pub mod sandbox;
+mod module;
+mod runtime;
+mod sandbox;
+mod session;
 mod site;
-pub mod strings;
+mod strings;
 #[cfg(test)]
 mod testing;
 
 pub use budget::{CancelToken, Cancelled};
+pub use catalog::{Catalog, LoadFailure, Site};
 pub use error::{Error, ErrorKind, Result};
-pub use host::{AccountStatus, Host, Runner};
 pub use module::{Event, Module, ModuleOption, OptionKind, OptionValue};
+pub use session::Session;
+pub use site::AccountStatus;

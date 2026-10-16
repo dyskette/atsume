@@ -15,7 +15,7 @@ use mlua::{HookTriggers, Lua, VmState};
 
 /// The default budget for one call, in Lua VM instructions: several seconds
 /// of pure Lua.
-pub const DEFAULT_CPU_LIMIT: u64 = 2_000_000_000;
+pub(crate) const DEFAULT_CPU_LIMIT: u64 = 2_000_000_000;
 
 /// How often the hook runs, in instructions, until it ends a call.
 const HOOK_INTERVAL: u32 = 1000;

@@ -23,7 +23,7 @@ use mlua::chunk::ChunkMode;
 use mlua::{Function, Lua, LuaOptions, LuaString, MultiValue, StdLib, Table, Value, Variadic};
 
 /// The most one module's runtime may allocate.
-pub const MEMORY_LIMIT: usize = 512 * 1024 * 1024;
+pub(crate) const MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 
 /// The one file a module may write, if any, kept in the runtime.
 ///

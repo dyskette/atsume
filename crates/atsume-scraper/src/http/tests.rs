@@ -5,7 +5,7 @@ use super::*;
 use crate::testing::open_module_with;
 use url::Url;
 
-use crate::{CancelToken, ErrorKind, Event, Runner};
+use crate::{CancelToken, ErrorKind, Event, Session};
 
 /// A transport that answers from a function and records every request.
 struct Scripted<F> {
@@ -61,9 +61,9 @@ fn config(transport: Arc<dyn Transport>) -> HttpConfig {
 }
 
 /// Opens a module with no handlers, for evaluating `HTTP` calls directly.
-fn runner(transport: Arc<dyn Transport>) -> Runner {
+fn runner(transport: Arc<dyn Transport>) -> Session {
     open_module_with(
-        config(transport),
+        &config(transport),
         CancelToken::new(),
         "NewWebsiteModule()",
         "",
@@ -239,7 +239,7 @@ fn cancelling_ends_a_module_looping_over_requests() {
     });
     let init = "local m = NewWebsiteModule(); m.Name = 'Pager'; m.OnGetInfo = 'List'";
     let rest = "function List() local n = 0 while true do HTTP.GET('https://a.example/' .. n); n = n + 1 end end";
-    let runner = open_module_with(config(transport.clone()), cancel, init, rest);
+    let runner = open_module_with(&config(transport.clone()), cancel, init, rest);
     let err = runner.call(Event::GetInfo).unwrap_err();
     assert!(err.kind() == ErrorKind::Cancelled, "{err}");
     assert_eq!(transport.seen.lock().unwrap().len(), 3);
@@ -254,7 +254,7 @@ fn cancelling_abandons_a_request_in_flight() {
     });
     let init = "local m = NewWebsiteModule(); m.Name = 'Slow'; m.OnGetInfo = 'Fetch'";
     let rest = "function Fetch() return HTTP.GET('https://slow.example/') end";
-    let runner = open_module_with(config(transport), cancel.clone(), init, rest);
+    let runner = open_module_with(&config(transport), cancel.clone(), init, rest);
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(50));
         cancel.cancel();
@@ -277,13 +277,13 @@ fn challenged_site(body: &'static str) -> Arc<dyn Transport> {
     scripted(move |_, _| Ok(respond(403, body)))
 }
 
-fn runner_with_solver(site: Arc<dyn Transport>, solver: Arc<dyn Transport>) -> Runner {
+fn runner_with_solver(site: Arc<dyn Transport>, solver: Arc<dyn Transport>) -> Session {
     let flaresolverr = Flaresolverr::with_transport("http://solver:8191", solver).unwrap();
     let http = HttpConfig {
         solver: Some(Arc::new(flaresolverr)),
         ..config(site)
     };
-    open_module_with(http, CancelToken::new(), "NewWebsiteModule()", "")
+    open_module_with(&http, CancelToken::new(), "NewWebsiteModule()", "")
 }
 
 #[test]
@@ -335,7 +335,7 @@ fn image_hooks_use_the_http_object() {
     let rest =
         "function Before() HTTP.Headers.Values['Referer'] = MODULE.RootURL .. 'r'; return true end
         function Download() return HTTP.GET(URL) end";
-    let runner = open_module_with(config(transport), CancelToken::new(), init, rest);
+    let runner = open_module_with(&config(transport), CancelToken::new(), init, rest);
     let headers = runner
         .before_download_image("https://img.example/1.jpg")
         .unwrap();

@@ -4,12 +4,14 @@ use std::path::PathBuf;
 
 use tempfile::TempDir;
 
+use crate::catalog::select;
+use crate::error::ErrorKind;
 use crate::http::HttpConfig;
-use crate::{CancelToken, Host, Result, Runner};
+use crate::{CancelToken, Catalog, Error, Result, Session, Site};
 
 /// An FMD2-shaped checkout in a temporary directory.
 pub(crate) struct Checkout {
-    pub(crate) dir: TempDir,
+    dir: TempDir,
 }
 
 impl Checkout {
@@ -32,13 +34,35 @@ impl Checkout {
         self.lua_dir().join(name)
     }
 
+    /// Returns the websites the module file `name` declares.
+    pub(crate) fn sites(&self, name: &str) -> Result<Vec<Site>> {
+        Catalog::load_file(&self.lua_dir(), &self.file(name))
+    }
+
+    /// Returns the website `site` declares in file `name`, or its first.
+    pub(crate) fn site(
+        &self,
+        name: &str,
+        site: Option<&str>,
+        root_url: Option<&str>,
+    ) -> Result<Site> {
+        let sites = self.sites(name)?;
+        let Some(site) = site else {
+            return Ok(sites[0].clone());
+        };
+        select(&sites, site, root_url)
+            .ok_or_else(|| Error::new(ErrorKind::Unsupported, format!("no website named {site:?}")))
+    }
+
+    /// Opens a session for a website declared in file `name`.
     pub(crate) fn open(
         &self,
         name: &str,
         site: Option<&str>,
         root_url: Option<&str>,
-    ) -> Result<Runner> {
-        Host::new(self.lua_dir()).open(&self.file(name), site, root_url, CancelToken::new())
+    ) -> Result<Session> {
+        let site = self.site(name, site, root_url)?;
+        site.open(&HttpConfig::default(), CancelToken::new())
     }
 }
 
@@ -49,24 +73,19 @@ pub(crate) fn module_source(init: &str, rest: &str) -> String {
 }
 
 /// Opens a module whose `Init()` is `init` and whose other code is `rest`.
-pub(crate) fn open_module(init: &str, rest: &str) -> Runner {
-    let checkout = Checkout::new(&[("modules/Test.lua", &module_source(init, rest))]);
-    checkout.open("modules/Test.lua", None, None).unwrap()
+pub(crate) fn open_module(init: &str, rest: &str) -> Session {
+    open_module_with(&HttpConfig::default(), CancelToken::new(), init, rest)
 }
 
 /// Opens a module that reaches the network through `http`, cancelled by
 /// `cancel`.
 pub(crate) fn open_module_with(
-    http: HttpConfig,
+    http: &HttpConfig,
     cancel: CancelToken,
     init: &str,
     rest: &str,
-) -> Runner {
+) -> Session {
     let checkout = Checkout::new(&[("modules/Test.lua", &module_source(init, rest))]);
-    let host = Host {
-        lua_dir: checkout.lua_dir(),
-        http,
-    };
-    host.open(&checkout.file("modules/Test.lua"), None, None, cancel)
-        .unwrap()
+    let site = checkout.site("modules/Test.lua", None, None).unwrap();
+    site.open(http, cancel).unwrap()
 }
