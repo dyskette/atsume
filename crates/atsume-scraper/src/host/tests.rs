@@ -86,8 +86,8 @@ fn open_reads_the_declaration() {
         root_url: "https://two.example".into(),
         category: "English".into(),
         handlers: HashMap::from([
-            ("OnGetInfo".into(), "GetInfo".into()),
-            ("OnGetPageNumber".into(), "Missing".into()),
+            (Event::GetInfo, "GetInfo".into()),
+            (Event::GetPageNumber, "Missing".into()),
         ]),
         options: vec![
             option(
@@ -108,7 +108,7 @@ fn open_reads_the_declaration() {
         ],
         account_support: true,
         sorted_list: false,
-        total_directory: 3,
+        directories: 3,
         file: checkout.file("modules/Example.lua"),
     };
     assert_eq!(runner.module(), want);
@@ -119,7 +119,7 @@ fn open_reads_the_declaration() {
 fn handlers_reach_templates_through_require() {
     let runner = example().open("modules/Example.lua", None, None).unwrap();
     assert_eq!(eval(&runner, "GetInfo()"), "template");
-    let result = runner.call("OnGetInfo").unwrap();
+    let result = runner.call(Event::GetInfo).unwrap();
     assert_eq!(
         runner.lua.coerce_string(result).unwrap().unwrap(),
         "template"
@@ -129,10 +129,10 @@ fn handlers_reach_templates_through_require() {
 #[test]
 fn a_failing_call_names_the_handler() {
     let runner = example().open("modules/Example.lua", None, None).unwrap();
-    let unhandled = runner.call("OnLogin").unwrap_err().to_string();
+    let unhandled = runner.call(Event::Login).unwrap_err().to_string();
     assert_eq!(unhandled, "module Example has no OnLogin handler");
 
-    let undefined = runner.call("OnGetPageNumber").unwrap_err().to_string();
+    let undefined = runner.call(Event::GetPageNumber).unwrap_err().to_string();
     assert_eq!(
         undefined,
         r#"module Example declares OnGetPageNumber="Missing" but defines no such function"#
@@ -143,8 +143,8 @@ fn a_failing_call_names_the_handler() {
         .borrow_mut()
         .module
         .handlers
-        .insert("OnCheckSite".into(), "Fail".into());
-    let failed = runner.call("OnCheckSite").unwrap_err().to_string();
+        .insert(Event::CheckSite, "Fail".into());
+    let failed = runner.call(Event::CheckSite).unwrap_err().to_string();
     assert!(failed.starts_with("Example/Fail: "), "{failed}");
     assert!(failed.contains("broken on purpose"), "{failed}");
 }
@@ -182,14 +182,14 @@ fn each_site_in_a_file_keeps_its_own_declaration() {
     assert_eq!(names, ["Open Site", "Gated Site"]);
     assert_eq!(first.module().name, "Open Site");
     assert_eq!(first.options().len(), 1);
-    assert!(!first.has_handler("OnLogin"));
+    assert!(!first.has_handler(Event::Login));
 
     let gated = checkout
         .open("modules/Two.lua", Some("Gated Site"), None)
         .unwrap();
     assert_eq!(gated.module().root_url, "https://gated.example");
     assert_eq!(gated.options()[0].name, "b");
-    assert!(gated.has_handler("OnLogin"));
+    assert!(gated.has_handler(Event::Login));
 }
 
 #[test]
@@ -318,7 +318,7 @@ fn module_exposes_the_selected_site() {
 
     runner.set_directory_index(3);
     assert_eq!(eval(&runner, "MODULE.CurrentDirectoryIndex"), "3");
-    assert_eq!(runner.total_directories(), 2);
+    assert_eq!(runner.directories(), 2);
 }
 
 const LOGIN: &str = "
@@ -421,11 +421,11 @@ fn looping_runner() -> (Runner, CancelToken) {
 fn a_runaway_loop_stops_at_the_cpu_limit() {
     let (runner, _) = looping_runner();
     runner.set_cpu_limit(1_000_000);
-    let err = runner.call("OnGetInfo").unwrap_err();
+    let err = runner.call(Event::GetInfo).unwrap_err();
     assert!(err.is_cpu_limit(), "{err}");
     assert!(err.to_string().contains("ran too long"), "{err}");
     // The limit is per call, so the runner is still usable.
-    let fine = runner.call("OnCheckSite").unwrap();
+    let fine = runner.call(Event::CheckSite).unwrap();
     assert_eq!(runner.lua.coerce_string(fine).unwrap().unwrap(), "fine");
     assert!(runner.peak_instructions() >= 1_000_000);
 }
@@ -434,16 +434,16 @@ fn a_runaway_loop_stops_at_the_cpu_limit() {
 fn the_cpu_limit_reaches_into_coroutines() {
     let (runner, _) = looping_runner();
     runner.set_cpu_limit(1_000_000);
-    let err = runner.call("OnTaskStart").unwrap_err();
+    let err = runner.call(Event::TaskStart).unwrap_err();
     assert!(err.is_cpu_limit(), "{err}");
 }
 
 #[test]
 fn cancelling_stops_the_running_call_and_every_later_one() {
     let (runner, cancel) = looping_runner();
-    let running = runner.call("OnGetPageNumber").unwrap_err();
+    let running = runner.call(Event::GetPageNumber).unwrap_err();
     assert!(running.is_cancelled(), "{running}");
-    let later = runner.call("OnCheckSite").unwrap_err();
+    let later = runner.call(Event::CheckSite).unwrap_err();
     assert!(later.is_cancelled(), "{later}");
     // Read from Rust: a cancelled runner runs no more Lua, not even this.
     assert!(runner.lua.globals().get::<Value>("RAN").unwrap().is_nil());
@@ -459,13 +459,13 @@ fn cancelling_stops_the_running_call_and_every_later_one() {
 #[test]
 fn a_caught_termination_is_still_a_cancellation() {
     let (runner, _) = looping_runner();
-    let err = runner.call("OnLogin").unwrap_err();
+    let err = runner.call(Event::Login).unwrap_err();
     assert!(err.is_cancelled(), "{err}");
 }
 
 #[test]
 fn a_loop_that_keeps_catching_the_termination_still_stops() {
     let (runner, _) = looping_runner();
-    let err = runner.call("OnGetImageURL").unwrap_err();
+    let err = runner.call(Event::GetImageUrl).unwrap_err();
     assert!(err.is_cancelled(), "{err}");
 }

@@ -9,18 +9,14 @@ use mlua::{Function, Lua, Table, Value};
 
 use crate::budget::{Budget, CancelToken, DEFAULT_CPU_LIMIT, Termination};
 use crate::error::{Error, Result};
+use crate::globals;
 use crate::http::{self, Http, HttpConfig, LastRequest};
 use crate::libs;
 use crate::module::{
-    self, Module, ModuleOption, OptionKind, OptionValue, Options, Storage, StorageHandle,
+    self, Event, Module, ModuleOption, OptionKind, OptionValue, Options, Storage, StorageHandle,
 };
 use crate::object::{Field, Object, to_int, truthy};
 use crate::sandbox::{self, WritableFile};
-
-/// Handler return codes, which modules read as globals.
-const NO_ERROR: i64 = 0;
-const NET_PROBLEM: i64 = 1;
-const INFORMATION_NOT_FOUND: i64 = 2;
 
 /// Loads website modules from a checkout of FMD2's `lua` directory.
 ///
@@ -49,7 +45,7 @@ pub enum AccountStatus {
 }
 
 impl AccountStatus {
-    fn code(self) -> i64 {
+    pub(crate) fn code(self) -> i64 {
         match self {
             Self::Unknown => -1,
             Self::Checking => 0,
@@ -196,7 +192,7 @@ impl Host {
         let lua = sandbox::new_runtime(&self.lua_dir, Rc::clone(&writable))?;
         let budget = Budget::new(cancel.clone(), DEFAULT_CPU_LIMIT);
         budget.install(&lua)?;
-        set_constants(&lua)?;
+        globals::set_constants(&lua)?;
         let lua_dir = std::path::absolute(&self.lua_dir).map_err(mlua::Error::external)?;
         libs::preload(&lua, &lua_dir)?;
         let http = Rc::new(RefCell::new(Http::new(&self.http, cancel)));
@@ -208,23 +204,6 @@ impl Host {
             writable,
         })
     }
-}
-
-/// Sets the globals every module reads: return codes and account states.
-fn set_constants(lua: &Lua) -> mlua::Result<()> {
-    let globals = lua.globals();
-    globals.set("no_error", NO_ERROR)?;
-    globals.set("net_problem", NET_PROBLEM)?;
-    globals.set("information_not_found", INFORMATION_NOT_FOUND)?;
-    for status in [
-        AccountStatus::Unknown,
-        AccountStatus::Checking,
-        AccountStatus::Valid,
-        AccountStatus::Invalid,
-    ] {
-        globals.set(format!("as{status:?}"), status.code())?;
-    }
-    globals.set("PAGENUMBER", 1)
 }
 
 /// Loads and runs a module file's top level.
@@ -371,7 +350,7 @@ impl Runner {
 
     /// Reports whether the module implements `event`.
     #[must_use]
-    pub fn has_handler(&self, event: &str) -> bool {
+    pub fn has_handler(&self, event: Event) -> bool {
         self.site.borrow().module.handler(event).is_some()
     }
 
@@ -396,8 +375,8 @@ impl Runner {
 
     /// Returns how many separate listings the site's directory is split into.
     #[must_use]
-    pub fn total_directories(&self) -> i64 {
-        self.site.borrow().module.total_directory.max(1)
+    pub fn directories(&self) -> u32 {
+        self.site.borrow().module.directories
     }
 
     /// Stores a setting from its text form, converted to the type the module
@@ -441,13 +420,12 @@ impl Runner {
     ///
     /// Fails if the handler fails.
     pub fn directory_page_count(&self) -> Result<i64> {
-        if !self.has_handler("OnGetDirectoryPageNumber") {
+        if !self.has_handler(Event::GetDirectoryPageNumber) {
             return Ok(1);
         }
-        self.lua.globals().set("PAGENUMBER", 1)?;
-        self.call("OnGetDirectoryPageNumber")?;
-        let pages = to_int(&self.lua, &self.lua.globals().get("PAGENUMBER")?);
-        Ok(pages.max(1))
+        globals::set_page_count(&self.lua, 1)?;
+        self.call(Event::GetDirectoryPageNumber)?;
+        Ok(globals::page_count(&self.lua)?.max(1))
     }
 
     /// Runs `OnLogin`, reporting whether the site accepted the credentials.
@@ -459,16 +437,16 @@ impl Runner {
     /// though the handler succeeded.
     pub fn login(&self) -> Result<bool> {
         let module = self.site.borrow().module.name.clone();
-        if !self.has_handler("OnLogin") {
+        if !self.has_handler(Event::Login) {
             return Err(Error::NoHandler {
                 module,
-                event: "OnLogin".to_owned(),
+                event: Event::Login,
             });
         }
         if !self.account.borrow().enabled {
             return Err(Error::NoCredentials { module });
         }
-        let accepted = truthy(&self.call("OnLogin")?);
+        let accepted = truthy(&self.call(Event::Login)?);
         if self.account_status() == AccountStatus::Invalid {
             return Err(Error::CredentialsRejected { module });
         }
@@ -482,13 +460,12 @@ impl Runner {
     ///
     /// Fails if the handler fails.
     pub fn after_image_saved(&self, path: &Path) -> Result<()> {
-        if !self.has_handler("OnAfterImageSaved") {
+        if !self.has_handler(Event::AfterImageSaved) {
             return Ok(());
         }
-        let lua_path = self.lua.create_string(path.to_string_lossy().as_bytes())?;
-        self.lua.globals().set("FILENAME", lua_path)?;
+        globals::set_filename(&self.lua, path)?;
         *self.writable.borrow_mut() = Some(path.to_path_buf());
-        let result = self.call("OnAfterImageSaved");
+        let result = self.call(Event::AfterImageSaved);
         *self.writable.borrow_mut() = None;
         result.map(|_| ())
     }
@@ -506,13 +483,13 @@ impl Runner {
     ///
     /// Fails if the handler fails.
     pub fn before_download_image(&self, image_url: &str) -> Result<HashMap<String, String>> {
-        if !self.has_handler("OnBeforeDownloadImage") {
+        if !self.has_handler(Event::BeforeDownloadImage) {
             return Ok(HashMap::new());
         }
         let headers = Rc::clone(&self.http.borrow().headers);
         headers.borrow_mut().clear();
-        self.lua.globals().set("URL", image_url)?;
-        self.call("OnBeforeDownloadImage")?;
+        globals::set_url(&self.lua, image_url)?;
+        self.call(Event::BeforeDownloadImage)?;
         let pairs = headers
             .borrow()
             .items()
@@ -532,10 +509,10 @@ impl Runner {
     pub fn download_image(&self, image_url: &str) -> Result<Vec<u8>> {
         let document = Rc::clone(&self.http.borrow().document);
         document.borrow_mut().clear();
-        self.lua.globals().set("URL", image_url)?;
+        globals::set_url(&self.lua, image_url)?;
         let module = self.site.borrow().module.name.clone();
         let url = image_url.to_owned();
-        if !truthy(&self.call("OnDownloadImage")?) {
+        if !truthy(&self.call(Event::DownloadImage)?) {
             return Err(Error::DownloadDeclined { module, url });
         }
         let data = std::mem::take(&mut *document.borrow_mut());
@@ -565,20 +542,19 @@ impl Runner {
     }
 
     /// Calls the Lua function bound to `event` and returns its result.
-    pub(crate) fn call(&self, event: &str) -> Result<Value> {
+    pub(crate) fn call(&self, event: Event) -> Result<Value> {
         let (module, function) = {
             let site = self.site.borrow();
             let name = site.module.name.clone();
             let Some(function) = site.module.handler(event).map(str::to_owned) else {
                 return Err(Error::NoHandler {
                     module: name,
-                    event: event.to_owned(),
+                    event,
                 });
             };
             (name, function)
         };
         let Value::Function(handler) = self.lua.globals().get(function.as_str())? else {
-            let event = event.to_owned();
             return Err(Error::MissingFunction {
                 module,
                 event,
@@ -604,7 +580,13 @@ impl Runner {
             .field("Category", Field::Text(|s| &mut s.module.category))
             .field(
                 "TotalDirectory",
-                Field::Int(|s| &mut s.module.total_directory),
+                Field::Custom {
+                    get: |s| Value::Integer(i64::from(s.module.directories)),
+                    set: |runtime, s, value| {
+                        let count = to_int(runtime, value).clamp(1, i64::from(u32::MAX));
+                        s.module.directories = u32::try_from(count).unwrap_or(1);
+                    },
+                },
             )
             .field(
                 "AccountSupport",

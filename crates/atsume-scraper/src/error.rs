@@ -40,16 +40,16 @@ pub enum Error {
     NoHandler {
         /// The website's declared name.
         module: String,
-        /// The event, such as `OnGetInfo`.
-        event: String,
+        /// The event.
+        event: crate::module::Event,
     },
     /// The module names a handler function that does not exist.
     #[error("module {module} declares {event}={function:?} but defines no such function")]
     MissingFunction {
         /// The website's declared name.
         module: String,
-        /// The event, such as `OnGetInfo`.
-        event: String,
+        /// The event.
+        event: crate::module::Event,
         /// The global the module named.
         function: String,
     },

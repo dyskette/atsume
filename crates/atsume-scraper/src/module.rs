@@ -100,16 +100,16 @@ pub struct Module {
     pub root_url: String,
     /// The language or kind of site, as upstream groups them.
     pub category: String,
-    /// Maps an event such as `OnGetInfo` to the Lua function handling it.
-    pub handlers: HashMap<String, String>,
+    /// Maps each event the module handles to the Lua function handling it.
+    pub handlers: HashMap<Event, String>,
     /// The settings the site offers.
     pub options: Vec<ModuleOption>,
     /// Whether the site takes a login.
     pub account_support: bool,
     /// Whether the site lists its directory in a stable order.
     pub sorted_list: bool,
-    /// How many separate listings the directory is split into; 0 means one.
-    pub total_directory: i64,
+    /// How many separate listings the directory is split into; at least one.
+    pub directories: u32,
     /// The file the module was loaded from.
     pub file: PathBuf,
 }
@@ -117,32 +117,94 @@ pub struct Module {
 impl Module {
     /// Returns the Lua function name handling `event`, if the module set one.
     #[must_use]
-    pub fn handler(&self, event: &str) -> Option<&str> {
-        self.handlers
-            .get(event)
-            .map(String::as_str)
-            .filter(|name| !name.is_empty())
+    pub fn handler(&self, event: Event) -> Option<&str> {
+        self.handlers.get(&event).map(String::as_str)
     }
 }
 
-/// The handler slots a module may assign in `Init()`.
-const EVENTS: [&str; 15] = [
-    "OnGetNameAndLink",
-    "OnGetInfo",
-    "OnGetPageNumber",
-    "OnGetDirectoryPageNumber",
-    "OnGetImageURL",
-    "OnBeforeDownloadImage",
-    "OnDownloadImage",
-    "OnAfterImageSaved",
-    "OnSaveImage",
-    "OnLogin",
-    "OnTaskStart",
-    "OnCheckSite",
-    "OnAccountState",
-    "OnBeforeUpdateList",
-    "OnAfterUpdateList",
-];
+/// An event a module may handle, named after the slot it assigns in `Init()`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Event {
+    /// Lists one page of the site's directory.
+    GetNameAndLink,
+    /// Reads a series' details and chapter list.
+    GetInfo,
+    /// Lists a chapter's pages.
+    GetPageNumber,
+    /// Counts the pages of the site's directory.
+    GetDirectoryPageNumber,
+    /// Resolves a page to its image address.
+    GetImageUrl,
+    /// Prepares the request for a page image, usually by setting a `Referer`.
+    BeforeDownloadImage,
+    /// Fetches a page image itself, possibly transforming it.
+    DownloadImage,
+    /// Edits a saved page image in place.
+    AfterImageSaved,
+    /// Saves a page image itself.
+    SaveImage,
+    /// Logs in with the configured account.
+    Login,
+    /// Prepares a download task.
+    TaskStart,
+    /// Checks that the site is reachable.
+    CheckSite,
+    /// Reports the account's state.
+    AccountState,
+    /// Prepares a directory update.
+    BeforeUpdateList,
+    /// Finishes a directory update.
+    AfterUpdateList,
+}
+
+impl Event {
+    /// Every event, in upstream's order.
+    pub const ALL: [Self; 15] = [
+        Self::GetNameAndLink,
+        Self::GetInfo,
+        Self::GetPageNumber,
+        Self::GetDirectoryPageNumber,
+        Self::GetImageUrl,
+        Self::BeforeDownloadImage,
+        Self::DownloadImage,
+        Self::AfterImageSaved,
+        Self::SaveImage,
+        Self::Login,
+        Self::TaskStart,
+        Self::CheckSite,
+        Self::AccountState,
+        Self::BeforeUpdateList,
+        Self::AfterUpdateList,
+    ];
+
+    /// Returns the declaration field a module assigns the handler to.
+    #[must_use]
+    pub fn slot(self) -> &'static str {
+        match self {
+            Self::GetNameAndLink => "OnGetNameAndLink",
+            Self::GetInfo => "OnGetInfo",
+            Self::GetPageNumber => "OnGetPageNumber",
+            Self::GetDirectoryPageNumber => "OnGetDirectoryPageNumber",
+            Self::GetImageUrl => "OnGetImageURL",
+            Self::BeforeDownloadImage => "OnBeforeDownloadImage",
+            Self::DownloadImage => "OnDownloadImage",
+            Self::AfterImageSaved => "OnAfterImageSaved",
+            Self::SaveImage => "OnSaveImage",
+            Self::Login => "OnLogin",
+            Self::TaskStart => "OnTaskStart",
+            Self::CheckSite => "OnCheckSite",
+            Self::AccountState => "OnAccountState",
+            Self::BeforeUpdateList => "OnBeforeUpdateList",
+            Self::AfterUpdateList => "OnAfterUpdateList",
+        }
+    }
+}
+
+impl std::fmt::Display for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.slot())
+    }
+}
 
 /// The settings one declaration collects while `Init()` runs.
 pub(crate) type Options = Rc<RefCell<Vec<ModuleOption>>>;
@@ -232,13 +294,13 @@ pub(crate) fn read_declaration(
         Ok(text_of(lua, &table.get::<Value>(key)?).unwrap_or_default())
     };
     let mut handlers = HashMap::new();
-    for event in EVENTS {
-        let function = text(event)?;
+    for event in Event::ALL {
+        let function = text(event.slot())?;
         if !function.is_empty() {
-            handlers.insert(event.to_owned(), function);
+            handlers.insert(event, function);
         }
     }
-    let total_directory = lua.coerce_number(table.get("TotalDirectory")?)?;
+    let directories = lua.coerce_number(table.get("TotalDirectory")?)?;
     Ok(Module {
         id: text("ID")?,
         name: text("Name")?,
@@ -248,11 +310,18 @@ pub(crate) fn read_declaration(
         options,
         account_support: truthy(&table.get("AccountSupport")?),
         sorted_list: truthy(&table.get("SortedList")?),
-        total_directory: total_directory
-            .and_then(|n| whole_number(n.trunc()))
-            .unwrap_or(0),
+        directories: directory_count(directories),
         file: file.to_path_buf(),
     })
+}
+
+/// Reads a declared `TotalDirectory`, where anything below one means one.
+fn directory_count(declared: Option<f64>) -> u32 {
+    declared
+        .and_then(|n| whole_number(n.trunc()))
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(1)
+        .max(1)
 }
 
 /// The per-file key/value scratchpad modules reach as `Storage`.

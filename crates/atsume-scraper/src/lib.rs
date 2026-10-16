@@ -11,6 +11,7 @@
 pub mod budget;
 mod document;
 mod error;
+mod globals;
 mod host;
 pub mod http;
 mod libs;
@@ -24,4 +25,4 @@ mod testing;
 pub use budget::{CancelToken, Cancelled};
 pub use error::{Error, Result};
 pub use host::{Account, AccountStatus, Host, Runner};
-pub use module::{Module, ModuleOption, OptionKind, OptionValue};
+pub use module::{Event, Module, ModuleOption, OptionKind, OptionValue};
