@@ -53,9 +53,13 @@ fn with_headers(mut response: Response, headers: &[(&str, &str)]) -> Response {
 }
 
 fn config(transport: Arc<dyn Transport>) -> HttpConfig {
+    let retry = RetryPolicy {
+        backoff: Duration::ZERO,
+        ..RetryPolicy::default()
+    };
     HttpConfig {
         transport,
-        backoff: Duration::ZERO,
+        retry,
         ..HttpConfig::default()
     }
 }
@@ -426,4 +430,22 @@ fn unknown_fields_read_as_nil_and_ignore_writes() {
         runner.eval("HTTP.UserAgent .. MODULE.Account.Status"),
         "Mine1"
     );
+}
+
+#[test]
+fn the_retry_policy_sets_how_often_a_request_is_tried() {
+    let failing = scripted(|_, _| Ok(respond(500, "")));
+    let once = HttpConfig {
+        retry: RetryPolicy::NONE,
+        ..config(failing.clone())
+    };
+    let session = open_module_with(&once, CancelToken::new(), "NewWebsiteModule()", "");
+    assert_eq!(
+        session.eval("tostring(HTTP.GET('https://a.example/'))"),
+        "false"
+    );
+    assert_eq!(failing.seen.lock().unwrap().len(), 1);
+    // A module may still ask for more for its own requests.
+    session.exec("HTTP.RetryCount = 2; HTTP.GET('https://a.example/')");
+    assert_eq!(failing.seen.lock().unwrap().len(), 4);
 }

@@ -45,13 +45,13 @@ impl HttpSession {
         Self {
             client,
             solver: config.solver.clone(),
-            backoff: config.backoff,
+            backoff: config.retry.backoff,
             headers: Strings::default(),
             cookies: Strings::default(),
             document: Vec::new(),
             mime_type: String::new(),
             user_agent: DEFAULT_USER_AGENT.to_owned(),
-            retry_count: 2,
+            retry_count: i64::from(config.retry.retries),
             terminated: false,
             last: LastRequest::default(),
         }

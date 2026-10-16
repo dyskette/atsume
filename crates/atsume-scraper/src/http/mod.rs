@@ -38,8 +38,39 @@ pub struct HttpConfig {
     pub limiter: Arc<dyn Limiter>,
     /// Gets past anti-bot interstitials, when configured.
     pub solver: Option<Arc<Flaresolverr>>,
-    /// The pause before a retry, multiplied by the attempt number.
+    /// How a request that got no usable answer is retried.
+    pub retry: RetryPolicy,
+}
+
+/// How a request that got no usable answer is retried.
+///
+/// A refusal with a 4xx status is final and never retried; a server error or
+/// a request that got no answer is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RetryPolicy {
+    /// How many times a request is retried after its first attempt. A module
+    /// may change this for its own requests through `HTTP.RetryCount`.
+    pub retries: u32,
+    /// The pause before the first retry. Each later retry waits one more.
     pub backoff: Duration,
+}
+
+impl Default for RetryPolicy {
+    /// Two retries, the first after two seconds and the second after four.
+    fn default() -> Self {
+        Self {
+            retries: 2,
+            backoff: Duration::from_secs(2),
+        }
+    }
+}
+
+impl RetryPolicy {
+    /// A policy that tries each request once.
+    pub const NONE: Self = Self {
+        retries: 0,
+        backoff: Duration::ZERO,
+    };
 }
 
 impl Default for HttpConfig {
@@ -48,7 +79,7 @@ impl Default for HttpConfig {
             transport: Arc::new(UreqTransport::new(REQUEST_TIMEOUT)),
             limiter: Arc::new(Unlimited),
             solver: None,
-            backoff: Duration::from_secs(2),
+            retry: RetryPolicy::default(),
         }
     }
 }
@@ -61,7 +92,7 @@ impl HttpConfig {
             transport: Arc::new(Offline),
             limiter: Arc::new(Unlimited),
             solver: None,
-            backoff: Duration::ZERO,
+            retry: RetryPolicy::NONE,
         }
     }
 }
