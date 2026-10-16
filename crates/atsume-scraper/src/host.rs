@@ -9,7 +9,7 @@ use mlua::{AppDataRefMut, Function, Lua, Value};
 use crate::bind::state;
 use crate::budget::{Budget, CancelToken, DEFAULT_CPU_LIMIT, Termination};
 use crate::convert::truthy;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::http::{HttpConfig, HttpObject, HttpSession, LastRequest};
 use crate::module::{self, Event, Module, ModuleOption, OptionKind, OptionValue, Storage};
 use crate::sandbox::{self, WritableFile};
@@ -72,16 +72,14 @@ impl Host {
         cancel: CancelToken,
     ) -> Result<Runner> {
         if cancel.is_cancelled() {
-            return Err(Error::Cancelled);
+            return Err(Error::cancelled());
         }
         let (lua, budget) = self.runtime(cancel)?;
         let sites = load_declarations(&lua, &budget, file)?;
         let Some(index) = select_site(&sites, site, root_url) else {
-            let name = site.unwrap_or_default().to_owned();
-            return Err(Error::NoSuchSite {
-                file: file.to_path_buf(),
-                name,
-            });
+            let name = site.unwrap_or_default();
+            let message = format!("{} declares no website named {name:?}", file.display());
+            return Err(Error::new(ErrorKind::Unsupported, message));
         };
         let mut selected = sites[index].clone();
         if let Some(root_url) = root_url {
@@ -116,37 +114,29 @@ fn load_declarations(lua: &Lua, budget: &Rc<Budget>, file: &Path) -> Result<Vec<
     let init_result = protect(lua, budget, |lua| {
         lua.globals().get::<Function>("Init")?.call::<Value>(())
     })
-    .map_err(|e| Error::Init {
-        file: file.to_path_buf(),
-        source: Box::new(e),
-    })?;
+    .map_err(|e| e.within(format_args!("Init {}", file.display()), ErrorKind::Load))?;
     let declared = module::take_declarations(lua, init_result, file)?;
-    declared.ok_or_else(|| Error::NoDeclaration {
-        file: file.to_path_buf(),
+    declared.ok_or_else(|| {
+        let message = format!("{}: Init never called NewWebsiteModule", file.display());
+        Error::new(ErrorKind::Load, message)
     })
 }
 
 /// Loads and runs a module file's top level.
 fn run_file(lua: &Lua, budget: &Rc<Budget>, file: &Path) -> Result<()> {
-    let wrap = |e| Error::Load {
-        file: file.to_path_buf(),
-        source: Box::new(e),
-    };
-    let src = std::fs::read(file).map_err(|source| Error::Io {
-        path: file.to_path_buf(),
-        source,
-    });
-    let src = src.map_err(wrap)?;
+    let context = format!("load {}", file.display());
+    let src =
+        std::fs::read(file).map_err(|e| Error::new(ErrorKind::Load, format!("{context}: {e}")))?;
     protect(lua, budget, |lua| {
         sandbox::load_text(lua, file, &src)?.call::<()>(())
     })
-    .map_err(wrap)
+    .map_err(|e| e.within(context, ErrorKind::Load))
 }
 
 /// Runs one call into the module under the CPU budget, and not at all once
 /// the scrape is cancelled.
 ///
-/// A call cancelled mid-way returns [`Error::Cancelled`] even if the module
+/// A call cancelled mid-way is a cancellation even if the module
 /// caught the termination and returned, so its result is never taken as real.
 fn protect<R>(
     lua: &Lua,
@@ -154,20 +144,18 @@ fn protect<R>(
     call: impl FnOnce(&Lua) -> mlua::Result<R>,
 ) -> Result<R> {
     if budget.cancel_token().is_cancelled() {
-        return Err(Error::Cancelled);
+        return Err(Error::cancelled());
     }
     budget.start(lua)?;
     let result = call(lua);
     let termination = budget.finish();
     if budget.cancel_token().is_cancelled() {
-        return Err(Error::Cancelled);
+        return Err(Error::cancelled());
     }
     match termination {
-        Some(Termination::Cancelled) => Err(Error::Cancelled),
-        Some(Termination::CpuLimit) => Err(Error::CpuLimit {
-            limit: budget.limit(),
-        }),
-        None => result.map_err(Error::Lua),
+        Some(Termination::Cancelled) => Err(Error::cancelled()),
+        Some(Termination::CpuLimit) => Err(Error::cpu_limit(budget.limit())),
+        None => result.map_err(Error::from),
     }
 }
 
@@ -317,17 +305,16 @@ impl Runner {
     pub fn login(&self) -> Result<bool> {
         let module = self.module().name;
         if !self.has_handler(Event::Login) {
-            return Err(Error::NoHandler {
-                module,
-                event: Event::Login,
-            });
+            return Err(no_handler(&module, Event::Login));
         }
         if !self.state::<Account>().enabled {
-            return Err(Error::NoCredentials { module });
+            let message = format!("module {module} has no credentials configured");
+            return Err(Error::new(ErrorKind::Unsupported, message));
         }
         let accepted = truthy(&self.call(Event::Login)?);
         if self.account_status() == AccountStatus::Invalid {
-            return Err(Error::CredentialsRejected { module });
+            let message = format!("module {module} rejected the credentials");
+            return Err(Error::new(ErrorKind::LoginRejected, message));
         }
         Ok(accepted)
     }
@@ -382,11 +369,13 @@ impl Runner {
         let module = self.module().name;
         let url = image_url.to_owned();
         if !truthy(&self.call(Event::DownloadImage)?) {
-            return Err(Error::DownloadDeclined { module, url });
+            let message = format!("{module}: module declined to download {url}");
+            return Err(Error::new(ErrorKind::Module, message));
         }
         let data = std::mem::take(&mut self.state::<HttpSession>().document);
         if data.is_empty() {
-            return Err(Error::EmptyImage { module, url });
+            let message = format!("{module}: module returned no image data for {url}");
+            return Err(Error::new(ErrorKind::Module, message));
         }
         Ok(data)
     }
@@ -395,24 +384,18 @@ impl Runner {
     pub(crate) fn call(&self, event: Event) -> Result<Value> {
         let module = self.module();
         let Some(function) = module.handler(event).map(str::to_owned) else {
-            return Err(Error::NoHandler {
-                module: module.name,
-                event,
-            });
+            return Err(no_handler(&module.name, event));
         };
         let Value::Function(handler) = self.lua.globals().get(function.as_str())? else {
-            return Err(Error::MissingFunction {
-                module: module.name,
-                event,
-                function,
-            });
+            let message = format!(
+                "module {} declares {event}={function:?} but defines no such function",
+                module.name
+            );
+            return Err(Error::new(ErrorKind::Module, message));
         };
-        protect(&self.lua, &self.budget, |_| handler.call::<Value>(())).map_err(|e| {
-            Error::Handler {
-                call: format!("{}/{function}", module.name),
-                source: Box::new(e),
-            }
-        })
+        let context = format!("{}/{function}", module.name);
+        protect(&self.lua, &self.budget, |_| handler.call::<Value>(()))
+            .map_err(|e| e.within(context, ErrorKind::Module))
     }
 
     /// Points `event` at another Lua function, for tests.
@@ -448,6 +431,14 @@ impl Runner {
     pub(crate) fn lua(&self) -> &Lua {
         &self.lua
     }
+}
+
+/// The error for an event the module does not handle.
+fn no_handler(module: &str, event: Event) -> Error {
+    Error::new(
+        ErrorKind::Unsupported,
+        format!("module {module} has no {event} handler"),
+    )
 }
 
 #[cfg(test)]

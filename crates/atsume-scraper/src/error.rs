@@ -1,142 +1,76 @@
-use std::path::PathBuf;
+//! What can go wrong loading or running a module.
 
-/// What can go wrong loading or running a module.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// The module file failed to compile or raised while its top level ran.
-    #[error("load {}: {source}", file.display())]
-    Load {
-        /// The module file.
-        file: PathBuf,
-        /// What Lua reported.
-        #[source]
-        source: Box<Error>,
-    },
-    /// `Init()` raised.
-    #[error("Init {}: {source}", file.display())]
-    Init {
-        /// The module file.
-        file: PathBuf,
-        /// What Lua reported.
-        #[source]
-        source: Box<Error>,
-    },
-    /// `Init()` returned without declaring a website.
-    #[error("{}: Init never called NewWebsiteModule", file.display())]
-    NoDeclaration {
-        /// The module file.
-        file: PathBuf,
-    },
-    /// The file declares websites, but none under the name asked for.
-    #[error("{} declares no website named {name:?}", file.display())]
-    NoSuchSite {
-        /// The module file.
-        file: PathBuf,
-        /// The name asked for.
-        name: String,
-    },
-    /// The module does not assign a function to this event.
-    #[error("module {module} has no {event} handler")]
-    NoHandler {
-        /// The website's declared name.
-        module: String,
-        /// The event.
-        event: crate::module::Event,
-    },
-    /// The module names a handler function that does not exist.
-    #[error("module {module} declares {event}={function:?} but defines no such function")]
-    MissingFunction {
-        /// The website's declared name.
-        module: String,
-        /// The event.
-        event: crate::module::Event,
-        /// The global the module named.
-        function: String,
-    },
-    /// A login was attempted without credentials.
-    #[error("module {module} has no credentials configured")]
-    NoCredentials {
-        /// The website's declared name.
-        module: String,
-    },
-    /// The module recorded the credentials as invalid.
-    #[error("module {module} rejected the credentials")]
-    CredentialsRejected {
-        /// The website's declared name.
-        module: String,
-    },
-    /// `OnDownloadImage` returned false.
-    #[error("{module}: module declined to download {url}")]
-    DownloadDeclined {
-        /// The website's declared name.
-        module: String,
-        /// The image asked for.
-        url: String,
-    },
-    /// `OnDownloadImage` succeeded but left no image data.
-    #[error("{module}: module returned no image data for {url}")]
-    EmptyImage {
-        /// The website's declared name.
-        module: String,
-        /// The image asked for.
-        url: String,
-    },
-    /// A handler raised. `call` names the website and the function.
-    #[error("{call}: {source}")]
-    Handler {
-        /// `Module/Function`, so a failure names where to look.
-        call: String,
-        /// What went wrong inside it.
-        #[source]
-        source: Box<Error>,
-    },
-    /// One call used its whole CPU budget.
-    #[error("CPU limit of {limit} instructions reached; the module ran too long without returning")]
-    CpuLimit {
-        /// The budget that was used up.
-        limit: u64,
-    },
-    /// The scrape was cancelled. A call cancelled mid-way always ends in
-    /// this, even if the module caught the termination and returned.
-    #[error("stopped: cancelled")]
+/// What kind of failure an [`Error`] is, for a caller to decide what to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorKind {
+    /// The scrape was cancelled.
     Cancelled,
-    /// An error from the Lua runtime.
-    #[error(transparent)]
-    Lua(#[from] mlua::Error),
-    /// Reading a module file failed.
-    #[error("{}: {source}", path.display())]
-    Io {
-        /// The file.
-        path: PathBuf,
-        /// Why.
-        #[source]
-        source: std::io::Error,
-    },
+    /// A call into the module used its whole CPU budget.
+    CpuLimit,
+    /// A module file could not be loaded, or declared no website.
+    Load,
+    /// The module failed while handling an event: it raised, named a
+    /// function it does not define, or produced nothing usable.
+    Module,
+    /// The site rejected the credentials.
+    LoginRejected,
+    /// The caller asked for something the module does not offer: a website,
+    /// handler or setting it does not declare, or a login without
+    /// credentials.
+    Unsupported,
+}
+
+/// A failure loading or running a module.
+///
+/// The message names where it happened, such as the module file or the
+/// handler, followed by the cause.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
+pub struct Error {
+    kind: ErrorKind,
+    message: String,
 }
 
 impl Error {
-    /// Reports whether this error, or one it wraps, is a cancellation.
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        match self {
-            Error::Cancelled => true,
-            Error::Load { source, .. }
-            | Error::Init { source, .. }
-            | Error::Handler { source, .. } => source.is_cancelled(),
-            _ => false,
+    pub(crate) fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
         }
     }
 
-    /// Reports whether this error, or one it wraps, is the CPU limit.
+    pub(crate) fn cancelled() -> Self {
+        Self::new(ErrorKind::Cancelled, "stopped: cancelled")
+    }
+
+    pub(crate) fn cpu_limit(limit: u64) -> Self {
+        let message = format!(
+            "CPU limit of {limit} instructions reached; the module ran too long without returning"
+        );
+        Self::new(ErrorKind::CpuLimit, message)
+    }
+
+    /// Prefixes where the failure happened, and classifies it as `kind`
+    /// unless it is a cancellation or the CPU limit, which stay what they are.
+    pub(crate) fn within(self, context: impl std::fmt::Display, kind: ErrorKind) -> Self {
+        let kind = match self.kind {
+            ErrorKind::Cancelled | ErrorKind::CpuLimit => self.kind,
+            _ => kind,
+        };
+        Self::new(kind, format!("{context}: {}", self.message))
+    }
+
+    /// Returns what kind of failure this is.
     #[must_use]
-    pub fn is_cpu_limit(&self) -> bool {
-        match self {
-            Error::CpuLimit { .. } => true,
-            Error::Load { source, .. }
-            | Error::Init { source, .. }
-            | Error::Handler { source, .. } => source.is_cpu_limit(),
-            _ => false,
-        }
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+}
+
+impl From<mlua::Error> for Error {
+    fn from(error: mlua::Error) -> Self {
+        Self::new(ErrorKind::Module, error.to_string())
     }
 }
 

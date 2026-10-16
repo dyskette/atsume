@@ -25,6 +25,6 @@ pub mod strings;
 mod testing;
 
 pub use budget::{CancelToken, Cancelled};
-pub use error::{Error, Result};
+pub use error::{Error, ErrorKind, Result};
 pub use host::{AccountStatus, Host, Runner};
 pub use module::{Event, Module, ModuleOption, OptionKind, OptionValue};

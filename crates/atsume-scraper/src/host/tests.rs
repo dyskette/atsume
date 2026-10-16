@@ -237,7 +237,7 @@ fn a_file_that_declares_nothing_is_an_error() {
     let Err(err) = checkout.open("modules/Empty.lua", None, None) else {
         panic!("opened a file that declares no website");
     };
-    assert!(matches!(err, Error::NoDeclaration { .. }), "{err}");
+    assert!(err.kind() == ErrorKind::Load, "{err}");
 }
 
 #[test]
@@ -250,12 +250,18 @@ fn load_and_init_errors_name_the_file() {
         .open("modules/Syntax.lua", None, None)
         .err()
         .unwrap();
-    assert!(matches!(load, Error::Load { .. }), "{load}");
+    assert!(
+        load.kind() == ErrorKind::Load && load.to_string().starts_with("load "),
+        "{load}"
+    );
     let init = checkout
         .open("modules/Raises.lua", None, None)
         .err()
         .unwrap();
-    assert!(matches!(init, Error::Init { .. }), "{init}");
+    assert!(
+        init.kind() == ErrorKind::Load && init.to_string().starts_with("Init "),
+        "{init}"
+    );
 }
 
 #[test]
@@ -332,7 +338,7 @@ fn login_reports_what_the_module_recorded() {
         "local m = NewWebsiteModule(); m.Name = 'L'; m.OnLogin = 'Login'",
         LOGIN,
     );
-    assert!(matches!(runner.login(), Err(Error::NoCredentials { .. })));
+    assert_eq!(runner.login().unwrap_err().kind(), ErrorKind::Unsupported);
     assert_eq!(eval(&runner, "MODULE.Account.Status"), "-1");
 
     runner.set_account("good", "pw");
@@ -340,10 +346,7 @@ fn login_reports_what_the_module_recorded() {
     assert_eq!(runner.account_status(), AccountStatus::Valid);
 
     runner.set_account("bad", "pw");
-    assert!(matches!(
-        runner.login(),
-        Err(Error::CredentialsRejected { .. })
-    ));
+    assert_eq!(runner.login().unwrap_err().kind(), ErrorKind::LoginRejected);
 }
 
 #[test]
@@ -417,7 +420,7 @@ fn a_runaway_loop_stops_at_the_cpu_limit() {
     let (runner, _) = looping_runner();
     runner.set_cpu_limit(1_000_000);
     let err = runner.call(Event::GetInfo).unwrap_err();
-    assert!(err.is_cpu_limit(), "{err}");
+    assert!(err.kind() == ErrorKind::CpuLimit, "{err}");
     assert!(err.to_string().contains("ran too long"), "{err}");
     // The limit is per call, so the runner is still usable.
     let fine = runner.call(Event::CheckSite).unwrap();
@@ -430,16 +433,16 @@ fn the_cpu_limit_reaches_into_coroutines() {
     let (runner, _) = looping_runner();
     runner.set_cpu_limit(1_000_000);
     let err = runner.call(Event::TaskStart).unwrap_err();
-    assert!(err.is_cpu_limit(), "{err}");
+    assert!(err.kind() == ErrorKind::CpuLimit, "{err}");
 }
 
 #[test]
 fn cancelling_stops_the_running_call_and_every_later_one() {
     let (runner, cancel) = looping_runner();
     let running = runner.call(Event::GetPageNumber).unwrap_err();
-    assert!(running.is_cancelled(), "{running}");
+    assert!(running.kind() == ErrorKind::Cancelled, "{running}");
     let later = runner.call(Event::CheckSite).unwrap_err();
-    assert!(later.is_cancelled(), "{later}");
+    assert!(later.kind() == ErrorKind::Cancelled, "{later}");
     // Read from Rust: a cancelled runner runs no more Lua, not even this.
     assert!(runner.lua().globals().get::<Value>("RAN").unwrap().is_nil());
 
@@ -448,19 +451,19 @@ fn cancelling_stops_the_running_call_and_every_later_one() {
         .open(Path::new("unused.lua"), None, None, cancel)
         .err()
         .unwrap();
-    assert!(opening.is_cancelled(), "{opening}");
+    assert!(opening.kind() == ErrorKind::Cancelled, "{opening}");
 }
 
 #[test]
 fn a_caught_termination_is_still_a_cancellation() {
     let (runner, _) = looping_runner();
     let err = runner.call(Event::Login).unwrap_err();
-    assert!(err.is_cancelled(), "{err}");
+    assert!(err.kind() == ErrorKind::Cancelled, "{err}");
 }
 
 #[test]
 fn a_loop_that_keeps_catching_the_termination_still_stops() {
     let (runner, _) = looping_runner();
     let err = runner.call(Event::GetImageUrl).unwrap_err();
-    assert!(err.is_cancelled(), "{err}");
+    assert!(err.kind() == ErrorKind::Cancelled, "{err}");
 }

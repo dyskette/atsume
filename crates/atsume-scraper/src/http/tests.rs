@@ -5,7 +5,7 @@ use super::*;
 use crate::testing::open_module_with;
 use url::Url;
 
-use crate::{CancelToken, Event, Runner};
+use crate::{CancelToken, ErrorKind, Event, Runner};
 
 /// A transport that answers from a function and records every request.
 struct Scripted<F> {
@@ -241,7 +241,7 @@ fn cancelling_ends_a_module_looping_over_requests() {
     let rest = "function List() local n = 0 while true do HTTP.GET('https://a.example/' .. n); n = n + 1 end end";
     let runner = open_module_with(config(transport.clone()), cancel, init, rest);
     let err = runner.call(Event::GetInfo).unwrap_err();
-    assert!(err.is_cancelled(), "{err}");
+    assert!(err.kind() == ErrorKind::Cancelled, "{err}");
     assert_eq!(transport.seen.lock().unwrap().len(), 3);
 }
 
@@ -261,7 +261,7 @@ fn cancelling_abandons_a_request_in_flight() {
     });
     let start = Instant::now();
     let err = runner.call(Event::GetInfo).unwrap_err();
-    assert!(err.is_cancelled(), "{err}");
+    assert!(err.kind() == ErrorKind::Cancelled, "{err}");
     assert!(
         start.elapsed() < Duration::from_secs(2),
         "{:?}",
