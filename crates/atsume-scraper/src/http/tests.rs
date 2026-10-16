@@ -479,3 +479,17 @@ fn a_page_handler_reporting_net_problem_is_a_network_error() {
     assert_eq!(err.kind(), ErrorKind::Network, "{err}");
     assert_eq!(err.request().unwrap().status, 503);
 }
+
+#[test]
+fn a_listing_reporting_net_problem_names_the_page() {
+    let transport = scripted(|_, _| Ok(respond(404, "")));
+    let init = "local m = NewWebsiteModule(); m.Name = 'Net'; m.OnGetNameAndLink = 'List'";
+    let rest = "function List() if not HTTP.GET('https://a.example/page/' .. (URL + 1)) then return net_problem end return no_error end";
+    let session = open_module_with(&config(transport), CancelToken::new(), init, rest);
+    let err = session.list(2).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Network);
+    assert_eq!(
+        err.to_string(),
+        "Net: network problem listing page 3 (last status 404 from https://a.example/page/3)"
+    );
+}

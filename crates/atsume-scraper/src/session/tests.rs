@@ -497,3 +497,38 @@ fn counted_pages_need_a_way_to_resolve_them() {
     let session = open_module(init, rest);
     assert_eq!(session.pages("/chapter/1").unwrap().len(), 1);
 }
+
+const LISTING: &str = "
+function List()
+    UPDATELIST.UpdateStatusText('reading page ' .. (URL + 1))
+    LINKS.Add('manga/' .. URL); NAMES.Add('Series ' .. URL)
+    if URL == 0 then LINKS.Add('/manga/extra'); UPDATELIST.CurrentDirectoryPageNumber = 3 end
+    return no_error
+end";
+
+#[test]
+fn list_reads_one_directory_page() {
+    let init = "local m = NewWebsiteModule(); m.Name = 'D'; m.OnGetNameAndLink = 'List'";
+    let session = open_module(init, LISTING);
+    let messages = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let sink = std::rc::Rc::clone(&messages);
+    session.on_status(move |text| sink.borrow_mut().push(text.to_owned()));
+
+    let first = session.list(0).unwrap();
+    let entries: Vec<_> = first
+        .entries
+        .iter()
+        .map(|e| (e.url.as_str(), e.display_name()))
+        .collect();
+    assert_eq!(
+        entries,
+        [("/manga/0", "Series 0"), ("/manga/extra", "/manga/extra")]
+    );
+    assert_eq!(first.reported_pages, Some(3));
+
+    // Each page starts from empty lists and no reported count.
+    let second = session.list(1).unwrap();
+    assert_eq!(second.entries.len(), 1);
+    assert_eq!(second.reported_pages, None);
+    assert_eq!(*messages.borrow(), ["reading page 1", "reading page 2"]);
+}

@@ -25,6 +25,7 @@ mod budget;
 mod cancel;
 mod catalog;
 mod convert;
+mod directory;
 mod document;
 mod error;
 mod globals;
@@ -44,6 +45,7 @@ mod testing;
 
 pub use cancel::{CancelToken, Cancelled};
 pub use catalog::{Catalog, LoadFailure, Site};
+pub use directory::{DirectoryEntry, DirectoryPage};
 pub use error::{Error, ErrorKind, Result};
 pub use module::{Event, Module, ModuleOption, OptionKind, OptionValue};
 pub use series::{Chapter, SeriesInfo, SeriesStatus};

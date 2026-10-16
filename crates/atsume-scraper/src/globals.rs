@@ -39,6 +39,12 @@ pub(crate) fn set_url(lua: &Lua, url: &str) -> mlua::Result<()> {
     lua.globals().set("URL", url)
 }
 
+/// Sets `URL` to a 0-based directory page, which `OnGetNameAndLink` reads as
+/// a number.
+pub(crate) fn set_page_index(lua: &Lua, page: u32) -> mlua::Result<()> {
+    lua.globals().set("URL", page)
+}
+
 /// Sets `WORKID`, the 0-based page `OnGetImageURL` resolves.
 pub(crate) fn set_work_id(lua: &Lua, page: usize) -> mlua::Result<()> {
     lua.globals().set("WORKID", page)

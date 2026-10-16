@@ -8,6 +8,7 @@ use mlua::{AppDataRefMut, Value};
 use crate::bind::state;
 use crate::budget::DEFAULT_CPU_LIMIT;
 use crate::convert::{to_int, truthy};
+use crate::directory::{Directory, DirectoryPage, StatusSink};
 use crate::error::{Error, ErrorKind, Result};
 use crate::globals;
 use crate::http::{HttpConfig, HttpSession, LastRequest};
@@ -162,6 +163,34 @@ impl Session {
     #[must_use]
     pub fn last_request(&self) -> LastRequest {
         self.state::<HttpSession>().last.clone()
+    }
+
+    /// Runs `OnGetNameAndLink` for one page, counting from 0, of the selected
+    /// directory listing.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the module has no `OnGetNameAndLink` handler, the handler
+    /// fails, or a request it needed failed ([`Network`](ErrorKind::Network)).
+    pub fn list(&self, page: u32) -> Result<DirectoryPage> {
+        *self.state::<Directory>() = Directory::default();
+        globals::set_page_index(&self.runtime.lua, page)?;
+        let code = to_int(&self.runtime.lua, &self.call(Event::GetNameAndLink)?);
+        if code == globals::NET_PROBLEM {
+            let what = format!("listing page {}", u64::from(page) + 1);
+            return Err(Error::network(
+                &self.module().name,
+                &what,
+                self.last_request(),
+            ));
+        }
+        Ok(std::mem::take(&mut *self.state::<Directory>()).into_page())
+    }
+
+    /// Sends the progress messages a module reports while it runs, through
+    /// `UPDATELIST.UpdateStatusText`, to `report`.
+    pub fn on_status(&self, report: impl FnMut(&str) + 'static) {
+        self.state::<StatusSink>().0 = Some(Box::new(report));
     }
 
     /// Runs `OnGetDirectoryPageNumber`, returning how many pages the selected
