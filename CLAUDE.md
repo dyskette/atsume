@@ -10,8 +10,9 @@ tests pin.
 
 FMD2's modules are GPL-2.0-only, which is incompatible with atsume's
 GPL-3.0-only. **Never commit a module file or anything derived from one**,
-including test fixtures. Tests that need modules read `ATSUME_FMD2_DIR` and skip
-without it. See `docs/MODULES.md`.
+including test fixtures. Tests that need modules read `ATSUME_FMD2_DIR`; in
+Rust they are marked `#[ignore]` and fail if run without it, and
+`make rust-corpus` runs them. See `docs/MODULES.md`.
 
 ## Rust
 

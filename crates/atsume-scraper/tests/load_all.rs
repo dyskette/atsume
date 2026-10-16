@@ -1,8 +1,8 @@
 //! Loads the catalog of every upstream module, which runs each one's `Init()`.
 //!
-//! This exercises the whole surface a module touches at declaration time. It
-//! needs an FMD2 checkout in `ATSUME_FMD2_DIR` and passes trivially without
-//! one, since the modules cannot be committed here.
+//! This exercises the whole surface a module touches at declaration time. The
+//! modules cannot be committed here, so the test is ignored by default: run it
+//! with `make rust-corpus`, which needs an FMD2 checkout in `ATSUME_FMD2_DIR`.
 
 use std::path::PathBuf;
 
@@ -12,12 +12,11 @@ use atsume_scraper::Catalog;
 const MIN_LOAD_RATE: f64 = 0.97;
 
 #[test]
+#[ignore = "needs an FMD2 checkout in ATSUME_FMD2_DIR"]
 fn upstream_modules_load() {
-    let Some(lua_dir) = std::env::var_os("ATSUME_FMD2_DIR").map(|d| PathBuf::from(d).join("lua"))
-    else {
-        eprintln!("skipped: set ATSUME_FMD2_DIR to an FMD2 checkout");
-        return;
-    };
+    let checkout =
+        std::env::var_os("ATSUME_FMD2_DIR").expect("set ATSUME_FMD2_DIR to an FMD2 checkout");
+    let lua_dir = PathBuf::from(checkout).join("lua");
     let catalog = Catalog::load(lua_dir).unwrap();
     let failed = catalog.failures().len();
     let loaded_files = catalog

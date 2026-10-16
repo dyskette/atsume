@@ -40,3 +40,15 @@ jobs:
         with:
           tool: cargo-deny
       - run: make rust-check
+
+  rust-corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+      # Clones FMD2 outside the repository: its modules must never be
+      # committed. See docs/MODULES.md.
+      - run: git clone --depth 1 https://github.com/dazedcat19/FMD2 "$RUNNER_TEMP/fmd2"
+      - run: make rust-corpus
+        env:
+          ATSUME_FMD2_DIR: ${{ runner.temp }}/fmd2

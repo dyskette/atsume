@@ -5,7 +5,7 @@ BIN := bin/atsume
 # symbols in the generated code.
 TEMPL := go tool templ
 
-.PHONY: help dev generate build test check corpus clean rust-check
+.PHONY: help dev generate build test check corpus clean rust-check rust-corpus
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -42,6 +42,11 @@ rust-check: ## everything CI runs for the Rust crates
 	cargo clippy --workspace --all-targets --locked -- -D warnings
 	cargo test --workspace --locked
 	cargo deny --locked check
+
+# Tests that need upstream's modules are ignored by default, so a run without
+# them shows them as ignored rather than passed. This runs only those.
+rust-corpus: ## the Rust tests that need an FMD2 checkout in ATSUME_FMD2_DIR
+	cargo test --workspace --locked --release -- --ignored
 
 clean:
 	rm -rf bin
