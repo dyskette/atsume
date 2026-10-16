@@ -34,3 +34,9 @@ wildcards = "deny"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+
+# Mozilla's CA root list, bundled for TLS. The licence is a permissive one
+# for data, allowed for this crate alone rather than for every dependency.
+[[licenses.exceptions]]
+crate = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
