@@ -1,0 +1,19 @@
+[package]
+name = "atsume-scraper"
+description = "Runs FMD2 website modules in a sandboxed Lua 5.4 runtime"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+mlua.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

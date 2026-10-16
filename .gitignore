@@ -12,3 +12,6 @@ testdata/corpus.json
 # Capture locally with ATSUME_RECORD=1; see internal/scraper/recorded_test.go.
 internal/scraper/testdata/recorded/*/cassette/
 internal/scraper/testdata/recorded/*/golden.json
+
+# Rust build output.
+/target/

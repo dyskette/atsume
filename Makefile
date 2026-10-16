@@ -5,7 +5,7 @@ BIN := bin/atsume
 # symbols in the generated code.
 TEMPL := go tool templ
 
-.PHONY: help dev generate build test check corpus clean
+.PHONY: help dev generate build test check corpus clean rust-check
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -36,5 +36,13 @@ check: generate ## everything CI runs
 	go test ./...
 	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
+# The Rust port. Clippy's warnings are errors here, as in CI.
+rust-check: ## everything CI runs for the Rust crates
+	cargo fmt --all --check
+	cargo clippy --workspace --all-targets --locked -- -D warnings
+	cargo test --workspace --locked
+	cargo deny --locked check
+
 clean:
 	rm -rf bin
+	cargo clean

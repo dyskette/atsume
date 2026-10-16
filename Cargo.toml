@@ -1,0 +1,47 @@
+# The Rust port of atsume. It grows beside the Go implementation until it can
+# replace it.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-only"
+repository = "https://github.com/dyskette/atsume"
+
+[workspace.dependencies]
+mlua = { version = "0.12.2", features = ["lua54", "vendored"] }
+thiserror = "2"
+tempfile = "3"
+
+# Thresholds for the size and nesting lints live in clippy.toml.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Readability: shallow, short functions with a one-sentence doc summary.
+excessive_nesting = "warn"
+cognitive_complexity = "warn"
+too_long_first_doc_paragraph = "warn"
+
+# Failure handling: report errors instead of panicking, and leave no
+# placeholders or debugging output behind.
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+# Clarity over cleverness.
+shadow_unrelated = "warn"
+if_then_some_else_none = "warn"
+semicolon_if_nothing_returned = "warn"

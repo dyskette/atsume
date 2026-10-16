@@ -1,0 +1,17 @@
+# Limits for the readability lints enabled in Cargo.toml.
+
+# Every block counts, including the impl and the function body itself, so 4
+# allows two levels of control flow inside a method. Flatten deeper code with
+# early returns, or extract a named function.
+excessive-nesting-threshold = 4
+
+# Clippy's defaults are 25, 100 and 7.
+cognitive-complexity-threshold = 15
+too-many-lines-threshold = 60
+too-many-arguments-threshold = 5
+
+# Tests may unwrap: a panic there is a failed test, which is what it should be.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
