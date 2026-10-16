@@ -1,0 +1,4 @@
+# rustfmt.toml requires LF, so keep it on every checkout, Windows included.
+*.rs text eol=lf
+*.toml text eol=lf
+Cargo.lock text eol=lf
