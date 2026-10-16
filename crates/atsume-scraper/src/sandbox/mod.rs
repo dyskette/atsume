@@ -243,3 +243,6 @@ pub(crate) fn text_of(lua: &Lua, value: &Value) -> Option<String> {
     let text = lua.coerce_string(value.clone()).ok().flatten()?;
     Some(text.to_string_lossy())
 }
+
+#[cfg(test)]
+mod tests;

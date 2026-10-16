@@ -53,6 +53,18 @@ pub enum Error {
         /// The global the module named.
         function: String,
     },
+    /// A login was attempted without credentials.
+    #[error("module {module} has no credentials configured")]
+    NoCredentials {
+        /// The website's declared name.
+        module: String,
+    },
+    /// The module recorded the credentials as invalid.
+    #[error("module {module} rejected the credentials")]
+    CredentialsRejected {
+        /// The website's declared name.
+        module: String,
+    },
     /// A handler raised. `call` names the website and the function.
     #[error("{call}: {source}")]
     Handler {

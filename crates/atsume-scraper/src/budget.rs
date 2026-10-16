@@ -16,12 +16,8 @@ use mlua::{HookTriggers, Lua, VmState};
 /// of pure Lua.
 pub const DEFAULT_CPU_LIMIT: u64 = 2_000_000_000;
 
-/// How often the hook runs, in instructions.
-///
-/// It is prime so that a loop catching the termination with `pcall` cannot
-/// keep the hook firing inside the `pcall`: the point it fires at drifts
-/// through the loop until it lands where nothing catches it.
-const HOOK_INTERVAL: u32 = 997;
+/// How often the hook runs, in instructions, until it ends a call.
+const HOOK_INTERVAL: u32 = 1000;
 
 /// Cancels a scrape from any thread.
 ///
@@ -84,24 +80,34 @@ impl Budget {
     /// Installs the hook on `lua`.
     ///
     /// The hook is global because mlua's per-thread hook does not follow into
-    /// coroutines, where a module could otherwise run unbounded. Once tripped
-    /// it raises at every interval, so catching it with `pcall` does not help.
+    /// coroutines, where a module could otherwise run unbounded.
     pub(crate) fn install(self: &Rc<Self>, lua: &Lua) -> mlua::Result<()> {
-        let budget = Rc::clone(self);
-        let triggers = HookTriggers::new().every_nth_instruction(HOOK_INTERVAL);
-        lua.set_global_hook(triggers, move |_, _| budget.tick())
+        self.hook_every(lua, HOOK_INTERVAL)
     }
 
-    fn tick(&self) -> mlua::Result<VmState> {
-        self.used.set(self.used.get() + u64::from(HOOK_INTERVAL));
+    fn hook_every(self: &Rc<Self>, lua: &Lua, instructions: u32) -> mlua::Result<()> {
+        let budget = Rc::clone(self);
+        let triggers = HookTriggers::new().every_nth_instruction(instructions);
+        lua.set_global_hook(triggers, move |lua, _| budget.tick(lua))
+    }
+
+    /// Counts an interval, and raises once the call must end.
+    ///
+    /// After ending a call the hook fires on every instruction of the running
+    /// thread, so a module that catches the error with `pcall` is ended by the
+    /// first instruction outside it.
+    fn tick(self: &Rc<Self>, lua: &Lua) -> mlua::Result<VmState> {
         if self.tripped.get().is_none() {
+            self.used.set(self.used.get() + u64::from(HOOK_INTERVAL));
             self.tripped.set(self.termination());
         }
-        match self.tripped.get() {
-            None => Ok(VmState::Continue),
-            Some(Termination::Cancelled) => Err(mlua::Error::runtime("scrape cancelled")),
-            Some(Termination::CpuLimit) => Err(mlua::Error::runtime("CPU limit reached")),
-        }
+        let message = match self.tripped.get() {
+            None => return Ok(VmState::Continue),
+            Some(Termination::Cancelled) => "scrape cancelled",
+            Some(Termination::CpuLimit) => "CPU limit reached",
+        };
+        self.hook_every(lua, 1)?;
+        Err(mlua::Error::runtime(message))
     }
 
     /// Reports why the current call must end, if it must.
@@ -112,10 +118,14 @@ impl Budget {
         (self.used.get() > self.limit.get()).then_some(Termination::CpuLimit)
     }
 
-    /// Resets the count for a new call.
-    pub(crate) fn start(&self) {
+    /// Resets the count for a new call, restoring the normal interval if the
+    /// last call was ended.
+    pub(crate) fn start(self: &Rc<Self>, lua: &Lua) -> mlua::Result<()> {
         self.used.set(0);
-        self.tripped.set(None);
+        if self.tripped.take().is_some() {
+            self.install(lua)?;
+        }
+        Ok(())
     }
 
     /// Ends a call, recording its usage, and reports whether the hook ended it.
