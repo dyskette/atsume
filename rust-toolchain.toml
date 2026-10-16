@@ -1,4 +1,4 @@
 # Pinned so every machine and CI run lints with the same clippy.
 [toolchain]
-channel = "1.99.0"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
