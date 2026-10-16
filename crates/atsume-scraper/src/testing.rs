@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use crate::catalog::select;
 use crate::error::ErrorKind;
 use crate::http::HttpConfig;
-use crate::{CancelToken, Catalog, Error, Result, Session, Site};
+use crate::{CancelToken, Catalog, Error, Result, Session, SessionConfig, Site};
 
 /// An FMD2-shaped checkout in a temporary directory.
 pub(crate) struct Checkout {
@@ -62,7 +62,7 @@ impl Checkout {
         root_url: Option<&str>,
     ) -> Result<Session> {
         let site = self.site(name, site, root_url)?;
-        site.open(&HttpConfig::default(), CancelToken::new())
+        site.open(&SessionConfig::default(), CancelToken::new())
     }
 }
 
@@ -87,5 +87,9 @@ pub(crate) fn open_module_with(
 ) -> Session {
     let checkout = Checkout::new(&[("modules/Test.lua", &module_source(init, rest))]);
     let site = checkout.site("modules/Test.lua", None, None).unwrap();
-    site.open(http, cancel).unwrap()
+    let config = SessionConfig {
+        http: http.clone(),
+        ..SessionConfig::default()
+    };
+    site.open(&config, cancel).unwrap()
 }

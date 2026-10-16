@@ -6,14 +6,47 @@ use std::path::Path;
 use mlua::{AppDataRefMut, Value};
 
 use crate::bind::state;
+use crate::budget::DEFAULT_CPU_LIMIT;
 use crate::convert::truthy;
 use crate::error::{Error, ErrorKind, Result};
 use crate::globals;
-use crate::http::{HttpSession, LastRequest};
+use crate::http::{HttpConfig, HttpSession, LastRequest};
 use crate::module::{Event, Module, OptionKind, OptionValue};
 use crate::runtime::Runtime;
 use crate::sandbox::WritableFile;
 use crate::site::{Account, AccountStatus, ModuleObject, SiteState};
+
+/// How the sessions a [`Site`](crate::Site) opens reach the network and how
+/// long their calls may run.
+#[derive(Clone)]
+pub struct SessionConfig {
+    /// How requests reach the network.
+    pub http: HttpConfig,
+    /// How many Lua instructions one call into the module may run before it
+    /// is stopped, so a runaway loop cannot hold a worker. Time spent waiting
+    /// on the network does not count.
+    pub cpu_limit: u64,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            http: HttpConfig::default(),
+            cpu_limit: DEFAULT_CPU_LIMIT,
+        }
+    }
+}
+
+impl SessionConfig {
+    /// Returns a configuration that refuses every request, for loading the
+    /// catalog: declaring a website needs no network access.
+    pub(crate) fn offline() -> Self {
+        Self {
+            http: HttpConfig::offline(),
+            cpu_limit: DEFAULT_CPU_LIMIT,
+        }
+    }
+}
 
 /// A website's module loaded into its own Lua runtime, for one scrape.
 ///
@@ -121,17 +154,6 @@ impl Session {
         }
         site.directory_index = i64::from(index);
         Ok(())
-    }
-
-    /// Sets the instruction budget for each later call into the module.
-    pub fn set_cpu_limit(&self, instructions: u64) {
-        self.runtime.budget.set_limit(instructions);
-    }
-
-    /// Returns the most instructions any one call has used so far.
-    #[must_use]
-    pub fn peak_instructions(&self) -> u64 {
-        self.runtime.budget.peak()
     }
 
     /// Returns what the last request the module made got back.
@@ -257,6 +279,13 @@ impl Session {
         self.runtime
             .protect(|_| handler.call::<Value>(()))
             .map_err(|e| e.within(context, ErrorKind::Module))
+    }
+
+    /// Returns the most instructions any one call has used so far, for
+    /// calibrating the CPU limit.
+    #[cfg(test)]
+    pub(crate) fn peak_instructions(&self) -> u64 {
+        self.runtime.budget.peak()
     }
 
     /// Points `event` at another Lua function, for tests.

@@ -5,11 +5,12 @@ use std::rc::Rc;
 
 use mlua::{Function, Lua, Value};
 
-use crate::budget::{Budget, DEFAULT_CPU_LIMIT, Termination};
+use crate::budget::{Budget, Termination};
 use crate::cancel::CancelToken;
 use crate::error::{Error, ErrorKind, Result};
-use crate::http::{HttpConfig, HttpObject, HttpSession};
+use crate::http::{HttpObject, HttpSession};
 use crate::module::{self, Module, Storage};
+use crate::session::SessionConfig;
 use crate::site::Account;
 use crate::{globals, libs, sandbox};
 
@@ -23,19 +24,19 @@ pub(crate) struct Runtime {
 impl Runtime {
     /// Builds the sandbox with the budget, the `fmd.*` libraries, the state a
     /// scrape keeps and the globals a module expects before its file runs.
-    pub(crate) fn new(lua_dir: &Path, http: &HttpConfig, cancel: CancelToken) -> Result<Self> {
+    pub(crate) fn new(lua_dir: &Path, config: &SessionConfig, cancel: CancelToken) -> Result<Self> {
         if cancel.is_cancelled() {
             return Err(Error::cancelled());
         }
         let lua = sandbox::new_runtime(lua_dir)?;
-        let budget = Budget::new(cancel.clone(), DEFAULT_CPU_LIMIT);
+        let budget = Budget::new(cancel.clone(), config.cpu_limit);
         budget.install(&lua)?;
         globals::set_constants(&lua)?;
         let lua_dir = std::path::absolute(lua_dir).map_err(mlua::Error::external)?;
         libs::preload(&lua, &lua_dir)?;
         lua.set_app_data(Storage::default());
         lua.set_app_data(Account::default());
-        lua.set_app_data(HttpSession::new(http, cancel));
+        lua.set_app_data(HttpSession::new(&config.http, cancel));
         lua.globals().set("HTTP", HttpObject)?;
         module::register_declarations(&lua)?;
         Ok(Self { lua, budget })

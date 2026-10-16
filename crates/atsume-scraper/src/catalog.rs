@@ -4,10 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::cancel::CancelToken;
 use crate::error::{Error, ErrorKind, Result};
-use crate::http::HttpConfig;
 use crate::module::Module;
 use crate::runtime::Runtime;
-use crate::session::Session;
+use crate::session::{Session, SessionConfig};
 
 /// Every website the modules in an FMD2 checkout declare.
 ///
@@ -70,7 +69,7 @@ impl Catalog {
     /// Fails if the file does not load, `Init()` raises, or it declares
     /// nothing.
     pub fn load_file(lua_dir: &Path, file: &Path) -> Result<Vec<Site>> {
-        let runtime = Runtime::new(lua_dir, &HttpConfig::offline(), CancelToken::new())?;
+        let runtime = Runtime::new(lua_dir, &SessionConfig::offline(), CancelToken::new())?;
         let modules = runtime.load(file)?;
         let sites = modules
             .into_iter()
@@ -127,8 +126,8 @@ impl Site {
     ///
     /// Fails if the module no longer loads, no longer declares this website,
     /// or `cancel` is already cancelled.
-    pub fn open(&self, http: &HttpConfig, cancel: CancelToken) -> Result<Session> {
-        let runtime = Runtime::new(&self.lua_dir, http, cancel)?;
+    pub fn open(&self, config: &SessionConfig, cancel: CancelToken) -> Result<Session> {
+        let runtime = Runtime::new(&self.lua_dir, config, cancel)?;
         let declared = runtime.load(&self.module.file)?;
         let Some(module) = declared.into_iter().nth(self.declaration) else {
             return Err(self.changed());

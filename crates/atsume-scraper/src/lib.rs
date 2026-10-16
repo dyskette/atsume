@@ -5,12 +5,12 @@
 //! sandboxed Lua 5.4 runtime with a CPU budget and cancellation on every call.
 //!
 //! ```no_run
-//! use atsume_scraper::{CancelToken, Catalog, http::HttpConfig};
+//! use atsume_scraper::{CancelToken, Catalog, SessionConfig};
 //!
 //! # fn main() -> atsume_scraper::Result<()> {
 //! let catalog = Catalog::load("/data/modules/lua")?;
 //! let site = catalog.site("MangaDex", None).expect("declared by the checkout");
-//! let session = site.open(&HttpConfig::default(), CancelToken::new())?;
+//! let session = site.open(&SessionConfig::default(), CancelToken::new())?;
 //! println!("{} has {} directory pages", site.module().name, session.directory_pages()?);
 //! # Ok(())
 //! # }
@@ -43,5 +43,5 @@ pub use cancel::{CancelToken, Cancelled};
 pub use catalog::{Catalog, LoadFailure, Site};
 pub use error::{Error, ErrorKind, Result};
 pub use module::{Event, Module, ModuleOption, OptionKind, OptionValue};
-pub use session::Session;
+pub use session::{Session, SessionConfig};
 pub use site::AccountStatus;

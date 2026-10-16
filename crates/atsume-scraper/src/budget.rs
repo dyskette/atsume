@@ -31,7 +31,7 @@ pub(crate) enum Termination {
 pub(crate) struct Budget {
     cancel: CancelToken,
     /// The instructions the current call may use.
-    limit: Cell<u64>,
+    limit: u64,
     /// The instructions the current call has used, to the nearest interval.
     used: Cell<u64>,
     /// The most any one call has used, for calibrating the limit.
@@ -44,7 +44,7 @@ impl Budget {
     pub(crate) fn new(cancel: CancelToken, limit: u64) -> Rc<Self> {
         Rc::new(Self {
             cancel,
-            limit: Cell::new(limit),
+            limit,
             used: Cell::new(0),
             peak: Cell::new(0),
             tripped: Cell::new(None),
@@ -89,7 +89,7 @@ impl Budget {
         if self.cancel.is_cancelled() {
             return Some(Termination::Cancelled);
         }
-        (self.used.get() > self.limit.get()).then_some(Termination::CpuLimit)
+        (self.used.get() > self.limit).then_some(Termination::CpuLimit)
     }
 
     /// Resets the count for a new call, restoring the normal interval if the
@@ -113,13 +113,10 @@ impl Budget {
     }
 
     pub(crate) fn limit(&self) -> u64 {
-        self.limit.get()
+        self.limit
     }
 
-    pub(crate) fn set_limit(&self, limit: u64) {
-        self.limit.set(limit);
-    }
-
+    #[cfg(test)]
     pub(crate) fn peak(&self) -> u64 {
         self.peak.get()
     }

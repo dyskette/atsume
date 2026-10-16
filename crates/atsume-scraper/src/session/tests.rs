@@ -3,9 +3,8 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use super::*;
-use crate::CancelToken;
-use crate::http::HttpConfig;
 use crate::testing::{Checkout, module_source, open_module};
+use crate::{CancelToken, SessionConfig};
 
 const FAILING: &str = "
 local shared = require 'templates.Shared'
@@ -195,12 +194,16 @@ const LOOPING: &str = "
     function Stubborn() cancel(); while true do pcall(function() for i = 1, 50 do end end) end end";
 
 /// Opens a module whose handlers loop, with `cancel()` cancelling its own
-/// scrape.
-fn looping_session() -> (Session, Checkout, CancelToken) {
+/// scrape, letting each call run `cpu_limit` instructions.
+fn looping_session(cpu_limit: u64) -> (Session, Checkout, CancelToken) {
     let checkout = Checkout::new(&[("modules/Loop.lua", &module_source(LOOPING_INIT, LOOPING))]);
     let cancel = CancelToken::new();
     let site = checkout.site("modules/Loop.lua", None, None).unwrap();
-    let session = site.open(&HttpConfig::default(), cancel.clone()).unwrap();
+    let config = SessionConfig {
+        cpu_limit,
+        ..SessionConfig::default()
+    };
+    let session = site.open(&config, cancel.clone()).unwrap();
     let token = cancel.clone();
     let cancel_from_lua = session.lua().create_function(move |_, ()| {
         token.cancel();
@@ -216,8 +219,7 @@ fn looping_session() -> (Session, Checkout, CancelToken) {
 
 #[test]
 fn a_runaway_loop_stops_at_the_cpu_limit() {
-    let (session, _, _) = looping_session();
-    session.set_cpu_limit(1_000_000);
+    let (session, _, _) = looping_session(1_000_000);
     let err = session.call(Event::GetInfo).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::CpuLimit, "{err}");
     assert!(err.to_string().contains("ran too long"), "{err}");
@@ -229,15 +231,14 @@ fn a_runaway_loop_stops_at_the_cpu_limit() {
 
 #[test]
 fn the_cpu_limit_reaches_into_coroutines() {
-    let (session, _, _) = looping_session();
-    session.set_cpu_limit(1_000_000);
+    let (session, _, _) = looping_session(1_000_000);
     let err = session.call(Event::TaskStart).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::CpuLimit, "{err}");
 }
 
 #[test]
 fn cancelling_stops_the_running_call_and_every_later_one() {
-    let (session, checkout, cancel) = looping_session();
+    let (session, checkout, cancel) = looping_session(SessionConfig::default().cpu_limit);
     let running = session.call(Event::GetPageNumber).unwrap_err();
     assert_eq!(running.kind(), ErrorKind::Cancelled, "{running}");
     let later = session.call(Event::CheckSite).unwrap_err();
@@ -253,20 +254,20 @@ fn cancelling_stops_the_running_call_and_every_later_one() {
     );
 
     let site = checkout.site("modules/Loop.lua", None, None).unwrap();
-    let opening = site.open(&HttpConfig::default(), cancel).err().unwrap();
+    let opening = site.open(&SessionConfig::default(), cancel).err().unwrap();
     assert_eq!(opening.kind(), ErrorKind::Cancelled, "{opening}");
 }
 
 #[test]
 fn a_caught_termination_is_still_a_cancellation() {
-    let (session, _, _) = looping_session();
+    let (session, _, _) = looping_session(SessionConfig::default().cpu_limit);
     let err = session.call(Event::Login).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Cancelled, "{err}");
 }
 
 #[test]
 fn a_loop_that_keeps_catching_the_termination_still_stops() {
-    let (session, _, _) = looping_session();
+    let (session, _, _) = looping_session(SessionConfig::default().cpu_limit);
     let err = session.call(Event::GetImageUrl).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Cancelled, "{err}");
 }

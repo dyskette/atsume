@@ -246,7 +246,7 @@ fn a_site_that_its_file_no_longer_declares_does_not_open() {
     )
     .unwrap();
     let err = gated
-        .open(&HttpConfig::default(), CancelToken::new())
+        .open(&SessionConfig::default(), CancelToken::new())
         .err()
         .unwrap();
     assert_eq!(err.kind(), ErrorKind::Load);
