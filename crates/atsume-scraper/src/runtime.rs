@@ -5,7 +5,8 @@ use std::rc::Rc;
 
 use mlua::{Function, Lua, Value};
 
-use crate::budget::{Budget, CancelToken, DEFAULT_CPU_LIMIT, Termination};
+use crate::budget::{Budget, DEFAULT_CPU_LIMIT, Termination};
+use crate::cancel::CancelToken;
 use crate::error::{Error, ErrorKind, Result};
 use crate::http::{HttpConfig, HttpObject, HttpSession};
 use crate::module::{self, Module, Storage};

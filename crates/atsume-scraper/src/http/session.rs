@@ -9,7 +9,7 @@ use super::client::{Client, Exchange, SendError};
 use super::flaresolverr::{Flaresolverr, has_challenge_markers, looks_like_challenge};
 use super::transport::{Method, Request};
 use super::{DEFAULT_USER_AGENT, HttpConfig, LastRequest};
-use crate::budget::{CancelToken, Cancelled};
+use crate::cancel::{CancelToken, Cancelled};
 use crate::strings::Strings;
 
 /// The requests of one scrape, and what the module set up for them.

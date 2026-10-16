@@ -22,6 +22,7 @@
 
 mod bind;
 mod budget;
+mod cancel;
 mod catalog;
 mod convert;
 mod document;
@@ -38,7 +39,7 @@ mod strings;
 #[cfg(test)]
 mod testing;
 
-pub use budget::{CancelToken, Cancelled};
+pub use cancel::{CancelToken, Cancelled};
 pub use catalog::{Catalog, LoadFailure, Site};
 pub use error::{Error, ErrorKind, Result};
 pub use module::{Event, Module, ModuleOption, OptionKind, OptionValue};

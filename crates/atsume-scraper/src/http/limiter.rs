@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::budget::{CancelToken, Cancelled};
+use crate::cancel::{CancelToken, Cancelled};
 
 /// Decides when a request to a host may go out.
 ///

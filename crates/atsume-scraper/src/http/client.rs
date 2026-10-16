@@ -7,7 +7,7 @@ use url::Url;
 
 use super::limiter::Limiter;
 use super::transport::{Method, Request, Response, Transport};
-use crate::budget::{CANCEL_POLL, CancelToken, Cancelled};
+use crate::cancel::{CANCEL_POLL, CancelToken, Cancelled};
 
 /// How many redirects one request may follow, as browsers allow.
 const MAX_REDIRECTS: usize = 10;

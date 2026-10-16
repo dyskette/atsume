@@ -8,7 +8,7 @@ use url::Url;
 
 use super::client::{SendError, send_cancellable};
 use super::transport::{Method, Request, Transport, UreqTransport};
-use crate::budget::CancelToken;
+use crate::cancel::CancelToken;
 
 /// Strings an interstitial serves. A refusal alone is not enough: most 403s
 /// are ordinary, and solving one would waste a browser run.

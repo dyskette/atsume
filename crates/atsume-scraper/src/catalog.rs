@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::budget::CancelToken;
+use crate::cancel::CancelToken;
 use crate::error::{Error, ErrorKind, Result};
 use crate::http::HttpConfig;
 use crate::module::Module;
