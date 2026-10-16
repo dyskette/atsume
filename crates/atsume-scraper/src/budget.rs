@@ -13,8 +13,9 @@ use mlua::{HookTriggers, Lua, VmState};
 use crate::cancel::CancelToken;
 
 /// The default budget for one call, in Lua VM instructions: several seconds
-/// of pure Lua.
-pub(crate) const DEFAULT_CPU_LIMIT: u64 = 2_000_000_000;
+/// of pure Lua, so a runaway loop stops soon. A calibration test keeps it well
+/// above decoding a large JSON response with upstream's pure-Lua decoder.
+pub(crate) const DEFAULT_CPU_LIMIT: u64 = 1_000_000_000;
 
 /// How often the hook runs, in instructions, until it ends a call.
 const HOOK_INTERVAL: u32 = 1000;

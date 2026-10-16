@@ -271,3 +271,56 @@ fn a_loop_that_keeps_catching_the_termination_still_stops() {
     let err = session.call(Event::GetImageUrl).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Cancelled, "{err}");
 }
+
+/// How many times a decode of about 1 MB of JSON the CPU limit must allow.
+/// Below it, a slow but legitimate handler could be stopped.
+const JSON_HEADROOM: u64 = 10;
+
+/// About 1 MB of JSON shaped like a chapter list API response.
+fn chapter_list_json() -> String {
+    let chapters: Vec<String> = (0..8000)
+        .map(|i| {
+            format!(
+                r#"{{"id":{i},"title":"Chapter {i}: A reasonably long chapter title","slug":"chapter-{i}","group":{{"id":7,"name":"Scans"}}}}"#
+            )
+        })
+        .collect();
+    format!(r#"{{"data":[{}]}}"#, chapters.join(","))
+}
+
+#[test]
+#[ignore = "needs an FMD2 checkout in ATSUME_FMD2_DIR"]
+fn the_cpu_limit_leaves_room_for_a_large_json_decode() {
+    let lua_dir = crate::testing::fmd2_lua_dir();
+    let source =
+        "function Init() local m = NewWebsiteModule(); m.Name = 'Json'; m.OnGetInfo = 'GetInfo' end
+        function GetInfo() return #require('utils.json').decode(DATA).data end";
+    let module = TempDir::new().unwrap();
+    let file = module.path().join("Json.lua");
+    std::fs::write(&file, source).unwrap();
+    let site = crate::Catalog::load_file(&lua_dir, &file)
+        .unwrap()
+        .remove(0);
+    let session = site
+        .open(&SessionConfig::default(), CancelToken::new())
+        .unwrap();
+    let json = chapter_list_json();
+    session.lua().globals().set("DATA", json.as_str()).unwrap();
+
+    let start = std::time::Instant::now();
+    let decoded = session.call(Event::GetInfo).unwrap();
+    let elapsed = start.elapsed();
+    assert_eq!(decoded.as_integer(), Some(8000));
+
+    let used = session.peak_instructions();
+    let limit = SessionConfig::default().cpu_limit;
+    eprintln!(
+        "decoding {} bytes used {used} instructions in {elapsed:?}; the limit is {}x that",
+        json.len(),
+        limit / used.max(1)
+    );
+    assert!(
+        used * JSON_HEADROOM <= limit,
+        "the limit is under {JSON_HEADROOM}x a 1 MB JSON decode"
+    );
+}

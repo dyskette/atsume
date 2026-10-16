@@ -93,3 +93,11 @@ pub(crate) fn open_module_with(
     };
     site.open(&config, cancel).unwrap()
 }
+
+/// Returns the `lua` directory of the FMD2 checkout in `ATSUME_FMD2_DIR`, for
+/// tests marked `#[ignore]` that need upstream's modules.
+pub(crate) fn fmd2_lua_dir() -> PathBuf {
+    let checkout =
+        std::env::var_os("ATSUME_FMD2_DIR").expect("set ATSUME_FMD2_DIR to an FMD2 checkout");
+    PathBuf::from(checkout).join("lua")
+}
