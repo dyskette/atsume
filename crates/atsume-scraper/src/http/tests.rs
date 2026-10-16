@@ -468,3 +468,14 @@ fn a_reported_network_problem_carries_the_last_request() {
         "Net: network problem fetching /series/x (last status 404 from https://a.example/series/x)"
     );
 }
+
+#[test]
+fn a_page_handler_reporting_net_problem_is_a_network_error() {
+    let transport = scripted(|_, _| Ok(respond(503, "")));
+    let init = "local m = NewWebsiteModule(); m.Name = 'Net'; m.OnGetPageNumber = 'Pages'";
+    let rest = "function Pages() if not HTTP.GET('https://a.example' .. URL) then return net_problem end return no_error end";
+    let session = open_module_with(&config(transport), CancelToken::new(), init, rest);
+    let err = session.pages("/chapter/1").unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Network, "{err}");
+    assert_eq!(err.request().unwrap().status, 503);
+}

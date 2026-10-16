@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::testing::{Checkout, module_source, open_module};
-use crate::{CancelToken, SessionConfig};
+use crate::{CancelToken, Page, SessionConfig};
 
 const FAILING: &str = "
 local shared = require 'templates.Shared'
@@ -393,4 +393,107 @@ fn status_if_pos_takes_keyword_lists_from_the_module() {
         "hiatus"
     );
     assert_eq!(session.eval("MangaInfoStatusIfPos('nothing known')"), "");
+}
+
+const PAGES_INIT: &str =
+    "local m = NewWebsiteModule(); m.Name = 'P'; m.RootURL = 'https://site.example'
+    m.OnGetPageNumber = 'Pages'; m.OnGetImageURL = 'Image'";
+
+#[test]
+fn pages_lists_images_against_the_site() {
+    let rest = "function Pages()
+        TASK.PageLinks.Add('/p/1.jpg'); TASK.PageLinks.Add('//cdn.example/2.jpg')
+        return true end
+        function Image() return true end";
+    let session = open_module(PAGES_INIT, rest);
+    let pages = session.pages("/chapter/1").unwrap();
+    assert_eq!(
+        pages,
+        [
+            Page::Image("https://site.example/p/1.jpg".into()),
+            Page::Image("https://cdn.example/2.jpg".into()),
+        ]
+    );
+}
+
+#[test]
+fn pages_found_only_when_asked_are_resolved_one_at_a_time() {
+    // Shaped like Taadd: the chapter lists each page's web page, and the
+    // image is read from it.
+    let rest = "function Pages()
+        for i = 1, 3 do TASK.PageContainerLinks.Add('/c/1/' .. i) end
+        TASK.PageNumber = TASK.PageContainerLinks.Count
+        return no_error end
+        function Image()
+        CALLS = (CALLS or 0) + 1
+        TASK.PageLinks[WORKID] = TASK.PageContainerLinks[WORKID] .. '.jpg?from=' .. URL
+        return true end";
+    let session = open_module(PAGES_INIT, rest);
+    let pages = session.pages("/chapter/1").unwrap();
+    assert_eq!(
+        pages,
+        [Page::Unresolved, Page::Unresolved, Page::Unresolved]
+    );
+    let second = session.resolve_page("/chapter/1", 1).unwrap();
+    assert_eq!(second, "https://site.example/c/1/2.jpg?from=/chapter/1");
+    // A resolved page is not asked for again.
+    session.resolve_page("/chapter/1", 1).unwrap();
+    assert_eq!(session.eval("CALLS"), "1");
+}
+
+#[test]
+fn a_module_may_resolve_every_page_on_the_first_call() {
+    // Shaped like MangaTown, which reads all images from the first page.
+    let rest = "function Pages() TASK.PageNumber = 2; return true end
+        function Image()
+        CALLS = (CALLS or 0) + 1
+        if WORKID == 0 then TASK.PageLinks.Add('/1.jpg'); TASK.PageLinks.Add('/2.jpg') end
+        return true end";
+    let session = open_module(PAGES_INIT, rest);
+    assert_eq!(session.pages("/chapter/1").unwrap().len(), 2);
+    session.resolve_page("/chapter/1", 0).unwrap();
+    assert_eq!(
+        session.resolve_page("/chapter/1", 1).unwrap(),
+        "https://site.example/2.jpg"
+    );
+    assert_eq!(session.eval("CALLS"), "1");
+}
+
+#[test]
+fn a_page_is_resolved_only_for_the_chapter_last_listed() {
+    let rest = "function Pages() TASK.PageNumber = 1; return true end
+        function Image() return true end";
+    let session = open_module(PAGES_INIT, rest);
+    let unlisted = session.resolve_page("/chapter/1", 0).unwrap_err();
+    assert_eq!(unlisted.kind(), ErrorKind::Unsupported);
+    session.pages("/chapter/1").unwrap();
+    let empty = session.resolve_page("/chapter/1", 0).unwrap_err();
+    assert_eq!(empty.kind(), ErrorKind::Module, "{empty}");
+    assert!(empty.to_string().contains("no image address"), "{empty}");
+}
+
+#[test]
+fn pages_reports_a_refusal_or_no_pages() {
+    let refused = open_module(PAGES_INIT, "function Pages() return false end");
+    let err = refused.pages("/chapter/1").unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Module);
+    assert!(
+        err.to_string()
+            .contains("declined reading pages for /chapter/1"),
+        "{err}"
+    );
+
+    let empty = open_module(PAGES_INIT, "function Pages() return true end");
+    assert_eq!(
+        empty.pages("/chapter/1").unwrap_err().kind(),
+        ErrorKind::NotFound
+    );
+}
+
+#[test]
+fn counted_pages_need_a_way_to_resolve_them() {
+    let init = "local m = NewWebsiteModule(); m.Name = 'P'; m.OnGetPageNumber = 'Pages'";
+    let rest = "function Pages() TASK.PageNumber = 5; TASK.PageLinks.Add('https://a.example/1.jpg'); return true end";
+    let session = open_module(init, rest);
+    assert_eq!(session.pages("/chapter/1").unwrap().len(), 1);
 }

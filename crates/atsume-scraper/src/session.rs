@@ -16,6 +16,7 @@ use crate::runtime::Runtime;
 use crate::sandbox::WritableFile;
 use crate::series::{MangaInfo, SeriesInfo};
 use crate::site::{Account, AccountStatus, ModuleObject, SiteState};
+use crate::task::{Page, Task};
 
 /// How the sessions a [`Site`](crate::Site) opens reach the network and how
 /// long their calls may run.
@@ -206,6 +207,92 @@ impl Session {
             _ => {}
         }
         Ok(std::mem::take(&mut *self.state::<MangaInfo>()).into_series())
+    }
+
+    /// Runs `OnGetPageNumber` for the chapter at `chapter_url`, returning its
+    /// pages in reading order.
+    ///
+    /// Image addresses are made absolute against the site's address. A page
+    /// the module finds only when asked is [`Page::Unresolved`]; resolve it
+    /// with [`resolve_page`](Self::resolve_page).
+    ///
+    /// # Errors
+    ///
+    /// Fails if the module has no `OnGetPageNumber` handler, the handler fails
+    /// or declines, a request it needed failed
+    /// ([`Network`](ErrorKind::Network)), or it lists no pages
+    /// ([`NotFound`](ErrorKind::NotFound)).
+    pub fn pages(&self, chapter_url: &str) -> Result<Vec<Page>> {
+        *self.state::<Task>() = Task::for_chapter(chapter_url);
+        globals::set_url(&self.runtime.lua, chapter_url)?;
+        let result = self.call(Event::GetPageNumber)?;
+        self.check_outcome(&result, &format!("reading pages for {chapter_url}"))?;
+
+        let module = self.module();
+        let resolvable = self.has_handler(Event::GetImageUrl);
+        let pages = self.state::<Task>().pages(&module.root_url, resolvable);
+        if pages.is_empty() {
+            let message = format!("{}: no pages listed for {chapter_url}", module.name);
+            return Err(Error::new(ErrorKind::NotFound, message));
+        }
+        Ok(pages)
+    }
+
+    /// Runs `OnGetImageURL` for the page at `index`, counting from 0, of the
+    /// chapter whose pages were last listed, and returns its image address.
+    ///
+    /// A page the module already resolved, as some do for every page on the
+    /// first call, is returned without running the handler again.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `chapter_url` is not the chapter last listed with
+    /// [`pages`](Self::pages), the module has no `OnGetImageURL` handler, the
+    /// handler fails or declines, a request it needed failed
+    /// ([`Network`](ErrorKind::Network)), or it leaves the page without an
+    /// address.
+    pub fn resolve_page(&self, chapter_url: &str, index: usize) -> Result<String> {
+        let module = self.module();
+        if !self.state::<Task>().is_for(chapter_url) {
+            let message = format!("list the pages of {chapter_url} before resolving one");
+            return Err(Error::new(ErrorKind::Unsupported, message));
+        }
+        if let Page::Image(url) = self.state::<Task>().page(&module.root_url, index) {
+            return Ok(url);
+        }
+        globals::set_url(&self.runtime.lua, chapter_url)?;
+        globals::set_work_id(&self.runtime.lua, index)?;
+        let what = format!("resolving page {} of {chapter_url}", index + 1);
+        let result = self.call(Event::GetImageUrl)?;
+        self.check_outcome(&result, &what)?;
+        match self.state::<Task>().page(&module.root_url, index) {
+            Page::Image(url) => Ok(url),
+            Page::Unresolved => {
+                let message = format!("{}: no image address after {what}", module.name);
+                Err(Error::new(ErrorKind::Module, message))
+            }
+        }
+    }
+
+    /// Turns a page handler's result into an error if it reports one.
+    ///
+    /// Page handlers signal success either way upstream allows: `true` or
+    /// `no_error`. `false` or `nil` is a refusal, and `net_problem` is a
+    /// failed request, though Lua reads both codes as true.
+    fn check_outcome(&self, result: &Value, what: &str) -> Result<()> {
+        let module = self.module().name;
+        let net_problem = globals::NET_PROBLEM;
+        match result {
+            Value::Nil | Value::Boolean(false) => {
+                let status = self.last_request().status;
+                let message = format!("{module}: declined {what} (last status {status})");
+                Err(Error::new(ErrorKind::Module, message))
+            }
+            Value::Integer(code) if *code == net_problem => {
+                Err(Error::network(&module, what, self.last_request()))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Runs `OnLogin`, reporting whether the site accepted the credentials.

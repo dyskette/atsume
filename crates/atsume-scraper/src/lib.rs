@@ -38,6 +38,7 @@ mod series;
 mod session;
 mod site;
 mod strings;
+mod task;
 #[cfg(test)]
 mod testing;
 
@@ -48,3 +49,4 @@ pub use module::{Event, Module, ModuleOption, OptionKind, OptionValue};
 pub use series::{Chapter, SeriesInfo, SeriesStatus};
 pub use session::{Session, SessionConfig};
 pub use site::AccountStatus;
+pub use task::Page;

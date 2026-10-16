@@ -39,6 +39,11 @@ pub(crate) fn set_url(lua: &Lua, url: &str) -> mlua::Result<()> {
     lua.globals().set("URL", url)
 }
 
+/// Sets `WORKID`, the 0-based page `OnGetImageURL` resolves.
+pub(crate) fn set_work_id(lua: &Lua, page: usize) -> mlua::Result<()> {
+    lua.globals().set("WORKID", page)
+}
+
 /// Sets `FILENAME`, the saved page `OnAfterImageSaved` edits.
 pub(crate) fn set_filename(lua: &Lua, path: &std::path::Path) -> mlua::Result<()> {
     lua.globals().set(
