@@ -6,8 +6,8 @@
 
 use mlua::{Lua, Value};
 
-use crate::host::AccountStatus;
-use crate::object::to_int;
+use crate::convert::to_int;
+use crate::site::AccountStatus;
 
 /// A handler's return codes, which modules read as globals.
 const RETURN_CODES: [(&str, i64); 3] = [
@@ -22,12 +22,7 @@ pub(crate) fn set_constants(lua: &Lua) -> mlua::Result<()> {
     for (name, code) in RETURN_CODES {
         globals.set(name, code)?;
     }
-    for status in [
-        AccountStatus::Unknown,
-        AccountStatus::Checking,
-        AccountStatus::Valid,
-        AccountStatus::Invalid,
-    ] {
+    for status in AccountStatus::ALL {
         globals.set(format!("as{status:?}"), status.code())?;
     }
     set_page_count(lua, 1)

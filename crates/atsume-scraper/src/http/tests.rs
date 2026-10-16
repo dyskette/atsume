@@ -3,7 +3,9 @@ use std::time::Instant;
 
 use super::*;
 use crate::testing::open_module_with;
-use crate::{Event, Runner};
+use url::Url;
+
+use crate::{CancelToken, Event, Runner};
 
 /// A transport that answers from a function and records every request.
 struct Scripted<F> {
@@ -392,4 +394,36 @@ fn the_default_transport_returns_responses_as_received() {
     // Redirects and error statuses are left to the client above.
     assert_eq!(get("/moved").status, 301);
     assert_eq!(get("/missing").status, 404);
+}
+
+#[test]
+fn the_session_works_without_lua() {
+    let transport = scripted(|_, n| {
+        if n < 2 {
+            return Ok(respond(503, ""));
+        }
+        Ok(with_headers(respond(200, "ok"), &[("Set-Cookie", "s=1")]))
+    });
+    let mut session = HttpSession::new(&config(transport.clone()), CancelToken::new());
+    assert_eq!(
+        session.send(Method::Get, "https://a.example/", ""),
+        Ok(true)
+    );
+    assert_eq!(session.document, b"ok");
+    assert_eq!(session.cookies.value("s"), "1");
+    assert_eq!(transport.seen.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn unknown_fields_read_as_nil_and_ignore_writes() {
+    let runner = runner(scripted(|_, _| Ok(respond(200, ""))));
+    runner.exec("HTTP.Nonexistent = 1; MODULE.Nonexistent = 1; MODULE.Account.Nonexistent = 1");
+    let read = "tostring(HTTP.Nonexistent) .. tostring(MODULE.Nonexistent) .. tostring(MODULE.Account.Nonexistent)";
+    assert_eq!(runner.eval(read), "nilnilnil");
+    // Declared fields still read and write through to the state.
+    runner.exec("HTTP.UserAgent = 'Mine'; MODULE.Account.Status = asValid");
+    assert_eq!(
+        runner.eval("HTTP.UserAgent .. MODULE.Account.Status"),
+        "Mine1"
+    );
 }

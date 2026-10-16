@@ -3,17 +3,19 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use super::*;
+use crate::convert::text_of;
 
 /// Runs `source` in a fresh sandbox over the checkout at `root` and returns
 /// its result as text.
-fn eval_in(root: &Path, writable: &WritableFile, source: &str) -> mlua::Result<String> {
-    let lua = new_runtime(&root.join("lua"), Rc::clone(writable))?;
+fn eval_in(root: &Path, writable: Option<&Path>, source: &str) -> mlua::Result<String> {
+    let lua = new_runtime(&root.join("lua"))?;
+    lua.set_app_data(WritableFile(writable.map(Path::to_path_buf)));
     let value: Value = lua.load(source).eval()?;
     Ok(text_of(&lua, &value).unwrap_or_else(|| value.type_name().to_owned()))
 }
 
 fn eval(root: &Path, source: &str) -> String {
-    eval_in(root, &WritableFile::default(), source).unwrap_or_else(|e| panic!("{source}: {e}"))
+    eval_in(root, None, source).unwrap_or_else(|e| panic!("{source}: {e}"))
 }
 
 /// Quotes `s` as a Lua long string, so paths need no escaping.
@@ -117,7 +119,7 @@ fn load_refuses_bytecode() {
 fn allocation_is_capped() {
     let root = TempDir::new().unwrap();
     let source = "return string.rep('x', 1024 * 1024 * 1024)";
-    let err = eval_in(root.path(), &WritableFile::default(), source).unwrap_err();
+    let err = eval_in(root.path(), None, source).unwrap_err();
     assert!(matches!(err, mlua::Error::MemoryError(_)), "{err}");
 }
 
@@ -155,7 +157,7 @@ fn reads_inside_the_checkout() {
     assert_eq!(eval(root.path(), &absolute), "1;a");
 
     let closed = "local f = io.open('userdata/map.txt'); f:close(); return f:read('a')";
-    assert!(eval_in(root.path(), &WritableFile::default(), closed).is_err());
+    assert!(eval_in(root.path(), None, closed).is_err());
 }
 
 #[test]
@@ -183,10 +185,7 @@ fn reads_cannot_leave_the_checkout() {
         );
         assert_eq!(opened, "nil", "io.open({})", path.display());
         let lines = format!("for _ in io.lines({}) do end", quote(path));
-        assert!(
-            eval_in(root.path(), &WritableFile::default(), &lines).is_err(),
-            "{lines}"
-        );
+        assert!(eval_in(root.path(), None, &lines).is_err(), "{lines}");
     }
 }
 
@@ -219,8 +218,7 @@ fn only_the_writable_file_may_be_written() {
     );
     write(&page, "ORIGINAL");
     write(&other, "ORIGINAL");
-    let writable = WritableFile::new(RefCell::new(Some(page.clone())));
-    let run = |source: String| eval_in(root.path(), &writable, &source).unwrap();
+    let run = |source: String| eval_in(root.path(), Some(&page), &source).unwrap();
 
     assert_eq!(
         run(format!("return io.open({}, 'rb'):read('a')", quote(&page))),
@@ -258,8 +256,9 @@ fn only_the_writable_file_may_be_written() {
         assert!(run(source.clone()).starts_with("nil "), "{source}");
     }
 
-    *writable.borrow_mut() = None;
-    let reopened = run(format!("return tostring(io.open({}, 'w'))", quote(&page)));
+    // Once the hook is over, the page is out of reach again.
+    let source = format!("return tostring(io.open({}, 'w'))", quote(&page));
+    let reopened = eval_in(root.path(), None, &source).unwrap();
     assert_eq!(reopened, "nil");
     assert_eq!(std::fs::read_to_string(&other).unwrap(), "ORIGINAL");
 }
@@ -306,13 +305,9 @@ fn require_cannot_leave_the_lua_directory() {
         names.push("escape.secret");
     }
     for name in names {
-        let err = eval_in(
-            root.path(),
-            &WritableFile::default(),
-            &format!("return require '{name}'"),
-        )
-        .unwrap_err()
-        .to_string();
+        let err = eval_in(root.path(), None, &format!("return require '{name}'"))
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains(&format!("module '{name}' not found")),
             "{name}: {err}"

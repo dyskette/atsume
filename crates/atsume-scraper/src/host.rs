@@ -1,22 +1,22 @@
 //! Loading a module file and running its handlers.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use mlua::{Function, Lua, Table, Value};
+use mlua::{AppDataRefMut, Function, Lua, Value};
 
+use crate::bind::state;
 use crate::budget::{Budget, CancelToken, DEFAULT_CPU_LIMIT, Termination};
+use crate::convert::truthy;
 use crate::error::{Error, Result};
-use crate::globals;
-use crate::http::{self, Http, HttpConfig, LastRequest};
-use crate::libs;
-use crate::module::{
-    self, Event, Module, ModuleOption, OptionKind, OptionValue, Options, Storage, StorageHandle,
-};
-use crate::object::{Field, Object, to_int, truthy};
+use crate::http::{HttpConfig, HttpObject, HttpSession, LastRequest};
+use crate::module::{self, Event, Module, ModuleOption, OptionKind, OptionValue, Storage};
 use crate::sandbox::{self, WritableFile};
+use crate::site::{Account, ModuleObject, SiteState};
+use crate::{globals, libs};
+
+pub use crate::site::AccountStatus;
 
 /// Loads website modules from a checkout of FMD2's `lua` directory.
 ///
@@ -30,82 +30,15 @@ pub struct Host {
     pub http: HttpConfig,
 }
 
-/// A login state, as a module records it in `MODULE.Account.Status`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum AccountStatus {
-    /// Not checked yet.
-    #[default]
-    Unknown,
-    /// A login is in progress.
-    Checking,
-    /// The site accepted the credentials.
-    Valid,
-    /// The site rejected the credentials.
-    Invalid,
-}
-
-impl AccountStatus {
-    pub(crate) fn code(self) -> i64 {
-        match self {
-            Self::Unknown => -1,
-            Self::Checking => 0,
-            Self::Valid => 1,
-            Self::Invalid => 2,
-        }
-    }
-
-    fn from_code(code: i64) -> Self {
-        match code {
-            0 => Self::Checking,
-            1 => Self::Valid,
-            2 => Self::Invalid,
-            _ => Self::Unknown,
-        }
-    }
-}
-
-/// The credentials a module sees as `MODULE.Account`.
-#[derive(Clone, Debug, Default)]
-pub struct Account {
-    /// Whether credentials were supplied. Login handlers check this first.
-    pub enabled: bool,
-    /// The login name.
-    pub username: String,
-    /// The password.
-    pub password: String,
-    /// Cookies the module saved for the session.
-    pub cookies: String,
-    /// What the module recorded about the login.
-    pub status: AccountStatus,
-}
-
-/// The selected website and the state its `MODULE` object exposes.
-struct SiteState {
-    module: Module,
-    options: HashMap<String, OptionValue>,
-    directory_index: i64,
-}
-
 /// One module file loaded into its own Lua runtime, for one of its websites.
 ///
 /// A runtime is single-threaded and the module API is built on globals, so
-/// each scrape opens its own runner.
+/// each scrape opens its own runner. Its state lives in the runtime, where the
+/// objects modules see read and write it.
 pub struct Runner {
     lua: Lua,
     budget: Rc<Budget>,
-    http: Rc<RefCell<Http>>,
-    writable: WritableFile,
-    site: Rc<RefCell<SiteState>>,
-    account: Rc<RefCell<Account>>,
     sites: Vec<Module>,
-}
-
-/// A prepared runtime, before a module file runs in it.
-struct Runtime {
-    lua: Lua,
-    budget: Rc<Budget>,
-    http: Rc<RefCell<Http>>,
-    writable: WritableFile,
 }
 
 impl Host {
@@ -141,25 +74,8 @@ impl Host {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        let Runtime {
-            lua,
-            budget,
-            http,
-            writable,
-        } = self.runtime(cancel)?;
-        let storage = Storage::default();
-        let declarations = Declarations::default();
-        declarations.register(&lua, &storage)?;
-        run_file(&lua, &budget, file)?;
-        let init_result = protect(&lua, &budget, |lua| {
-            lua.globals().get::<Function>("Init")?.call::<Value>(())
-        })
-        .map_err(|e| Error::Init {
-            file: file.to_path_buf(),
-            source: Box::new(e),
-        })?;
-        let sites = declarations.read(&lua, init_result, file)?;
-
+        let (lua, budget) = self.runtime(cancel)?;
+        let sites = load_declarations(&lua, &budget, file)?;
         let Some(index) = select_site(&sites, site, root_url) else {
             let name = site.unwrap_or_default().to_owned();
             return Err(Error::NoSuchSite {
@@ -171,39 +87,43 @@ impl Host {
         if let Some(root_url) = root_url {
             root_url.clone_into(&mut selected.root_url);
         }
-
-        let runner = Runner {
-            site: Rc::new(RefCell::new(SiteState::new(selected))),
-            account: Rc::default(),
-            lua,
-            budget,
-            http,
-            writable,
-            sites,
-        };
-        runner.bind_module(&storage)?;
-        Ok(runner)
+        lua.set_app_data(SiteState::new(selected));
+        lua.globals().set("MODULE", ModuleObject)?;
+        Ok(Runner { lua, budget, sites })
     }
 
-    /// Builds the sandbox with the budget, the `fmd.*` libraries and the
-    /// globals a module expects before its file runs.
-    fn runtime(&self, cancel: CancelToken) -> Result<Runtime> {
-        let writable = WritableFile::default();
-        let lua = sandbox::new_runtime(&self.lua_dir, Rc::clone(&writable))?;
+    /// Builds the sandbox with the budget, the `fmd.*` libraries, the state a
+    /// scrape keeps and the globals a module expects before its file runs.
+    fn runtime(&self, cancel: CancelToken) -> Result<(Lua, Rc<Budget>)> {
+        let lua = sandbox::new_runtime(&self.lua_dir)?;
         let budget = Budget::new(cancel.clone(), DEFAULT_CPU_LIMIT);
         budget.install(&lua)?;
         globals::set_constants(&lua)?;
         let lua_dir = std::path::absolute(&self.lua_dir).map_err(mlua::Error::external)?;
         libs::preload(&lua, &lua_dir)?;
-        let http = Rc::new(RefCell::new(Http::new(&self.http, cancel)));
-        lua.globals().set("HTTP", http::bind(&lua, &http)?)?;
-        Ok(Runtime {
-            lua,
-            budget,
-            http,
-            writable,
-        })
+        lua.set_app_data(Storage::default());
+        lua.set_app_data(Account::default());
+        lua.set_app_data(HttpSession::new(&self.http, cancel));
+        lua.globals().set("HTTP", HttpObject)?;
+        module::register_declarations(&lua)?;
+        Ok((lua, budget))
     }
+}
+
+/// Runs a module file and its `Init()`, and returns what it declared.
+fn load_declarations(lua: &Lua, budget: &Rc<Budget>, file: &Path) -> Result<Vec<Module>> {
+    run_file(lua, budget, file)?;
+    let init_result = protect(lua, budget, |lua| {
+        lua.globals().get::<Function>("Init")?.call::<Value>(())
+    })
+    .map_err(|e| Error::Init {
+        file: file.to_path_buf(),
+        source: Box::new(e),
+    })?;
+    let declared = module::take_declarations(lua, init_result, file)?;
+    declared.ok_or_else(|| Error::NoDeclaration {
+        file: file.to_path_buf(),
+    })
 }
 
 /// Loads and runs a module file's top level.
@@ -251,50 +171,6 @@ fn protect<R>(
     }
 }
 
-/// The tables `NewWebsiteModule()` handed out while the file ran.
-#[derive(Clone, Default)]
-struct Declarations(Rc<RefCell<Vec<(Table, Options)>>>);
-
-impl Declarations {
-    /// Defines `NewWebsiteModule`, recording each table it returns.
-    ///
-    /// Each declaration collects its own options, so two sites in one file do
-    /// not show each other's settings.
-    fn register(&self, lua: &Lua, storage: &Storage) -> mlua::Result<()> {
-        let storage = Value::UserData(lua.create_userdata(StorageHandle(Rc::clone(storage)))?);
-        let declarations = self.clone();
-        let new_website_module = lua.create_function(move |lua, ()| {
-            let options = Options::default();
-            let table = module::declaration_table(lua, &options, storage.clone())?;
-            declarations.0.borrow_mut().push((table.clone(), options));
-            Ok(table)
-        })?;
-        lua.globals().set("NewWebsiteModule", new_website_module)
-    }
-
-    /// Reads every declaration into a [`Module`], in declaration order.
-    ///
-    /// Most modules fill the table and fall off the end of `Init()`; a few
-    /// return it instead, which is the same single declaration.
-    fn read(&self, lua: &Lua, init_result: Value, file: &Path) -> Result<Vec<Module>> {
-        let mut declarations = self.0.borrow_mut();
-        if let (Value::Table(table), true) = (init_result, declarations.is_empty()) {
-            declarations.push((table, Options::default()));
-        }
-        if declarations.is_empty() {
-            return Err(Error::NoDeclaration {
-                file: file.to_path_buf(),
-            });
-        }
-        let mut sites = Vec::with_capacity(declarations.len());
-        for (table, options) in declarations.iter() {
-            let options = options.borrow().clone();
-            sites.push(module::read_declaration(lua, table, options, file)?);
-        }
-        Ok(sites)
-    }
-}
-
 /// Picks the website a caller asked for, returning its index.
 ///
 /// No name takes the first declaration. Mirrors share a name, so `root_url`
@@ -314,26 +190,23 @@ fn select_site(sites: &[Module], name: Option<&str>, root_url: Option<&str>) -> 
     Some(mirror.unwrap_or(first))
 }
 
-impl SiteState {
-    fn new(module: Module) -> Self {
-        let options = module
-            .options
-            .iter()
-            .filter_map(|o| Some((o.name.clone(), o.default.clone()?)))
-            .collect();
-        Self {
-            module,
-            options,
-            directory_index: 0,
-        }
-    }
-}
-
 impl Runner {
+    /// Borrows state the runtime keeps, between calls into the module.
+    ///
+    /// Every state value is set when the runner is built, and only a binding
+    /// running inside a call holds one, so no borrow can be outstanding here.
+    #[expect(
+        clippy::expect_used,
+        reason = "the runner sets every state value before handing itself out, and calls into it never overlap a binding"
+    )]
+    fn state<S: 'static>(&self) -> AppDataRefMut<'_, S> {
+        state::<S>(&self.lua).expect("runner state is set and not in use")
+    }
+
     /// Returns the selected website as its declaration stands now.
     #[must_use]
     pub fn module(&self) -> Module {
-        self.site.borrow().module.clone()
+        self.state::<SiteState>().module.clone()
     }
 
     /// Returns every website the file declared, as `Init()` left them.
@@ -345,18 +218,18 @@ impl Runner {
     /// Returns the settings the selected website declares.
     #[must_use]
     pub fn options(&self) -> Vec<ModuleOption> {
-        self.site.borrow().module.options.clone()
+        self.state::<SiteState>().module.options.clone()
     }
 
     /// Reports whether the module implements `event`.
     #[must_use]
     pub fn has_handler(&self, event: Event) -> bool {
-        self.site.borrow().module.handler(event).is_some()
+        self.state::<SiteState>().module.handler(event).is_some()
     }
 
     /// Supplies credentials for a module that implements `OnLogin`.
     pub fn set_account(&self, username: &str, password: &str) {
-        let mut account = self.account.borrow_mut();
+        let mut account = self.state::<Account>();
         account.enabled = !username.is_empty();
         username.clone_into(&mut account.username);
         password.clone_into(&mut account.password);
@@ -365,24 +238,24 @@ impl Runner {
     /// Returns the login state the module recorded.
     #[must_use]
     pub fn account_status(&self) -> AccountStatus {
-        self.account.borrow().status
+        self.state::<Account>().status
     }
 
     /// Selects which listing a site with several walks next.
     pub fn set_directory_index(&self, index: i64) {
-        self.site.borrow_mut().directory_index = index;
+        self.state::<SiteState>().directory_index = index;
     }
 
     /// Returns how many separate listings the site's directory is split into.
     #[must_use]
     pub fn directories(&self) -> u32 {
-        self.site.borrow().module.directories
+        self.state::<SiteState>().module.directories
     }
 
     /// Stores a setting from its text form, converted to the type the module
     /// declared, so a number compares as a number in Lua.
     pub fn set_option_text(&self, name: &str, value: &str) {
-        let mut site = self.site.borrow_mut();
+        let mut site = self.state::<SiteState>();
         let kind = site
             .module
             .options
@@ -413,6 +286,12 @@ impl Runner {
         self.budget.peak()
     }
 
+    /// Returns what the last request the module made got back.
+    #[must_use]
+    pub fn last_request(&self) -> LastRequest {
+        self.state::<HttpSession>().last.clone()
+    }
+
     /// Runs `OnGetDirectoryPageNumber`, returning how many directory pages the
     /// site has. A module without the handler has one.
     ///
@@ -436,14 +315,14 @@ impl Runner {
     /// handler fails, or the module recorded the credentials as invalid even
     /// though the handler succeeded.
     pub fn login(&self) -> Result<bool> {
-        let module = self.site.borrow().module.name.clone();
+        let module = self.module().name;
         if !self.has_handler(Event::Login) {
             return Err(Error::NoHandler {
                 module,
                 event: Event::Login,
             });
         }
-        if !self.account.borrow().enabled {
+        if !self.state::<Account>().enabled {
             return Err(Error::NoCredentials { module });
         }
         let accepted = truthy(&self.call(Event::Login)?);
@@ -464,16 +343,10 @@ impl Runner {
             return Ok(());
         }
         globals::set_filename(&self.lua, path)?;
-        *self.writable.borrow_mut() = Some(path.to_path_buf());
+        self.state::<WritableFile>().0 = Some(path.to_path_buf());
         let result = self.call(Event::AfterImageSaved);
-        *self.writable.borrow_mut() = None;
+        self.state::<WritableFile>().0 = None;
         result.map(|_| ())
-    }
-
-    /// Returns what the last request the module made got back.
-    #[must_use]
-    pub fn last_request(&self) -> LastRequest {
-        self.http.borrow().last.clone()
     }
 
     /// Runs `OnBeforeDownloadImage` and returns the request headers the module
@@ -486,18 +359,15 @@ impl Runner {
         if !self.has_handler(Event::BeforeDownloadImage) {
             return Ok(HashMap::new());
         }
-        let headers = Rc::clone(&self.http.borrow().headers);
-        headers.borrow_mut().clear();
+        self.state::<HttpSession>().headers.clear();
         globals::set_url(&self.lua, image_url)?;
         self.call(Event::BeforeDownloadImage)?;
-        let pairs = headers
-            .borrow()
-            .items()
-            .iter()
-            .filter_map(|pair| pair.split_once('='))
-            .map(|(name, value)| (name.trim().to_owned(), value.to_owned()))
-            .collect();
-        Ok(pairs)
+        let http = self.state::<HttpSession>();
+        Ok(http
+            .headers
+            .pairs()
+            .map(|(n, v)| (n.to_owned(), v.to_owned()))
+            .collect())
     }
 
     /// Runs `OnDownloadImage`, in which the module fetches the image itself and
@@ -507,19 +377,51 @@ impl Runner {
     ///
     /// Fails if the handler fails, returns false, or leaves no data.
     pub fn download_image(&self, image_url: &str) -> Result<Vec<u8>> {
-        let document = Rc::clone(&self.http.borrow().document);
-        document.borrow_mut().clear();
+        self.state::<HttpSession>().document.clear();
         globals::set_url(&self.lua, image_url)?;
-        let module = self.site.borrow().module.name.clone();
+        let module = self.module().name;
         let url = image_url.to_owned();
         if !truthy(&self.call(Event::DownloadImage)?) {
             return Err(Error::DownloadDeclined { module, url });
         }
-        let data = std::mem::take(&mut *document.borrow_mut());
+        let data = std::mem::take(&mut self.state::<HttpSession>().document);
         if data.is_empty() {
             return Err(Error::EmptyImage { module, url });
         }
         Ok(data)
+    }
+
+    /// Calls the Lua function bound to `event` and returns its result.
+    pub(crate) fn call(&self, event: Event) -> Result<Value> {
+        let module = self.module();
+        let Some(function) = module.handler(event).map(str::to_owned) else {
+            return Err(Error::NoHandler {
+                module: module.name,
+                event,
+            });
+        };
+        let Value::Function(handler) = self.lua.globals().get(function.as_str())? else {
+            return Err(Error::MissingFunction {
+                module: module.name,
+                event,
+                function,
+            });
+        };
+        protect(&self.lua, &self.budget, |_| handler.call::<Value>(())).map_err(|e| {
+            Error::Handler {
+                call: format!("{}/{function}", module.name),
+                source: Box::new(e),
+            }
+        })
+    }
+
+    /// Points `event` at another Lua function, for tests.
+    #[cfg(test)]
+    pub(crate) fn set_handler(&self, event: Event, function: &str) {
+        self.state::<SiteState>()
+            .module
+            .handlers
+            .insert(event, function.to_owned());
     }
 
     /// Runs Lua statements in the runner's globals, for tests.
@@ -541,127 +443,11 @@ impl Runner {
         text.map(|s| s.to_string_lossy()).unwrap_or_default()
     }
 
-    /// Calls the Lua function bound to `event` and returns its result.
-    pub(crate) fn call(&self, event: Event) -> Result<Value> {
-        let (module, function) = {
-            let site = self.site.borrow();
-            let name = site.module.name.clone();
-            let Some(function) = site.module.handler(event).map(str::to_owned) else {
-                return Err(Error::NoHandler {
-                    module: name,
-                    event,
-                });
-            };
-            (name, function)
-        };
-        let Value::Function(handler) = self.lua.globals().get(function.as_str())? else {
-            return Err(Error::MissingFunction {
-                module,
-                event,
-                function,
-            });
-        };
-        protect(&self.lua, &self.budget, |_| handler.call::<Value>(())).map_err(|e| {
-            Error::Handler {
-                call: format!("{module}/{function}"),
-                source: Box::new(e),
-            }
-        })
+    /// Returns the runner's Lua runtime, for tests to define helpers in.
+    #[cfg(test)]
+    pub(crate) fn lua(&self) -> &Lua {
+        &self.lua
     }
-
-    /// Defines the `MODULE` global for the selected website.
-    fn bind_module(&self, storage: &Storage) -> mlua::Result<()> {
-        let lua = &self.lua;
-        let storage = lua.create_userdata(StorageHandle(Rc::clone(storage)))?;
-        let module = Object::new(Rc::clone(&self.site))
-            .field("ID", Field::Text(|s| &mut s.module.id))
-            .field("Name", Field::Text(|s| &mut s.module.name))
-            .field("RootURL", Field::Text(|s| &mut s.module.root_url))
-            .field("Category", Field::Text(|s| &mut s.module.category))
-            .field(
-                "TotalDirectory",
-                Field::Custom {
-                    get: |s| Value::Integer(i64::from(s.module.directories)),
-                    set: |runtime, s, value| {
-                        let count = to_int(runtime, value).clamp(1, i64::from(u32::MAX));
-                        s.module.directories = u32::try_from(count).unwrap_or(1);
-                    },
-                },
-            )
-            .field(
-                "AccountSupport",
-                Field::Bool(|s| &mut s.module.account_support),
-            )
-            .field(
-                "CurrentDirectoryIndex",
-                Field::Int(|s| &mut s.directory_index),
-            )
-            .field(
-                "GetOption",
-                Field::Constant(Value::Function(self.get_option()?)),
-            )
-            .field("Storage", Field::Constant(Value::UserData(storage)))
-            .field(
-                "Account",
-                Field::Constant(bind_account(lua, &self.account)?),
-            )
-            .field("ActiveConnectionCount", Field::Constant(Value::Integer(1)));
-        let module = self.bind_cookie_methods(module)?;
-        lua.globals().set("MODULE", module.into_value(lua)?)
-    }
-
-    /// Adds the cookie methods a few modules call through `MODULE` rather
-    /// than `HTTP`. They act on the runner's HTTP cookies.
-    fn bind_cookie_methods(&self, module: Object<SiteState>) -> mlua::Result<Object<SiteState>> {
-        let clear = || {
-            let http = Rc::clone(&self.http);
-            self.lua.create_function(move |_, ()| {
-                http.borrow_mut().clear_cookies();
-                Ok(())
-            })
-        };
-        let cookies = Rc::clone(&self.http.borrow().cookies);
-        let add = http::add_server_cookies(&self.lua, &cookies)?;
-        Ok(module
-            .field("ClearCookies", Field::Constant(Value::Function(clear()?)))
-            .field("RemoveCookies", Field::Constant(Value::Function(clear()?)))
-            .field("AddServerCookies", Field::Constant(Value::Function(add))))
-    }
-
-    /// Builds `MODULE.GetOption(name)`, which returns the setting's value, or
-    /// `nil` for one that has none.
-    fn get_option(&self) -> mlua::Result<Function> {
-        let site = Rc::clone(&self.site);
-        self.lua.create_function(move |lua, name: String| {
-            let site = site.borrow();
-            site.options
-                .get(&name)
-                .map_or(Ok(Value::Nil), |value| value.to_lua(lua))
-        })
-    }
-}
-
-/// Builds `MODULE.Account`.
-fn bind_account(lua: &Lua, account: &Rc<RefCell<Account>>) -> mlua::Result<Value> {
-    let status = Field::Custom {
-        get: status_code,
-        set: set_status,
-    };
-    Object::new(Rc::clone(account))
-        .field("Enabled", Field::Bool(|a| &mut a.enabled))
-        .field("Username", Field::Text(|a| &mut a.username))
-        .field("Password", Field::Text(|a| &mut a.password))
-        .field("Cookies", Field::Text(|a| &mut a.cookies))
-        .field("Status", status)
-        .into_value(lua)
-}
-
-fn status_code(account: &Account) -> Value {
-    Value::Integer(account.status.code())
-}
-
-fn set_status(lua: &Lua, account: &mut Account, value: &Value) {
-    account.status = AccountStatus::from_code(to_int(lua, value));
 }
 
 #[cfg(test)]

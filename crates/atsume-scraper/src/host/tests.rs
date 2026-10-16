@@ -121,7 +121,7 @@ fn handlers_reach_templates_through_require() {
     assert_eq!(eval(&runner, "GetInfo()"), "template");
     let result = runner.call(Event::GetInfo).unwrap();
     assert_eq!(
-        runner.lua.coerce_string(result).unwrap().unwrap(),
+        runner.lua().coerce_string(result).unwrap().unwrap(),
         "template"
     );
 }
@@ -138,12 +138,7 @@ fn a_failing_call_names_the_handler() {
         r#"module Example declares OnGetPageNumber="Missing" but defines no such function"#
     );
 
-    runner
-        .site
-        .borrow_mut()
-        .module
-        .handlers
-        .insert(Event::CheckSite, "Fail".into());
+    runner.set_handler(Event::CheckSite, "Fail");
     let failed = runner.call(Event::CheckSite).unwrap_err().to_string();
     assert!(failed.starts_with("Example/Fail: "), "{failed}");
     assert!(failed.contains("broken on purpose"), "{failed}");
@@ -405,12 +400,12 @@ fn looping_runner() -> (Runner, CancelToken) {
         )
         .unwrap();
     let token = cancel.clone();
-    let cancel_fn = runner.lua.create_function(move |_, ()| {
+    let cancel_fn = runner.lua().create_function(move |_, ()| {
         token.cancel();
         Ok(())
     });
     runner
-        .lua
+        .lua()
         .globals()
         .set("cancel", cancel_fn.unwrap())
         .unwrap();
@@ -426,7 +421,7 @@ fn a_runaway_loop_stops_at_the_cpu_limit() {
     assert!(err.to_string().contains("ran too long"), "{err}");
     // The limit is per call, so the runner is still usable.
     let fine = runner.call(Event::CheckSite).unwrap();
-    assert_eq!(runner.lua.coerce_string(fine).unwrap().unwrap(), "fine");
+    assert_eq!(runner.lua().coerce_string(fine).unwrap().unwrap(), "fine");
     assert!(runner.peak_instructions() >= 1_000_000);
 }
 
@@ -446,7 +441,7 @@ fn cancelling_stops_the_running_call_and_every_later_one() {
     let later = runner.call(Event::CheckSite).unwrap_err();
     assert!(later.is_cancelled(), "{later}");
     // Read from Rust: a cancelled runner runs no more Lua, not even this.
-    assert!(runner.lua.globals().get::<Value>("RAN").unwrap().is_nil());
+    assert!(runner.lua().globals().get::<Value>("RAN").unwrap().is_nil());
 
     let host = Host::new(PathBuf::from("unused"));
     let opening = host

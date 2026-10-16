@@ -2,45 +2,59 @@
 //!
 //! Upstream's is a memory stream. Modules pass it straight to `CreateTXQuery`,
 //! read it with `HTTP.Document.ToString()`, and rewrite it in place, for
-//! instance to descramble an image. So it is a shared buffer that Lua sees as
-//! an object which also converts to a string.
+//! instance to descramble an image. So Lua sees an object over a buffer kept
+//! in the runtime's state, which also converts to a string.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use mlua::{Lua, MetaMethod, UserData, UserDataMethods, Value};
 
-use mlua::{MetaMethod, UserData, UserDataMethods, Value};
+use crate::bind::{Place, state};
 
-/// A response body shared between Rust and Lua.
-pub(crate) type Document = Rc<RefCell<Vec<u8>>>;
+/// The Lua face of a body kept in the runtime's state `S`.
+pub(crate) struct DocumentHandle<S> {
+    place: Place<S, Vec<u8>>,
+}
 
-/// The Lua face of a [`Document`].
-pub(crate) struct DocumentHandle(pub(crate) Document);
+impl<S> Clone for DocumentHandle<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
 
-impl UserData for DocumentHandle {
+impl<S> Copy for DocumentHandle<S> {}
+
+impl<S: 'static> DocumentHandle<S> {
+    pub(crate) fn new(place: Place<S, Vec<u8>>) -> Self {
+        Self { place }
+    }
+
+    fn text(self, lua: &Lua) -> mlua::Result<mlua::LuaString> {
+        let mut owner = state::<S>(lua)?;
+        lua.create_string((self.place)(&mut *owner).as_slice())
+    }
+
+    fn size(self, lua: &Lua) -> mlua::Result<i64> {
+        let mut owner = state::<S>(lua)?;
+        Ok(i64::try_from((self.place)(&mut *owner).len()).unwrap_or(i64::MAX))
+    }
+}
+
+impl<S: 'static> UserData for DocumentHandle<S> {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |lua, document, key: Value| {
             let Value::String(key) = key else {
                 return Ok(Value::Nil);
             };
-            let value = match key.to_str()?.as_ref() {
+            let document = *document;
+            match key.to_str()?.as_ref() {
                 "ToString" => {
-                    let body = Rc::clone(&document.0);
-                    let to_string =
-                        lua.create_function(move |lua, ()| lua.create_string(&*body.borrow()))?;
-                    Value::Function(to_string)
+                    let to_string = lua.create_function(move |lua, ()| document.text(lua))?;
+                    Ok(Value::Function(to_string))
                 }
-                "Size" => Value::Integer(size(&document.0)),
-                _ => Value::Nil,
-            };
-            Ok(value)
+                "Size" => Ok(Value::Integer(document.size(lua)?)),
+                _ => Ok(Value::Nil),
+            }
         });
-        methods.add_meta_method(MetaMethod::ToString, |lua, document, ()| {
-            lua.create_string(&*document.0.borrow())
-        });
-        methods.add_meta_method(MetaMethod::Len, |_, document, ()| Ok(size(&document.0)));
+        methods.add_meta_method(MetaMethod::ToString, |lua, document, ()| document.text(lua));
+        methods.add_meta_method(MetaMethod::Len, |lua, document, ()| document.size(lua));
     }
-}
-
-fn size(document: &Document) -> i64 {
-    i64::try_from(document.borrow().len()).unwrap_or(i64::MAX)
 }

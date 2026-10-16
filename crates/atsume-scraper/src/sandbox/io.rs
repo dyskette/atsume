@@ -11,23 +11,27 @@ use mlua::{
     AnyUserData, Function, Lua, MultiValue, Table, UserData, UserDataMethods, Value, Variadic,
 };
 
-use super::{WritableFile, normalize, read_in_root, text_of};
+use super::{WritableFile, normalize, read_in_root};
+use crate::bind::state;
+use crate::convert::text_of;
 
-pub(super) fn library(lua: &Lua, root: PathBuf, writable: WritableFile) -> mlua::Result<Table> {
-    let files = Files { root, writable };
+pub(super) fn library(lua: &Lua, root: PathBuf) -> mlua::Result<Table> {
     let io = lua.create_table()?;
-    let opener = files.clone();
+    let opener = root.clone();
     io.set(
         "open",
         lua.create_function(move |lua, (name, mode): (String, Option<String>)| {
-            let file = opener.open(&name, mode.as_deref().unwrap_or("r"));
+            let files = Files::now(lua, &opener)?;
+            let file = files.open(&name, mode.as_deref().unwrap_or("r"));
             lua_result(lua, file.map(|file| lua.create_userdata(file)))
         })?,
     )?;
     io.set(
         "lines",
         lua.create_function(move |lua, name: String| {
-            let data = files.read(&name).map_err(mlua::Error::runtime)?;
+            let data = Files::now(lua, &root)?
+                .read(&name)
+                .map_err(mlua::Error::runtime)?;
             lines_iterator(lua, lua.create_userdata(LuaFile::reading(data))?)
         })?,
     )?;
@@ -47,13 +51,18 @@ fn lua_result<T: mlua::IntoLua>(
 
 /// What a module may open: anything inside `root` for reading, and the
 /// writable file for reading or writing.
-#[derive(Clone)]
-struct Files {
-    root: PathBuf,
-    writable: WritableFile,
+struct Files<'a> {
+    root: &'a Path,
+    writable: Option<PathBuf>,
 }
 
-impl Files {
+impl<'a> Files<'a> {
+    /// Returns what may be opened at this moment.
+    fn now(lua: &Lua, root: &'a Path) -> mlua::Result<Self> {
+        let writable = state::<WritableFile>(lua)?.0.clone();
+        Ok(Self { root, writable })
+    }
+
     fn open(&self, name: &str, mode: &str) -> Result<LuaFile, String> {
         if mode.contains(['w', 'a', '+']) {
             self.open_for_writing(name, mode)
@@ -66,12 +75,11 @@ impl Files {
         if self.is_writable(name) {
             return std::fs::read(name).map_err(|e| format!("{name}: {e}"));
         }
-        read_in_root(&self.root, name)
+        read_in_root(self.root, name)
     }
 
     fn is_writable(&self, name: &str) -> bool {
         self.writable
-            .borrow()
             .as_deref()
             .is_some_and(|target| normalize(Path::new(name)) == normalize(target))
     }

@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use url::Url;
 
-use super::client::{FetchError, send_cancellable};
+use super::client::{SendError, send_cancellable};
 use super::transport::{Method, Request, Transport, UreqTransport};
 use crate::budget::CancelToken;
 
@@ -111,7 +111,7 @@ impl Flaresolverr {
     }
 
     /// Fetches `url` through the solver's browser.
-    pub(crate) fn solve(&self, url: &str, cancel: &CancelToken) -> Result<Solution, FetchError> {
+    pub(crate) fn solve(&self, url: &str, cancel: &CancelToken) -> Result<Solution, SendError> {
         let command = serde_json::json!({"cmd": "request.get", "url": url, "maxTimeout": 60_000});
         let request = Request {
             method: Method::Post,
@@ -120,16 +120,14 @@ impl Flaresolverr {
             body: command.to_string().into_bytes(),
         };
         let response = send_cancellable(&self.transport, request, cancel).map_err(|e| match e {
-            FetchError::Failed(why) => {
-                FetchError::Failed(format!("flaresolverr unreachable: {why}"))
-            }
-            cancelled @ FetchError::Cancelled => cancelled,
+            SendError::Failed(why) => SendError::Failed(format!("flaresolverr unreachable: {why}")),
+            cancelled @ SendError::Cancelled => cancelled,
         })?;
         let reply: Reply = serde_json::from_slice(&response.body).map_err(|e| {
-            FetchError::Failed(format!("flaresolverr returned unparseable JSON: {e}"))
+            SendError::Failed(format!("flaresolverr returned unparseable JSON: {e}"))
         })?;
         let ("ok", Some(solution)) = (reply.status.as_str(), reply.solution) else {
-            return Err(FetchError::Failed(format!(
+            return Err(SendError::Failed(format!(
                 "flaresolverr: {}",
                 reply.message
             )));

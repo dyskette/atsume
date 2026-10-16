@@ -17,9 +17,7 @@
 
 mod io;
 
-use std::cell::RefCell;
 use std::path::{Component, Path, PathBuf};
-use std::rc::Rc;
 
 use mlua::chunk::ChunkMode;
 use mlua::{Function, Lua, LuaOptions, LuaString, MultiValue, StdLib, Table, Value, Variadic};
@@ -27,11 +25,12 @@ use mlua::{Function, Lua, LuaOptions, LuaString, MultiValue, StdLib, Table, Valu
 /// The most one module's runtime may allocate.
 pub const MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 
-/// The one file a module may write, if any.
+/// The one file a module may write, if any, kept in the runtime.
 ///
 /// The runner sets it to the page `OnAfterImageSaved` is editing, which
 /// upstream lets that hook rewrite in place, and clears it afterwards.
-pub type WritableFile = Rc<RefCell<Option<PathBuf>>>;
+#[derive(Debug, Default)]
+pub(crate) struct WritableFile(pub(crate) Option<PathBuf>);
 
 /// Builds the sandboxed runtime for a module from the checkout at `lua_dir`.
 ///
@@ -41,7 +40,7 @@ pub type WritableFile = Rc<RefCell<Option<PathBuf>>>;
 /// # Errors
 ///
 /// Fails if `lua_dir` cannot be made absolute or the runtime cannot be built.
-pub fn new_runtime(lua_dir: &Path, writable: WritableFile) -> mlua::Result<Lua> {
+pub(crate) fn new_runtime(lua_dir: &Path) -> mlua::Result<Lua> {
     let lua_dir = std::path::absolute(lua_dir).map_err(mlua::Error::external)?;
     let root = lua_dir.parent().unwrap_or(&lua_dir).to_path_buf();
 
@@ -71,7 +70,8 @@ pub fn new_runtime(lua_dir: &Path, writable: WritableFile) -> mlua::Result<Lua> 
     )?;
 
     narrow_os(&lua, &globals.get("os")?)?;
-    globals.set("io", io::library(&lua, root, writable)?)?;
+    lua.set_app_data(WritableFile::default());
+    globals.set("io", io::library(&lua, root)?)?;
     Ok(lua)
 }
 
@@ -232,16 +232,6 @@ pub(crate) fn normalize(path: &Path) -> PathBuf {
         }
     }
     out
-}
-
-/// Reads a string or number as the text Lua would concatenate, and anything
-/// else as `None`.
-pub(crate) fn text_of(lua: &Lua, value: &Value) -> Option<String> {
-    let (Value::String(_) | Value::Integer(_) | Value::Number(_)) = value else {
-        return None;
-    };
-    let text = lua.coerce_string(value.clone()).ok().flatten()?;
-    Some(text.to_string_lossy())
 }
 
 #[cfg(test)]

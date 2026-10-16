@@ -14,14 +14,14 @@ const MAX_REDIRECTS: usize = 10;
 
 /// Why a fetch ended without a response.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum FetchError {
+pub(crate) enum SendError {
     /// The scrape was cancelled.
     Cancelled,
     /// No response arrived, or the redirects did not end.
     Failed(String),
 }
 
-impl From<Cancelled> for FetchError {
+impl From<Cancelled> for SendError {
     fn from(_: Cancelled) -> Self {
         Self::Cancelled
     }
@@ -72,7 +72,7 @@ impl Client {
         &mut self,
         mut request: Request,
         cookies: &[String],
-    ) -> Result<Exchange, FetchError> {
+    ) -> Result<Exchange, SendError> {
         let origin = request.url.host_str().unwrap_or_default().to_owned();
         for _ in 0..=MAX_REDIRECTS {
             let module_cookies = if same_site(&origin, &request.url) {
@@ -89,7 +89,7 @@ impl Client {
             };
             request = next;
         }
-        Err(FetchError::Failed(format!(
+        Err(SendError::Failed(format!(
             "stopped after {MAX_REDIRECTS} redirects"
         )))
     }
@@ -98,7 +98,7 @@ impl Client {
         &mut self,
         request: &Request,
         module_cookies: &[String],
-    ) -> Result<Response, FetchError> {
+    ) -> Result<Response, SendError> {
         self.limiter
             .wait(request.url.host_str().unwrap_or_default(), &self.cancel)?;
         let mut request = request.clone();
@@ -176,7 +176,7 @@ pub(crate) fn send_cancellable(
     transport: &Arc<dyn Transport>,
     request: Request,
     cancel: &CancelToken,
-) -> Result<Response, FetchError> {
+) -> Result<Response, SendError> {
     let (sender, receiver) = mpsc::channel();
     let transport = Arc::clone(transport);
     std::thread::spawn(move || {
@@ -185,10 +185,10 @@ pub(crate) fn send_cancellable(
     });
     loop {
         match receiver.recv_timeout(CANCEL_POLL) {
-            Ok(result) => return result.map_err(|e| FetchError::Failed(e.0)),
+            Ok(result) => return result.map_err(|e| SendError::Failed(e.0)),
             Err(mpsc::RecvTimeoutError::Timeout) => cancel.check()?,
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(FetchError::Failed(
+                return Err(SendError::Failed(
                     "the request thread ended early".to_owned(),
                 ));
             }
