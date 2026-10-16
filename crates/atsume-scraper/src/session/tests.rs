@@ -324,3 +324,73 @@ fn the_cpu_limit_leaves_room_for_a_large_json_decode() {
         "the limit is under {JSON_HEADROOM}x a 1 MB JSON decode"
     );
 }
+
+const INFO: &str = "
+function Info()
+    MANGAINFO.Title = 'Solo Leveling'
+    MANGAINFO.Authors = 'Chugong'
+    MANGAINFO.Status = MangaInfoStatusIfPos('Status: Completed')
+    MANGAINFO.ChapterLinks.Add('/manga/solo/1'); MANGAINFO.ChapterNames.Add('Chapter 1')
+    MANGAINFO.ChapterLinks.Add('manga/solo/2'); MANGAINFO.ChapterNames.Add('Chapter 2')
+    SEEN = MANGAINFO.URL
+    if URL:find('gone') then return information_not_found end
+    return no_error
+end";
+
+#[test]
+fn info_returns_what_the_module_recorded() {
+    let session = open_module(
+        "local m = NewWebsiteModule(); m.Name = 'S'; m.OnGetInfo = 'Info'",
+        INFO,
+    );
+    let info = session.info("/manga/solo/").unwrap();
+    assert_eq!(info.title, "Solo Leveling");
+    assert_eq!(info.authors, "Chugong");
+    assert_eq!(info.status, Some(crate::SeriesStatus::Completed));
+    let chapters: Vec<_> = info
+        .chapters
+        .iter()
+        .map(|c| (c.url.as_str(), c.display_name()))
+        .collect();
+    assert_eq!(
+        chapters,
+        [
+            ("/manga/solo/1", "Chapter 1"),
+            ("/manga/solo/2", "Chapter 2")
+        ]
+    );
+    assert_eq!(session.eval("SEEN"), "/manga/solo/");
+
+    // Each call starts from an empty record, so nothing carries over.
+    let again = session.info("/manga/solo/").unwrap();
+    assert_eq!(again.chapters.len(), 2);
+}
+
+#[test]
+fn info_reports_a_page_without_a_series() {
+    let session = open_module(
+        "local m = NewWebsiteModule(); m.Name = 'S'; m.OnGetInfo = 'Info'",
+        INFO,
+    );
+    let err = session.info("/manga/gone/").unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::NotFound);
+    assert!(err.to_string().contains("/manga/gone/"), "{err}");
+}
+
+#[test]
+fn status_if_pos_takes_keyword_lists_from_the_module() {
+    let session = open_module("NewWebsiteModule()", "");
+    assert_eq!(
+        session.eval("MangaInfoStatusIfPos('En curso', 'en curso', 'finalizado')"),
+        "ongoing"
+    );
+    assert_eq!(
+        session.eval("MangaInfoStatusIfPos('Finalizado', 'en curso', 'finalizado')"),
+        "completed"
+    );
+    assert_eq!(
+        session.eval("MangaInfoStatusIfPos('Pausa', nil, nil, 'pausa|break')"),
+        "hiatus"
+    );
+    assert_eq!(session.eval("MangaInfoStatusIfPos('nothing known')"), "");
+}

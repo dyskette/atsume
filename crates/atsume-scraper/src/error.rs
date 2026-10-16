@@ -1,5 +1,7 @@
 //! What can go wrong loading or running a module.
 
+use crate::http::LastRequest;
+
 /// What kind of failure an [`Error`] is, for a caller to decide what to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -13,6 +15,12 @@ pub enum ErrorKind {
     /// The module failed while handling an event: it raised, named a
     /// function it does not define, or produced nothing usable.
     Module,
+    /// The module reported that a request it needed failed. The error's
+    /// [`request`](Error::request) says what the site sent back.
+    Network,
+    /// The page the module was given holds nothing it recognises, which
+    /// usually means the site moved it.
+    NotFound,
     /// The site rejected the credentials.
     LoginRejected,
     /// The caller asked for something the module does not offer: a website,
@@ -30,6 +38,7 @@ pub enum ErrorKind {
 pub struct Error {
     kind: ErrorKind,
     message: String,
+    request: Option<Box<LastRequest>>,
 }
 
 impl Error {
@@ -37,6 +46,30 @@ impl Error {
         Self {
             kind,
             message: message.into(),
+            request: None,
+        }
+    }
+
+    /// Reports a network problem the module ran into while doing `what`,
+    /// with what its last request got back.
+    pub(crate) fn network(module: &str, what: &str, last: LastRequest) -> Self {
+        let from = if last.requested.is_empty() {
+            String::new()
+        } else {
+            format!(" from {}", last.requested)
+        };
+        let cause = last
+            .error
+            .as_ref()
+            .map(|c| format!(": {c}"))
+            .unwrap_or_default();
+        let message = format!(
+            "{module}: network problem {what} (last status {}{from}){cause}",
+            last.status
+        );
+        Self {
+            request: Some(Box::new(last)),
+            ..Self::new(ErrorKind::Network, message)
         }
     }
 
@@ -58,13 +91,24 @@ impl Error {
             ErrorKind::Cancelled | ErrorKind::CpuLimit => self.kind,
             _ => kind,
         };
-        Self::new(kind, format!("{context}: {}", self.message))
+        Self {
+            kind,
+            message: format!("{context}: {}", self.message),
+            request: self.request,
+        }
     }
 
     /// Returns what kind of failure this is.
     #[must_use]
     pub fn kind(&self) -> ErrorKind {
         self.kind
+    }
+
+    /// Returns what the module's last request got back, for a
+    /// [`Network`](ErrorKind::Network) error.
+    #[must_use]
+    pub fn request(&self) -> Option<&LastRequest> {
+        self.request.as_deref()
     }
 }
 

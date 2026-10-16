@@ -7,13 +7,14 @@ use mlua::{AppDataRefMut, Value};
 
 use crate::bind::state;
 use crate::budget::DEFAULT_CPU_LIMIT;
-use crate::convert::truthy;
+use crate::convert::{to_int, truthy};
 use crate::error::{Error, ErrorKind, Result};
 use crate::globals;
 use crate::http::{HttpConfig, HttpSession, LastRequest};
 use crate::module::{Event, Module, OptionKind, OptionValue};
 use crate::runtime::Runtime;
 use crate::sandbox::WritableFile;
+use crate::series::{MangaInfo, SeriesInfo};
 use crate::site::{Account, AccountStatus, ModuleObject, SiteState};
 
 /// How the sessions a [`Site`](crate::Site) opens reach the network and how
@@ -176,6 +177,35 @@ impl Session {
         self.call(Event::GetDirectoryPageNumber)?;
         let pages = globals::page_count(&self.runtime.lua)?;
         Ok(u32::try_from(pages.max(1)).unwrap_or(u32::MAX))
+    }
+
+    /// Runs `OnGetInfo` for the series at `series_url`, returning its details
+    /// and chapters.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the module has no `OnGetInfo` handler, the handler fails, a
+    /// request it needed failed ([`Network`](ErrorKind::Network)), or the page
+    /// holds no series ([`NotFound`](ErrorKind::NotFound)).
+    pub fn info(&self, series_url: &str) -> Result<SeriesInfo> {
+        *self.state::<MangaInfo>() = MangaInfo::for_url(series_url);
+        globals::set_url(&self.runtime.lua, series_url)?;
+        let code = to_int(&self.runtime.lua, &self.call(Event::GetInfo)?);
+        let module = self.module().name;
+        match code {
+            globals::NET_PROBLEM => {
+                let what = format!("fetching {series_url}");
+                return Err(Error::network(&module, &what, self.last_request()));
+            }
+            globals::INFORMATION_NOT_FOUND => {
+                let message = format!(
+                    "{module}: no series information at {series_url}; the page may have moved"
+                );
+                return Err(Error::new(ErrorKind::NotFound, message));
+            }
+            _ => {}
+        }
+        Ok(std::mem::take(&mut *self.state::<MangaInfo>()).into_series())
     }
 
     /// Runs `OnLogin`, reporting whether the site accepted the credentials.

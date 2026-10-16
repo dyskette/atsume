@@ -449,3 +449,22 @@ fn the_retry_policy_sets_how_often_a_request_is_tried() {
     session.exec("HTTP.RetryCount = 2; HTTP.GET('https://a.example/')");
     assert_eq!(failing.seen.lock().unwrap().len(), 4);
 }
+
+#[test]
+fn a_reported_network_problem_carries_the_last_request() {
+    let transport = scripted(|_, _| Ok(respond(404, "missing")));
+    let init = "local m = NewWebsiteModule(); m.Name = 'Net'; m.OnGetInfo = 'Info'";
+    let rest = "function Info() if not HTTP.GET('https://a.example' .. URL) then return net_problem end end";
+    let session = open_module_with(&config(transport), CancelToken::new(), init, rest);
+    let err = session.info("/series/x").unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Network);
+    let request = err.request().unwrap();
+    assert_eq!(
+        (request.status, request.requested.as_str()),
+        (404, "https://a.example/series/x")
+    );
+    assert_eq!(
+        err.to_string(),
+        "Net: network problem fetching /series/x (last status 404 from https://a.example/series/x)"
+    );
+}
