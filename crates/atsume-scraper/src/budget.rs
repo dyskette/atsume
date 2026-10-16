@@ -9,6 +9,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use mlua::{HookTriggers, Lua, VmState};
 
@@ -43,7 +44,46 @@ impl CancelToken {
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
+
+    /// Fails with [`Cancelled`] once the token is cancelled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Cancelled`] if [`cancel`](Self::cancel) has been called.
+    pub fn check(&self) -> Result<(), Cancelled> {
+        if self.is_cancelled() {
+            Err(Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Sleeps for `duration`, waking early if the token is cancelled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Cancelled`] if the token is cancelled before or during the
+    /// sleep.
+    pub fn sleep(&self, duration: Duration) -> Result<(), Cancelled> {
+        let deadline = Instant::now() + duration;
+        loop {
+            self.check()?;
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Ok(());
+            }
+            std::thread::sleep(left.min(CANCEL_POLL));
+        }
+    }
 }
+
+/// How often a blocking wait checks whether the scrape was cancelled.
+pub(crate) const CANCEL_POLL: Duration = Duration::from_millis(20);
+
+/// The scrape was cancelled while waiting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("scrape cancelled")]
+pub struct Cancelled;
 
 /// Why the hook ended a call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

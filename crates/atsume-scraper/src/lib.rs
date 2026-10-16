@@ -9,14 +9,19 @@
 //! `docs/MODULES.md`.
 
 pub mod budget;
+mod document;
 mod error;
 mod host;
+pub mod http;
 mod libs;
 pub mod module;
 mod object;
 pub mod sandbox;
+pub mod strings;
+#[cfg(test)]
+mod testing;
 
-pub use budget::CancelToken;
+pub use budget::{CancelToken, Cancelled};
 pub use error::{Error, Result};
 pub use host::{Account, AccountStatus, Host, Runner};
 pub use module::{Module, ModuleOption, OptionKind, OptionValue};

@@ -65,6 +65,22 @@ pub enum Error {
         /// The website's declared name.
         module: String,
     },
+    /// `OnDownloadImage` returned false.
+    #[error("{module}: module declined to download {url}")]
+    DownloadDeclined {
+        /// The website's declared name.
+        module: String,
+        /// The image asked for.
+        url: String,
+    },
+    /// `OnDownloadImage` succeeded but left no image data.
+    #[error("{module}: module returned no image data for {url}")]
+    EmptyImage {
+        /// The website's declared name.
+        module: String,
+        /// The image asked for.
+        url: String,
+    },
     /// A handler raised. `call` names the website and the function.
     #[error("{call}: {source}")]
     Handler {

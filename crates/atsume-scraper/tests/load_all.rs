@@ -26,7 +26,7 @@ fn upstream_modules_load() {
         files.len()
     );
 
-    let host = Host { lua_dir };
+    let host = Host::new(lua_dir);
     let mut failures = BTreeMap::new();
     for file in &files {
         if let Err(err) = host.open(file, None, None, CancelToken::new()) {

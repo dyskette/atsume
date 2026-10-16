@@ -9,6 +9,7 @@ use mlua::{Function, Lua, Table, Value};
 
 use crate::budget::{Budget, CancelToken, DEFAULT_CPU_LIMIT, Termination};
 use crate::error::{Error, Result};
+use crate::http::{self, Http, HttpConfig, LastRequest};
 use crate::libs;
 use crate::module::{
     self, Module, ModuleOption, OptionKind, OptionValue, Options, Storage, StorageHandle,
@@ -25,10 +26,12 @@ const INFORMATION_NOT_FOUND: i64 = 2;
 ///
 /// The checkout is cloned at run time and never built in: the modules are
 /// GPL-2.0-only, which is incompatible with atsume. See `docs/MODULES.md`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Host {
     /// The `lua` directory of an FMD2 checkout.
     pub lua_dir: PathBuf,
+    /// How runners reach the network.
+    pub http: HttpConfig,
 }
 
 /// A login state, as a module records it in `MODULE.Account.Status`.
@@ -94,13 +97,32 @@ struct SiteState {
 pub struct Runner {
     lua: Lua,
     budget: Rc<Budget>,
+    http: Rc<RefCell<Http>>,
+    writable: WritableFile,
     site: Rc<RefCell<SiteState>>,
     account: Rc<RefCell<Account>>,
     sites: Vec<Module>,
+}
+
+/// A prepared runtime, before a module file runs in it.
+struct Runtime {
+    lua: Lua,
+    budget: Rc<Budget>,
+    http: Rc<RefCell<Http>>,
     writable: WritableFile,
 }
 
 impl Host {
+    /// Returns a host for the checkout at `lua_dir` that reaches the network
+    /// directly, without rate limits.
+    #[must_use]
+    pub fn new(lua_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            lua_dir: lua_dir.into(),
+            http: HttpConfig::default(),
+        }
+    }
+
     /// Loads `file` and prepares a runner for one of the websites it declares.
     ///
     /// A file may declare several websites, or one site under several
@@ -123,14 +145,12 @@ impl Host {
         if cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        let writable = WritableFile::default();
-        let lua = sandbox::new_runtime(&self.lua_dir, Rc::clone(&writable))?;
-        let budget = Budget::new(cancel, DEFAULT_CPU_LIMIT);
-        budget.install(&lua)?;
-        set_constants(&lua)?;
-        let lua_dir = std::path::absolute(&self.lua_dir).map_err(mlua::Error::external)?;
-        libs::preload(&lua, &lua_dir)?;
-
+        let Runtime {
+            lua,
+            budget,
+            http,
+            writable,
+        } = self.runtime(cancel)?;
         let storage = Storage::default();
         let declarations = Declarations::default();
         declarations.register(&lua, &storage)?;
@@ -161,11 +181,32 @@ impl Host {
             account: Rc::default(),
             lua,
             budget,
-            sites,
+            http,
             writable,
+            sites,
         };
         runner.bind_module(&storage)?;
         Ok(runner)
+    }
+
+    /// Builds the sandbox with the budget, the `fmd.*` libraries and the
+    /// globals a module expects before its file runs.
+    fn runtime(&self, cancel: CancelToken) -> Result<Runtime> {
+        let writable = WritableFile::default();
+        let lua = sandbox::new_runtime(&self.lua_dir, Rc::clone(&writable))?;
+        let budget = Budget::new(cancel.clone(), DEFAULT_CPU_LIMIT);
+        budget.install(&lua)?;
+        set_constants(&lua)?;
+        let lua_dir = std::path::absolute(&self.lua_dir).map_err(mlua::Error::external)?;
+        libs::preload(&lua, &lua_dir)?;
+        let http = Rc::new(RefCell::new(Http::new(&self.http, cancel)));
+        lua.globals().set("HTTP", http::bind(&lua, &http)?)?;
+        Ok(Runtime {
+            lua,
+            budget,
+            http,
+            writable,
+        })
     }
 }
 
@@ -452,6 +493,77 @@ impl Runner {
         result.map(|_| ())
     }
 
+    /// Returns what the last request the module made got back.
+    #[must_use]
+    pub fn last_request(&self) -> LastRequest {
+        self.http.borrow().last.clone()
+    }
+
+    /// Runs `OnBeforeDownloadImage` and returns the request headers the module
+    /// set, usually a `Referer` the image host demands.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the handler fails.
+    pub fn before_download_image(&self, image_url: &str) -> Result<HashMap<String, String>> {
+        if !self.has_handler("OnBeforeDownloadImage") {
+            return Ok(HashMap::new());
+        }
+        let headers = Rc::clone(&self.http.borrow().headers);
+        headers.borrow_mut().clear();
+        self.lua.globals().set("URL", image_url)?;
+        self.call("OnBeforeDownloadImage")?;
+        let pairs = headers
+            .borrow()
+            .items()
+            .iter()
+            .filter_map(|pair| pair.split_once('='))
+            .map(|(name, value)| (name.trim().to_owned(), value.to_owned()))
+            .collect();
+        Ok(pairs)
+    }
+
+    /// Runs `OnDownloadImage`, in which the module fetches the image itself and
+    /// may transform it, and returns the bytes it left in `HTTP.Document`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the handler fails, returns false, or leaves no data.
+    pub fn download_image(&self, image_url: &str) -> Result<Vec<u8>> {
+        let document = Rc::clone(&self.http.borrow().document);
+        document.borrow_mut().clear();
+        self.lua.globals().set("URL", image_url)?;
+        let module = self.site.borrow().module.name.clone();
+        let url = image_url.to_owned();
+        if !truthy(&self.call("OnDownloadImage")?) {
+            return Err(Error::DownloadDeclined { module, url });
+        }
+        let data = std::mem::take(&mut *document.borrow_mut());
+        if data.is_empty() {
+            return Err(Error::EmptyImage { module, url });
+        }
+        Ok(data)
+    }
+
+    /// Runs Lua statements in the runner's globals, for tests.
+    #[cfg(test)]
+    pub(crate) fn exec(&self, statements: &str) {
+        self.lua.load(statements).exec().unwrap();
+    }
+
+    /// Evaluates a Lua expression in the runner's globals and returns it as
+    /// text, for tests to look inside a runner.
+    #[cfg(test)]
+    pub(crate) fn eval(&self, expression: &str) -> String {
+        let value: Value = self
+            .lua
+            .load(format!("return {expression}"))
+            .eval()
+            .unwrap();
+        let text = self.lua.coerce_string(value).unwrap();
+        text.map(|s| s.to_string_lossy()).unwrap_or_default()
+    }
+
     /// Calls the Lua function bound to `event` and returns its result.
     pub(crate) fn call(&self, event: &str) -> Result<Value> {
         let (module, function) = {
@@ -512,7 +624,26 @@ impl Runner {
                 Field::Constant(bind_account(lua, &self.account)?),
             )
             .field("ActiveConnectionCount", Field::Constant(Value::Integer(1)));
+        let module = self.bind_cookie_methods(module)?;
         lua.globals().set("MODULE", module.into_value(lua)?)
+    }
+
+    /// Adds the cookie methods a few modules call through `MODULE` rather
+    /// than `HTTP`. They act on the runner's HTTP cookies.
+    fn bind_cookie_methods(&self, module: Object<SiteState>) -> mlua::Result<Object<SiteState>> {
+        let clear = || {
+            let http = Rc::clone(&self.http);
+            self.lua.create_function(move |_, ()| {
+                http.borrow_mut().clear_cookies();
+                Ok(())
+            })
+        };
+        let cookies = Rc::clone(&self.http.borrow().cookies);
+        let add = http::add_server_cookies(&self.lua, &cookies)?;
+        Ok(module
+            .field("ClearCookies", Field::Constant(Value::Function(clear()?)))
+            .field("RemoveCookies", Field::Constant(Value::Function(clear()?)))
+            .field("AddServerCookies", Field::Constant(Value::Function(add))))
     }
 
     /// Builds `MODULE.GetOption(name)`, which returns the setting's value, or

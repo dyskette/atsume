@@ -3,56 +3,10 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 use super::*;
+use crate::testing::{Checkout, open_module};
 
-/// An FMD2-shaped checkout in a temporary directory.
-struct Checkout {
-    dir: TempDir,
-}
-
-impl Checkout {
-    /// Writes each `(path, source)` under the checkout's `lua` directory.
-    fn new(files: &[(&str, &str)]) -> Self {
-        let dir = TempDir::new().unwrap();
-        for (name, source) in files {
-            let path = dir.path().join("lua").join(name);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, source).unwrap();
-        }
-        Self { dir }
-    }
-
-    fn file(&self, name: &str) -> PathBuf {
-        self.dir.path().join("lua").join(name)
-    }
-
-    fn open(&self, name: &str, site: Option<&str>, root_url: Option<&str>) -> Result<Runner> {
-        let host = Host {
-            lua_dir: self.dir.path().join("lua"),
-        };
-        host.open(&self.file(name), site, root_url, CancelToken::new())
-    }
-}
-
-/// Opens a module whose `Init()` is `init` and whose other code is `rest`.
-fn open_module(init: &str, rest: &str) -> Runner {
-    let source = format!("function Init()\n{init}\nend\n{rest}");
-    let checkout = Checkout::new(&[("modules/Test.lua", &source)]);
-    checkout.open("modules/Test.lua", None, None).unwrap()
-}
-
-/// Evaluates a Lua expression in the runner's globals and returns it as text.
 fn eval(runner: &Runner, expression: &str) -> String {
-    let value: Value = runner
-        .lua
-        .load(format!("return {expression}"))
-        .eval()
-        .unwrap();
-    runner
-        .lua
-        .coerce_string(value)
-        .unwrap()
-        .map(|s| s.to_string_lossy())
-        .unwrap_or_default()
+    runner.eval(expression)
 }
 
 const BOM: &str = "\u{FEFF}";
@@ -441,9 +395,7 @@ fn looping_runner() -> (Runner, CancelToken) {
     let cancel = CancelToken::new();
     let source = format!("function Init()\n{init}\nend\n{rest}");
     let checkout = Checkout::new(&[("modules/Loop.lua", &source)]);
-    let host = Host {
-        lua_dir: checkout.dir.path().join("lua"),
-    };
+    let host = Host::new(checkout.dir.path().join("lua"));
     let runner = host
         .open(
             &checkout.file("modules/Loop.lua"),
@@ -496,9 +448,7 @@ fn cancelling_stops_the_running_call_and_every_later_one() {
     // Read from Rust: a cancelled runner runs no more Lua, not even this.
     assert!(runner.lua.globals().get::<Value>("RAN").unwrap().is_nil());
 
-    let host = Host {
-        lua_dir: PathBuf::from("unused"),
-    };
+    let host = Host::new(PathBuf::from("unused"));
     let opening = host
         .open(Path::new("unused.lua"), None, None, cancel)
         .err()
