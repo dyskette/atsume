@@ -77,6 +77,10 @@ pub struct TransportError(pub String);
 ///
 /// An implementation must not follow redirects or keep cookies, and must
 /// return error statuses as responses rather than errors.
+///
+/// Each request runs on a thread of its own. When the scrape is cancelled the
+/// request is abandoned, but its thread lives until `send` returns, so `send`
+/// must give up after a timeout.
 pub trait Transport: Send + Sync {
     /// Sends `request`.
     ///
@@ -92,7 +96,8 @@ pub struct UreqTransport {
 }
 
 impl UreqTransport {
-    /// Returns a transport whose requests time out after `timeout`.
+    /// Returns a transport whose requests time out after `timeout`, which is
+    /// also how long an abandoned request can keep its thread.
     #[must_use]
     pub fn new(timeout: Duration) -> Self {
         let config = ureq::Agent::config_builder()
