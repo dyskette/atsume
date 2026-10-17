@@ -1,4 +1,4 @@
-//! The HTTP session behind one scrape, independent of Lua.
+//! The HTTP session behind one scrape. It does not depend on Lua.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,31 +15,34 @@ use crate::string_list::StringList;
 /// The requests of one scrape, and what the module set up for them.
 ///
 /// Cookies and headers persist across the handler calls of a scrape, as
-/// modules expect. A request reports success as a boolean, which is what
-/// handlers test, and records the outcome for the module to read.
+/// modules expect. Each request reports its success as a boolean, because that
+/// is what handlers test, and records its outcome for the module to read.
 pub(crate) struct HttpSession {
     client: Client,
     solver: Option<Arc<Flaresolverr>>,
     backoff_step: Duration,
-    /// Request headers the module set, as `name=value`.
+    /// The request headers that the module set, each as `name=value`.
     pub(crate) headers: StringList,
-    /// Cookies the module set or a server issued, as `name=value`.
+    /// The cookies that the module set or a server issued, each as
+    /// `name=value`.
     pub(crate) cookies: StringList,
-    /// The body of the last response. Modules see it as `HTTP.Document`.
+    /// The body of the last response, which modules read through
+    /// `HTTP.Document`.
     pub(crate) response_body: Vec<u8>,
-    /// The `Content-Type` of a request with a body. Modules see it as
-    /// `HTTP.MimeType`.
+    /// The `Content-Type` of a request that has a body. Modules read and set
+    /// it through `HTTP.MimeType`.
     pub(crate) request_content_type: String,
-    /// Modules see it as `HTTP.UserAgent`.
+    /// The `User-Agent` header sent with every request. Modules read and
+    /// change it through `HTTP.UserAgent`.
     pub(crate) user_agent: String,
-    /// How many times a failed request is retried. Modules see it as
+    /// How many times a failed request is retried. Modules change it through
     /// `HTTP.RetryCount`.
     pub(crate) max_retries: i64,
-    /// Set once a request was refused because the scrape was cancelled.
-    /// Modules see it as `HTTP.Terminated`.
+    /// Whether a request was refused because the scrape was cancelled.
+    /// Modules read it through `HTTP.Terminated`.
     pub(crate) cancelled: bool,
-    /// What the last request got back, which modules read as `HTTP.LastURL`
-    /// and `HTTP.ResultCode`.
+    /// What the last request got back. Modules read parts of it through
+    /// `HTTP.LastURL` and `HTTP.ResultCode`.
     pub(crate) last_request: LastRequest,
 }
 
@@ -65,7 +68,7 @@ impl HttpSession {
         }
     }
 
-    /// Clears what one request set up, keeping cookies.
+    /// Clears what the last request set up, but keeps the cookies.
     pub(crate) fn reset(&mut self) {
         self.headers.clear();
         self.request_content_type.clear();
@@ -73,17 +76,17 @@ impl HttpSession {
         self.last_request.status = 0;
     }
 
-    /// Forgets every cookie, the module's own and those in the jar.
+    /// Forgets every cookie, both the module's own and those in the jar.
     pub(crate) fn clear_cookies(&mut self) {
         self.cookies.clear();
         self.client.clear_cookies();
     }
 
-    /// Sends a request unless the scrape is cancelled, and reports whether it
-    /// succeeded.
+    /// Sends a request unless the scrape is cancelled, and reports whether the
+    /// request succeeded.
     ///
-    /// A cancelled scrape marks the session terminated, so a module looping
-    /// over requests ends at the next one instead of carrying on.
+    /// A cancelled scrape marks the session as cancelled, so a module that
+    /// loops over requests stops at the next one instead of carrying on.
     pub(crate) fn send(
         &mut self,
         method: Method,
@@ -99,7 +102,7 @@ impl HttpSession {
         sent
     }
 
-    /// Requests `url`, retrying a failure that a retry might fix.
+    /// Requests `url`, and retries a failure that a retry might fix.
     fn send_with_retries(
         &mut self,
         method: Method,
@@ -122,12 +125,12 @@ impl HttpSession {
                 Err(FetchError::Cancelled) => return Err(Cancelled),
                 Err(FetchError::Failed(why)) => self.last_request.error = Some(why),
             }
-            // An interstitial can be solved where an ordinary refusal cannot,
-            // so it is tried before giving up on a 4xx.
+            // An anti-bot interstitial can be solved, while an ordinary refusal
+            // cannot, so solving is tried before giving up on a 4xx.
             if self.try_solve(url)? {
                 return Ok(true);
             }
-            // A 4xx is a real answer, which a retry will not change.
+            // A 4xx status is a real answer, and retrying will not change it.
             if (400..500).contains(&self.last_request.status) {
                 return Ok(false);
             }
@@ -136,7 +139,7 @@ impl HttpSession {
     }
 
     /// Makes one request and records its outcome. Returns whether the status
-    /// was a success, or why no response arrived.
+    /// was a success, or the reason that no response arrived.
     fn send_once(&mut self, method: Method, url: &str, body: &str) -> Result<bool, FetchError> {
         let parsed = Url::parse(url).map_err(|e| FetchError::Failed(format!("{url}: {e}")))?;
         let request = Request {
@@ -176,7 +179,7 @@ impl HttpSession {
             headers.push(("Content-Type".to_owned(), self.request_content_type.clone()));
         }
         for (name, value) in self.headers.pairs() {
-            // A module's header replaces a default of the same name.
+            // A module's header replaces a default header of the same name.
             headers.retain(|(existing, _)| !existing.eq_ignore_ascii_case(name));
             headers.push((name.to_owned(), value.to_owned()));
         }
@@ -184,7 +187,7 @@ impl HttpSession {
     }
 
     /// Tries to recover a refused response through FlareSolverr, and reports
-    /// whether the solved page is a success.
+    /// whether the solved page counts as a success.
     fn try_solve(&mut self, url: &str) -> Result<bool, Cancelled> {
         let Some(solver) = self.solver.clone() else {
             return Ok(false);
@@ -203,8 +206,9 @@ impl HttpSession {
         };
         self.response_body = solution.body;
         self.last_request.status = i64::from(solution.status);
-        // The clearance cookies are bound to the agent that earned them, so
-        // both carry forward, or the next request is challenged again.
+        // The clearance cookies work only with the user agent that earned
+        // them. Both are therefore kept, or the next request would be
+        // challenged again.
         if !solution.user_agent.is_empty() {
             self.user_agent = solution.user_agent;
         }
