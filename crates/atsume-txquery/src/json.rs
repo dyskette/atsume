@@ -388,10 +388,15 @@ const CALL_NAME: &[u8] = b"json";
 /// inside a predicate.
 const STEP_MARKERS: [char; 3] = ['/', '!', '['];
 
+/// The characters besides letters and digits that XPath allows in a name. A
+/// `json` right after one ends a longer name, such as `parse-json` or
+/// `pxp:json`, rather than starting a call.
+const NAME_PUNCTUATION: &[u8] = b"-_.:";
+
 /// Reports whether a `json(` call starts at `i`, rather than a longer name
 /// ending in `json` such as `parse-json`.
 fn starts_call(bytes: &[u8], i: usize) -> bool {
-    let is_name = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':');
+    let is_name = |b: u8| b.is_ascii_alphanumeric() || NAME_PUNCTUATION.contains(&b);
     let preceded_by_name = i > 0 && is_name(bytes[i - 1]);
     let Some(after_name) = bytes[i..].strip_prefix(CALL_NAME) else {
         return false;
