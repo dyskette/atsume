@@ -7,23 +7,23 @@
 use std::cell::{Cell, Ref};
 use std::rc::Rc;
 
-use atsume_txquery::{Document, Item, Node};
+use atsume_txquery::{Item, Node, Page};
 use mlua::{Function, Lua, LuaString, MetaMethod, UserData, UserDataMethods, Value};
 
-use super::SharedDocument;
+use super::SharedPage;
 use crate::convert::{text_of, to_int};
 
 /// The items an expression returned, with the page they came from.
 #[derive(Clone)]
 pub(super) struct ValueObject {
-    document: SharedDocument,
+    page: SharedPage,
     items: Rc<[Item]>,
 }
 
 impl ValueObject {
-    pub(super) fn new(document: SharedDocument, items: Vec<Item>) -> Self {
+    pub(super) fn new(page: SharedPage, items: Vec<Item>) -> Self {
         Self {
-            document,
+            page,
             items: items.into(),
         }
     }
@@ -36,8 +36,8 @@ impl ValueObject {
         data.borrow::<Self>().ok().map(|object| object.clone())
     }
 
-    pub(super) fn document(&self) -> SharedDocument {
-        Rc::clone(&self.document)
+    pub(super) fn shared_page(&self) -> SharedPage {
+        Rc::clone(&self.page)
     }
 
     pub(super) fn items(&self) -> &[Item] {
@@ -70,7 +70,7 @@ impl ValueObject {
     }
 
     /// Returns one item's text.
-    pub(super) fn text_of(&self, item: &Item) -> mlua::Result<String> {
+    pub(super) fn item_text(&self, item: &Item) -> mlua::Result<String> {
         Ok(self.page()?.text(item))
     }
 
@@ -83,8 +83,8 @@ impl ValueObject {
         Ok(self.page()?.attribute(*node, name).unwrap_or_default())
     }
 
-    fn page(&self) -> mlua::Result<Ref<'_, Document>> {
-        self.document
+    fn page(&self) -> mlua::Result<Ref<'_, Page>> {
+        self.page
             .try_borrow()
             .map_err(|_| mlua::Error::runtime("the page is already being read"))
     }
@@ -94,7 +94,7 @@ impl ValueObject {
     fn item_at(&self, position: i64) -> Self {
         let index = usize::try_from(position - 1).ok();
         let item = index.and_then(|index| self.items.get(index));
-        Self::new(self.document(), item.into_iter().cloned().collect())
+        Self::new(self.shared_page(), item.into_iter().cloned().collect())
     }
 
     /// Returns the property `name` of the first item, which modules read on
@@ -105,7 +105,7 @@ impl ValueObject {
             None => None,
         };
         let items = property.map(Item::Node).into_iter().collect();
-        Ok(Self::new(self.document(), items))
+        Ok(Self::new(self.shared_page(), items))
     }
 
     /// Builds the function a generic `for` calls for each item in turn.

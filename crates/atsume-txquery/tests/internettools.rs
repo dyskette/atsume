@@ -7,7 +7,7 @@
 //! GPL-3.0-or-later, copyright Benito van der Zander. Only cases for what
 //! FMD2's modules use are kept; `docs/MODULES.md` says how they were chosen.
 
-use atsume_txquery::{Document, Engine};
+use atsume_txquery::{Engine, Page};
 
 /// A case: its line in internettools' file, the expression, and the text
 /// internettools gives.
@@ -20,7 +20,7 @@ type Case = (u32, &'static str, &'static str);
 /// those cases pass a space as `separator`.
 fn check(page: &str, cases: &[Case], separator: &str) {
     let engine = Engine::new();
-    let mut document = Document::parse_html(page.as_bytes());
+    let mut document = Page::parse_html(page.as_bytes());
     for &(line, expression, expected) in cases {
         let got = document.evaluate(&engine, expression, None).map(|result| {
             let texts: Vec<String> = result

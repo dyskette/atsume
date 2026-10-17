@@ -372,7 +372,7 @@ fn append(xot: &mut Xot, parent: Node, value: &Json) {
     };
     if !text.is_empty() {
         let node = xot.new_text(text);
-        tolerate(xot.append(parent, node));
+        log_if_refused(xot.append(parent, node));
     }
 }
 
@@ -380,10 +380,10 @@ fn append_element(xot: &mut Xot, parent: Node, name: &str, value: &Json) {
     let name = xot.add_name(name);
     let element = xot.new_element(name);
     append(xot, element, value);
-    tolerate(xot.append(parent, element));
+    log_if_refused(xot.append(parent, element));
 }
 
-fn tolerate(result: Result<(), xot::Error>) {
+fn log_if_refused(result: Result<(), xot::Error>) {
     if let Err(error) = result {
         tracing::debug!(%error, "a JSON value was left out of its tree");
     }

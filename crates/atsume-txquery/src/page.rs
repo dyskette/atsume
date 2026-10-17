@@ -15,22 +15,22 @@ use crate::error::Error;
 use crate::value::{Item, Sequence};
 use crate::{html, json};
 
-/// A node of a [`Document`].
+/// A node of a [`Page`].
 ///
-/// It remembers which document it came from. Read on another document it has
-/// no text, attributes or properties, and as an expression's context it is
-/// an error.
+/// It remembers which page it came from. Read on another page it has no
+/// text, attributes or properties, and as an expression's context it is an
+/// error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Node {
-    document: u64,
+    page: u64,
     node: xot::Node,
 }
 
-/// The number the next document is given, so its nodes can be told apart.
-static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(0);
+/// The number the next page is given, so its nodes can be told apart.
+static NEXT_PAGE_ID: AtomicU64 = AtomicU64::new(0);
 
 /// A parsed page that expressions run against.
-pub struct Document {
+pub struct Page {
     id: u64,
     documents: Documents,
     root: xot::Node,
@@ -42,7 +42,7 @@ pub struct Document {
     json_trees: HashMap<String, Vec<xot::Node>>,
 }
 
-impl Document {
+impl Page {
     /// Parses an HTML page. It never fails: malformed markup is repaired as a
     /// browser would.
     #[must_use]
@@ -51,7 +51,7 @@ impl Document {
         let root = html::parse(documents.xot_mut(), html);
         register(&documents, root);
         Self {
-            id: NEXT_DOCUMENT_ID.fetch_add(1, Ordering::Relaxed),
+            id: NEXT_PAGE_ID.fetch_add(1, Ordering::Relaxed),
             documents,
             root,
             raw: String::from_utf8_lossy(html).into_owned(),
@@ -77,14 +77,14 @@ impl Document {
 
     fn node(&self, node: xot::Node) -> Node {
         Node {
-            document: self.id,
+            page: self.id,
             node,
         }
     }
 
-    /// Returns the tree node behind `node`, if it belongs to this document.
+    /// Returns the tree node behind `node`, if it belongs to this page.
     fn own(&self, node: Node) -> Option<xot::Node> {
-        (node.document == self.id).then_some(node.node)
+        (node.page == self.id).then_some(node.node)
     }
 
     /// Evaluates `expression`, starting from `context` or the document node.
@@ -96,7 +96,7 @@ impl Document {
     /// # Errors
     ///
     /// Fails if the expression does not compile, a `json()` argument is not
-    /// JSON, the context is a node of another document, or the expression
+    /// JSON, the context is a node of another page, or the expression
     /// fails while running.
     pub fn evaluate(
         &mut self,
@@ -105,7 +105,7 @@ impl Document {
         context: Option<Node>,
     ) -> Result<Sequence, Error> {
         if context.is_some_and(|node| self.own(node).is_none()) {
-            let message = "the context node belongs to another document".to_owned();
+            let message = "the context node belongs to another page".to_owned();
             return Err(evaluate_error(expression, message));
         }
         let prepared = engine.prepare(expression)?;
@@ -132,7 +132,7 @@ impl Document {
         context: Option<Node>,
     ) -> Result<Vec<xot::Node>, Error> {
         let value = self.evaluate(engine, argument, context)?;
-        let text = self.text_of(&value);
+        let text = self.joined_text(&value);
         let parsed = match self.tree_of(&text) {
             Err(_) if self.is_whole_page(argument, context) => {
                 let raw = std::mem::take(&mut self.raw);
@@ -203,7 +203,7 @@ impl Document {
     fn item(&self, item: XeeItem) -> Item {
         match item {
             XeeItem::Node(node) => Item::Node(self.node(node)),
-            other => Item::Value(other.string_value(self.documents.xot()).unwrap_or_default()),
+            other => Item::Atomic(other.string_value(self.documents.xot()).unwrap_or_default()),
         }
     }
 
@@ -215,14 +215,14 @@ impl Document {
                 .own(*node)
                 .map(|node| self.documents.xot().string_value(node))
                 .unwrap_or_default(),
-            Item::Value(text) => text.clone(),
+            Item::Atomic(text) => text.clone(),
         }
     }
 
     /// Returns a sequence's text as internettools gives it: every item's text,
     /// joined with nothing between.
     #[must_use]
-    pub fn text_of(&self, sequence: &Sequence) -> String {
+    pub fn joined_text(&self, sequence: &Sequence) -> String {
         sequence.items.iter().map(|item| self.text(item)).collect()
     }
 

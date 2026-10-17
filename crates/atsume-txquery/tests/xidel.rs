@@ -8,7 +8,7 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use atsume_txquery::{Document, Engine};
+use atsume_txquery::{Engine, Page};
 use serde_json::Value;
 
 /// A series page shaped like the ones modules read.
@@ -179,12 +179,12 @@ fn items_of(printed: Value) -> Vec<String> {
     };
     match pages.pop() {
         None | Some(Value::Null) => Vec::new(),
-        Some(Value::Array(items)) => items.into_iter().map(text_of).collect(),
-        Some(item) => vec![text_of(item)],
+        Some(Value::Array(items)) => items.into_iter().map(json_text).collect(),
+        Some(item) => vec![json_text(item)],
     }
 }
 
-fn text_of(item: Value) -> String {
+fn json_text(item: Value) -> String {
     match item {
         Value::String(text) => text,
         other => other.to_string(),
@@ -193,7 +193,7 @@ fn text_of(item: Value) -> String {
 
 /// Evaluates `expression` on `page` with atsume.
 fn atsume(engine: &Engine, page: &str, expression: &str) -> Outcome {
-    let mut document = Document::parse_html(page.as_bytes());
+    let mut document = Page::parse_html(page.as_bytes());
     match document.evaluate(engine, expression, None) {
         Ok(result) => Outcome::Items(
             result

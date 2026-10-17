@@ -66,7 +66,7 @@ impl Sink<'_> {
         if xot.is_comment(child) {
             return;
         }
-        tolerate(place(&mut xot, child));
+        log_if_refused(place(&mut xot, child));
     }
 
     fn new_text(&self, text: &str) -> Node {
@@ -187,14 +187,14 @@ impl TreeSink for Sink<'_> {
     }
 
     fn remove_from_parent(&self, target: &Node) {
-        tolerate(self.xot.borrow_mut().detach(*target));
+        log_if_refused(self.xot.borrow_mut().detach(*target));
     }
 
     fn reparent_children(&self, node: &Node, new_parent: &Node) {
         let mut xot = self.xot.borrow_mut();
         let children: Vec<Node> = xot.children(*node).collect();
         for child in children {
-            tolerate(
+            log_if_refused(
                 xot.detach(child)
                     .and_then(|()| xot.append(*new_parent, child)),
             );
@@ -205,7 +205,7 @@ impl TreeSink for Sink<'_> {
 /// Logs a repair the arena refused. html5ever's repairs are valid trees, so
 /// this is not expected; a refusal leaves that node out rather than failing
 /// the page.
-fn tolerate(result: Result<(), xot::Error>) {
+fn log_if_refused(result: Result<(), xot::Error>) {
     if let Err(error) = result {
         tracing::debug!(%error, "a node was left out of the parsed page");
     }

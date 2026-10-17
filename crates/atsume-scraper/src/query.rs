@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use atsume_txquery::{Document, Engine, Item, Node};
+use atsume_txquery::{Engine, Item, Node, Page};
 use mlua::{
     Function, Lua, LuaString, MetaMethod, MultiValue, ObjectLike, UserData, UserDataMethods, Value,
 };
@@ -27,7 +27,7 @@ const DEFAULT_SEPARATOR: &str = ", ";
 
 /// A parsed page, shared by the query that parsed it and every value read
 /// from it.
-type SharedDocument = Rc<RefCell<Document>>;
+type SharedPage = Rc<RefCell<Page>>;
 
 /// Sets the global `CreateTXQuery`. Every query of the runtime shares one
 /// engine, so an expression a module runs in a loop compiles once.
@@ -54,10 +54,10 @@ fn create_query(
             None => return Ok(None),
         },
     };
-    let document = Rc::new(RefCell::new(Document::parse_html(&html)));
+    let page = Rc::new(RefCell::new(Page::parse_html(&html)));
     Ok(Some(QueryObject {
         engine: Rc::clone(engine),
-        document,
+        page,
     }))
 }
 
@@ -77,7 +77,7 @@ fn page_text(lua: &Lua, source: &Value) -> mlua::Result<Option<Vec<u8>>> {
 #[derive(Clone)]
 struct QueryObject {
     engine: Rc<Engine>,
-    document: SharedDocument,
+    page: SharedPage,
 }
 
 impl UserData for QueryObject {
@@ -117,10 +117,10 @@ impl QueryObject {
                 })
             }
             "XPathHREFAll" => lua.create_function(move |lua, arguments| {
-                query.links_and_names(lua, arguments, Names::Text)
+                query.links_and_names(lua, arguments, LinkName::Text)
             }),
             "XPathHREFTitleAll" => lua.create_function(move |lua, arguments| {
-                query.links_and_names(lua, arguments, Names::Title)
+                query.links_and_names(lua, arguments, LinkName::Title)
             }),
             "ParseHTML" => {
                 lua.create_function(move |lua, source: Value| query.parse_html(lua, &source))
@@ -144,25 +144,25 @@ impl QueryObject {
     ) -> mlua::Result<ValueObject> {
         let expression = text_of(lua, expression).unwrap_or_default();
         let Some(context) = ValueObject::from_lua_value(context) else {
-            let items = self.run(&self.document, &expression, None)?;
-            return Ok(ValueObject::new(Rc::clone(&self.document), items));
+            let items = self.run(&self.page, &expression, None)?;
+            return Ok(ValueObject::new(Rc::clone(&self.page), items));
         };
         let Some(node) = context.first_node() else {
-            return Ok(ValueObject::new(context.document(), Vec::new()));
+            return Ok(ValueObject::new(context.shared_page(), Vec::new()));
         };
-        let items = self.run(&context.document(), &expression, Some(node))?;
-        Ok(ValueObject::new(context.document(), items))
+        let items = self.run(&context.shared_page(), &expression, Some(node))?;
+        Ok(ValueObject::new(context.shared_page(), items))
     }
 
-    /// Runs an expression on `document`, logging a failure and returning no
+    /// Runs an expression on `page`, logging a failure and returning no
     /// items for it.
     fn run(
         &self,
-        document: &SharedDocument,
+        page: &SharedPage,
         expression: &str,
         context: Option<Node>,
     ) -> mlua::Result<Vec<Item>> {
-        let mut page = document
+        let mut page = page
             .try_borrow_mut()
             .map_err(|_| mlua::Error::runtime("the page is already being read"))?;
         match page.evaluate(&self.engine, expression, context) {
@@ -208,7 +208,7 @@ impl QueryObject {
         &self,
         lua: &Lua,
         (expression, links, names, context): (Value, Value, Value, Value),
-        source: Names,
+        source: LinkName,
     ) -> mlua::Result<()> {
         let result = self.evaluate(lua, &expression, &context)?;
         let mut hrefs = Vec::new();
@@ -228,7 +228,7 @@ impl QueryObject {
             return Ok(());
         };
         let mut page = self
-            .document
+            .page
             .try_borrow_mut()
             .map_err(|_| mlua::Error::runtime("the page is already being read"))?;
         page.replace_html(&html);
@@ -238,21 +238,21 @@ impl QueryObject {
 
 /// Where `XPathHREFAll` and `XPathHREFTitleAll` read a link's name.
 #[derive(Clone, Copy)]
-enum Names {
+enum LinkName {
     /// The link's text.
     Text,
     /// The link's `title`, or its text when it has none.
     Title,
 }
 
-impl Names {
+impl LinkName {
     /// Reads the name of a selected link.
     ///
     /// Upstream gives a link with no text, such as one wrapping only a cover
     /// image, an empty name. atsume falls back to its `title`, which is where
     /// those sites put the name; this only ever replaces nothing.
     fn read(self, result: &ValueObject, item: &Item) -> mlua::Result<String> {
-        let text = pascal_trim(&result.text_of(item)?).to_owned();
+        let text = pascal_trim(&result.item_text(item)?).to_owned();
         let title = result.attribute_of(item, "title")?;
         let preferred = match self {
             Self::Text => text.clone(),

@@ -1,15 +1,16 @@
 //! What an expression returns.
 
-use crate::document::Node;
+use crate::page::Node;
 
 /// One value an expression returned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
-    /// A node of the document.
+    /// A node of the page.
     Node(Node),
-    /// Any other value, as the text internettools gives it: a number, a
-    /// boolean, a string. A JSON object reads as `""`, as upstream's does.
-    Value(String),
+    /// An atomic value, such as a string, number or boolean, as the text
+    /// internettools gives it. A map or array reads as `""`, as upstream's
+    /// JSON objects do.
+    Atomic(String),
 }
 
 /// The values an expression returned, in order.
