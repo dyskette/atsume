@@ -142,7 +142,7 @@ token by token into standard XPath: dots and calls on JSON values, `?`
 lookups, `jn:keys`, `jn:members`, `css()` and bare `true`/`false`/`null`.
 `json(…)` is evaluated first and its tree bound to a variable. As of the
 revision measured, 3602 of 3603 call sites compile; the corpus test in
-`src/corpus.rs` fails below 99%.
+`tests/corpus.rs` fails below 99%.
 
 Three readings follow upstream where it is easy to get wrong:
 

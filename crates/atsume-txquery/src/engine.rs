@@ -49,6 +49,21 @@ impl Engine {
         Self::default()
     }
 
+    /// Checks that `expression` compiles, and every `json()` argument in it,
+    /// without a page to run on.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first compile error, naming the expression or argument
+    /// that failed.
+    pub fn check(&self, expression: &str) -> Result<(), Error> {
+        let prepared = self.prepare(expression)?;
+        prepared
+            .json_arguments
+            .iter()
+            .try_for_each(|argument| self.check(argument))
+    }
+
     /// Rewrites `expression` into standard XPath and compiles it, or returns
     /// the result of an earlier call with the same expression.
     pub(crate) fn prepare(&self, expression: &str) -> Result<Rc<Prepared>, Error> {

@@ -389,3 +389,14 @@ fn a_node_of_another_page_reads_as_nothing() {
     assert!(matches!(failed, Error::Evaluate { .. }), "{failed}");
     assert_eq!(first.text(&Item::Node(paragraph)), "first");
 }
+
+#[test]
+fn check_compiles_an_expression_and_its_json_arguments() {
+    let engine = Engine::new();
+    assert_eq!(engine.check("json(//script).data.items()"), Ok(()));
+    let failed = engine.check("json(//[).data").unwrap_err();
+    assert!(
+        matches!(&failed, Error::Compile { expression, .. } if expression == "//["),
+        "{failed}"
+    );
+}

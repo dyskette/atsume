@@ -21,8 +21,6 @@
 //! tree, then the compiled query runs over the page with those trees bound.
 //! `docs/MODULES.md` explains the choices upstream forced.
 
-#[cfg(test)]
-mod corpus;
 mod css;
 mod dialect;
 mod engine;

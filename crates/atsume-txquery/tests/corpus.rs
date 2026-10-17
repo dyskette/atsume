@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::engine::Engine;
+use atsume_txquery::Engine;
 
 /// The TXQuery methods whose first argument is an expression. Longer names
 /// come first, so `XPathStringAll` is not read as `XPathString`.
@@ -24,14 +24,14 @@ const METHODS: [&str; 6] = [
 const PLACEHOLDER: &str = "PH";
 
 /// One expression a module passes to TXQuery.
-pub(crate) struct Expression {
-    pub(crate) text: String,
-    pub(crate) file: PathBuf,
+struct Expression {
+    text: String,
+    file: PathBuf,
 }
 
 /// Reads every expression passed to a TXQuery method in the `.lua` files
 /// under `lua_dir`.
-pub(crate) fn expressions(lua_dir: &Path) -> std::io::Result<Vec<Expression>> {
+fn expressions(lua_dir: &Path) -> std::io::Result<Vec<Expression>> {
     let mut found = Vec::new();
     for file in lua_files(lua_dir)? {
         let source = std::fs::read_to_string(&file)?;
@@ -197,16 +197,6 @@ fn lua_literal(term: &str) -> Option<String> {
     Some(text)
 }
 
-/// Prepares `expression` the way evaluation does, and each `json()`
-/// argument in it, since those are evaluated as expressions of their own.
-fn compiles(engine: &Engine, expression: &str) -> Result<(), String> {
-    let prepared = engine.prepare(expression).map_err(|e| e.to_string())?;
-    prepared
-        .json_arguments
-        .iter()
-        .try_for_each(|argument| compiles(engine, argument))
-}
-
 /// The share of upstream's expressions that must compile.
 const MIN_COMPILE_RATE: f64 = 0.99;
 
@@ -225,7 +215,7 @@ fn upstream_expressions_compile() {
     let engine = Engine::new();
     let failures: Vec<(&Expression, String)> = found
         .iter()
-        .filter_map(|e| compiles(&engine, &e.text).err().map(|why| (e, why)))
+        .filter_map(|e| engine.check(&e.text).err().map(|why| (e, why.to_string())))
         .collect();
     for (expression, why) in &failures {
         let file = expression
@@ -253,28 +243,23 @@ fn upstream_expressions_compile() {
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lua_arguments_collapse_into_expressions() {
-        let source = r#"
-            local a = x.XPathString('//h1')
-            x.XPathStringAll('//a[@id="' .. id .. '"]', LINKS)
-            x.XPath([[//div[@class="c"] ]], node)
-            local count = x.XPathCount(expr)
-            v.XPathString("concat(a, ', ')")
-        "#;
-        let found = expressions_in(source);
-        assert_eq!(
-            found,
-            [
-                "//h1",
-                r#"//a[@id="PH"]"#,
-                r#"//div[@class="c"] "#,
-                "concat(a, ', ')"
-            ]
-        );
-    }
+#[test]
+fn lua_arguments_collapse_into_expressions() {
+    let source = r#"
+        local a = x.XPathString('//h1')
+        x.XPathStringAll('//a[@id="' .. id .. '"]', LINKS)
+        x.XPath([[//div[@class="c"] ]], node)
+        local count = x.XPathCount(expr)
+        v.XPathString("concat(a, ', ')")
+    "#;
+    let found = expressions_in(source);
+    assert_eq!(
+        found,
+        [
+            "//h1",
+            r#"//a[@id="PH"]"#,
+            r#"//div[@class="c"] "#,
+            "concat(a, ', ')"
+        ]
+    );
 }
