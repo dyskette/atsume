@@ -47,8 +47,10 @@ that line, and then say why in the attribute's `reason`.
 
 - Explain why, not what. If a comment restates the code, delete it or rename
   something.
-- A doc comment opens with one sentence saying what the item does. Add more
-  only for what a caller must know: errors, edge cases, an upstream contract.
+- A doc comment opens with one sentence saying what the item does. For a
+  field or a variant, that opening may be a noun phrase naming what it holds
+  ("The cover image's address."). Add more only for what a caller must know,
+  such as errors, edge cases or an upstream contract.
 - Write full, plain sentences that a reader new to the file understands
   without any other context. Every sentence has a subject and a verb, and a
   pronoun refers only to something the same comment has named.
