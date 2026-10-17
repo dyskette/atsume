@@ -10,7 +10,7 @@ use crate::runtime::convert::to_int;
 use crate::upstream::declaration::StorageObject;
 use crate::upstream::http::{add_server_cookies, clear_cookies};
 
-/// The website a runner scrapes, kept in the runtime as `MODULE` exposes it.
+/// The website a session scrapes, kept in the runtime as `MODULE` exposes it.
 pub(crate) struct SiteRecord {
     pub(crate) declaration: SiteDeclaration,
     /// The value of each setting: the declared default until a caller sets it.

@@ -27,7 +27,7 @@ pub(crate) const MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 
 /// The one file a module may write, if any, kept in the runtime.
 ///
-/// The runner sets it to the page `OnAfterImageSaved` is editing, which
+/// The session sets it to the page `OnAfterImageSaved` is editing, which
 /// upstream lets that hook rewrite in place, and clears it afterwards.
 #[derive(Debug, Default)]
 pub(crate) struct WritableFile(pub(crate) Option<PathBuf>);

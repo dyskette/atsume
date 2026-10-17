@@ -27,7 +27,7 @@ pub(crate) enum Termination {
     Cancelled,
 }
 
-/// The state the hook reads and the runner resets around each call.
+/// The state the hook reads and the runtime resets around each call.
 #[derive(Debug)]
 pub(crate) struct Budget {
     cancel: CancelToken,

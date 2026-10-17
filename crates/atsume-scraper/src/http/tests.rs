@@ -65,7 +65,7 @@ fn config(transport: Arc<dyn Transport>) -> HttpConfig {
 }
 
 /// Opens a module with no handlers, for evaluating `HTTP` calls directly.
-fn runner(transport: Arc<dyn Transport>) -> Session {
+fn open_session(transport: Arc<dyn Transport>) -> Session {
     open_module_with(
         &config(transport),
         CancelToken::new(),
@@ -85,19 +85,19 @@ fn header<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
 #[test]
 fn get_records_the_response() {
     let transport = scripted(|_, _| Ok(respond(200, "<b>payload</b>")));
-    let runner = runner(transport.clone());
+    let session = open_session(transport.clone());
     assert_eq!(
-        runner.eval("tostring(HTTP.GET('https://a.example/x'))"),
+        session.eval("tostring(HTTP.GET('https://a.example/x'))"),
         "true"
     );
-    assert_eq!(runner.eval("HTTP.ResultCode"), "200");
-    assert_eq!(runner.eval("HTTP.LastURL"), "https://a.example/x");
-    assert_eq!(runner.eval("HTTP.Document.ToString()"), "<b>payload</b>");
+    assert_eq!(session.eval("HTTP.ResultCode"), "200");
+    assert_eq!(session.eval("HTTP.LastURL"), "https://a.example/x");
+    assert_eq!(session.eval("HTTP.Document.ToString()"), "<b>payload</b>");
     assert_eq!(
-        runner.eval("#HTTP.Document .. '|' .. HTTP.Document.Size"),
+        session.eval("#HTTP.Document .. '|' .. HTTP.Document.Size"),
         "14|14"
     );
-    assert_eq!(runner.eval("tostring(HTTP.Document)"), "<b>payload</b>");
+    assert_eq!(session.eval("tostring(HTTP.Document)"), "<b>payload</b>");
 
     let seen = transport.seen.lock().unwrap();
     assert_eq!(header(&seen[0], "User-Agent"), Some(DEFAULT_USER_AGENT));
@@ -107,10 +107,10 @@ fn get_records_the_response() {
 #[test]
 fn request_methods_send_what_upstream_sends() {
     let transport = scripted(|_, _| Ok(respond(200, "ok")));
-    let runner = runner(transport.clone());
-    runner.exec("HTTP.POST('https://a.example/form', 'q=1')");
-    runner.exec("HTTP.Reset(); HTTP.XHR('https://a.example/api')");
-    runner.exec(
+    let session = open_session(transport.clone());
+    session.exec("HTTP.POST('https://a.example/form', 'q=1')");
+    session.exec("HTTP.Reset(); HTTP.XHR('https://a.example/api')");
+    session.exec(
         "HTTP.Reset(); HTTP.Headers.Values['User-Agent'] = 'Mine'; HTTP.HEAD('https://a.example/')",
     );
 
@@ -129,9 +129,9 @@ fn request_methods_send_what_upstream_sends() {
 #[test]
 fn a_refusal_is_final_but_a_server_error_is_retried() {
     let refused = scripted(|_, _| Ok(respond(404, "missing")));
-    let runner_404 = runner(refused.clone());
+    let session_404 = open_session(refused.clone());
     assert_eq!(
-        runner_404.eval("tostring(HTTP.GET('https://a.example/'))"),
+        session_404.eval("tostring(HTTP.GET('https://a.example/'))"),
         "false"
     );
     assert_eq!(refused.seen.lock().unwrap().len(), 1);
@@ -143,9 +143,9 @@ fn a_refusal_is_final_but_a_server_error_is_retried() {
             Ok(respond(200, "ok"))
         }
     });
-    let runner_500 = runner(failing.clone());
+    let session_500 = open_session(failing.clone());
     assert_eq!(
-        runner_500.eval("tostring(HTTP.GET('https://a.example/'))"),
+        session_500.eval("tostring(HTTP.GET('https://a.example/'))"),
         "true"
     );
     assert_eq!(failing.seen.lock().unwrap().len(), 3);
@@ -154,14 +154,14 @@ fn a_refusal_is_final_but_a_server_error_is_retried() {
 #[test]
 fn no_answer_is_recorded_and_retried() {
     let unreachable = scripted(|_, _| Err(TransportError("connection refused".to_owned())));
-    let runner = runner(unreachable.clone());
-    runner.exec("HTTP.RetryCount = 1");
+    let session = open_session(unreachable.clone());
+    session.exec("HTTP.RetryCount = 1");
     assert_eq!(
-        runner.eval("tostring(HTTP.GET('https://a.example/p'))"),
+        session.eval("tostring(HTTP.GET('https://a.example/p'))"),
         "false"
     );
     assert_eq!(unreachable.seen.lock().unwrap().len(), 2);
-    let last = runner.last_request();
+    let last = session.last_request();
     assert_eq!(last.status, 0);
     assert_eq!(last.error.as_deref(), Some("connection refused"));
     assert_eq!(last.requested, "https://a.example/p");
@@ -179,14 +179,14 @@ fn redirects_are_followed_and_a_move_is_recorded() {
         )),
         _ => Ok(respond(200, "landed")),
     });
-    let runner = runner(transport.clone());
-    runner.exec("HTTP.Cookies.Values['mine'] = 'yes'");
+    let session = open_session(transport.clone());
+    session.exec("HTTP.Cookies.Values['mine'] = 'yes'");
     assert_eq!(
-        runner.eval("tostring(HTTP.POST('https://old.example/form', 'a=1'))"),
+        session.eval("tostring(HTTP.POST('https://old.example/form', 'a=1'))"),
         "true"
     );
-    assert_eq!(runner.eval("HTTP.LastURL"), "https://new.example/landing");
-    let moved = runner.last_request().moved;
+    assert_eq!(session.eval("HTTP.LastURL"), "https://new.example/landing");
+    let moved = session.last_request().moved;
     assert_eq!(
         moved,
         Some(("old.example".to_owned(), "https://new.example".to_owned()))
@@ -211,11 +211,11 @@ fn cookies_travel_both_ways() {
             &[("Set-Cookie", "session=abc123; Path=/")],
         ))
     });
-    let runner = runner(transport.clone());
-    runner.exec("HTTP.Cookies.Values['ageGatePass'] = 'True'");
-    runner.exec("HTTP.GET('https://a.example/')");
-    assert_eq!(runner.eval("HTTP.Cookies.Values['session']"), "abc123");
-    runner.exec("HTTP.GET('https://a.example/again')");
+    let session = open_session(transport.clone());
+    session.exec("HTTP.Cookies.Values['ageGatePass'] = 'True'");
+    session.exec("HTTP.GET('https://a.example/')");
+    assert_eq!(session.eval("HTTP.Cookies.Values['session']"), "abc123");
+    session.exec("HTTP.GET('https://a.example/again')");
 
     let seen = transport.seen.lock().unwrap();
     assert_eq!(header(&seen[0], "Cookie"), Some("ageGatePass=True"));
@@ -226,8 +226,8 @@ fn cookies_travel_both_ways() {
     );
     drop(seen);
 
-    runner.exec("MODULE.ClearCookies()");
-    runner.exec("HTTP.GET('https://a.example/cleared')");
+    session.exec("MODULE.ClearCookies()");
+    session.exec("HTTP.GET('https://a.example/cleared')");
     assert_eq!(header(&transport.seen.lock().unwrap()[2], "Cookie"), None);
 }
 
@@ -243,8 +243,8 @@ fn cancelling_ends_a_module_looping_over_requests() {
     });
     let init = "local m = NewWebsiteModule(); m.Name = 'Pager'; m.OnGetInfo = 'List'";
     let rest = "function List() local n = 0 while true do HTTP.GET('https://a.example/' .. n); n = n + 1 end end";
-    let runner = open_module_with(&config(transport.clone()), cancel, init, rest);
-    let err = runner.call(Event::ReadSeries).unwrap_err();
+    let session = open_module_with(&config(transport.clone()), cancel, init, rest);
+    let err = session.call(Event::ReadSeries).unwrap_err();
     assert!(err.kind() == ErrorKind::Cancelled, "{err}");
     assert_eq!(transport.seen.lock().unwrap().len(), 3);
 }
@@ -258,13 +258,13 @@ fn cancelling_abandons_a_request_in_flight() {
     });
     let init = "local m = NewWebsiteModule(); m.Name = 'Slow'; m.OnGetInfo = 'Fetch'";
     let rest = "function Fetch() return HTTP.GET('https://slow.example/') end";
-    let runner = open_module_with(&config(transport), cancel.clone(), init, rest);
+    let session = open_module_with(&config(transport), cancel.clone(), init, rest);
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(50));
         cancel.cancel();
     });
     let start = Instant::now();
-    let err = runner.call(Event::ReadSeries).unwrap_err();
+    let err = session.call(Event::ReadSeries).unwrap_err();
     assert!(err.kind() == ErrorKind::Cancelled, "{err}");
     assert!(
         start.elapsed() < Duration::from_secs(2),
@@ -281,7 +281,7 @@ fn challenged_site(body: &'static str) -> Arc<dyn Transport> {
     scripted(move |_, _| Ok(respond(403, body)))
 }
 
-fn runner_with_solver(site: Arc<dyn Transport>, solver: Arc<dyn Transport>) -> Session {
+fn open_session_with_solver(site: Arc<dyn Transport>, solver: Arc<dyn Transport>) -> Session {
     let flaresolverr = Flaresolverr::with_transport("http://solver:8191", solver).unwrap();
     let http = HttpConfig {
         solver: Some(Arc::new(flaresolverr)),
@@ -294,22 +294,22 @@ fn runner_with_solver(site: Arc<dyn Transport>, solver: Arc<dyn Transport>) -> S
 fn flaresolverr_recovers_a_challenged_page() {
     let solver = scripted(|_, _| Ok(respond(200, SOLVED)));
     let site = challenged_site("<title>Just a moment...</title>");
-    let runner = runner_with_solver(site, solver.clone());
+    let session = open_session_with_solver(site, solver.clone());
     assert_eq!(
-        runner.eval("tostring(HTTP.GET('https://cf.example/'))"),
+        session.eval("tostring(HTTP.GET('https://cf.example/'))"),
         "true"
     );
     assert_eq!(
-        runner.eval("HTTP.Document.ToString()"),
+        session.eval("HTTP.Document.ToString()"),
         "<b>real content</b>"
     );
     // The clearance cookie and its agent carry forward together.
     assert_eq!(
-        runner.eval("HTTP.Cookies.Values['cf_clearance']"),
+        session.eval("HTTP.Cookies.Values['cf_clearance']"),
         "token123"
     );
-    assert_eq!(runner.eval("HTTP.UserAgent"), "SolvedAgent/1.0");
-    assert!(runner.last_request().challenged);
+    assert_eq!(session.eval("HTTP.UserAgent"), "SolvedAgent/1.0");
+    assert!(session.last_request().challenged);
 
     let seen = solver.seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
@@ -319,9 +319,9 @@ fn flaresolverr_recovers_a_challenged_page() {
 #[test]
 fn flaresolverr_is_not_used_for_an_ordinary_refusal() {
     let solver = scripted(|_, _| Ok(respond(200, SOLVED)));
-    let runner = runner_with_solver(challenged_site("<h1>Forbidden</h1>"), solver.clone());
+    let session = open_session_with_solver(challenged_site("<h1>Forbidden</h1>"), solver.clone());
     assert_eq!(
-        runner.eval("tostring(HTTP.GET('https://cf.example/'))"),
+        session.eval("tostring(HTTP.GET('https://cf.example/'))"),
         "false"
     );
     assert_eq!(
@@ -339,13 +339,13 @@ fn image_hooks_use_the_http_object() {
     let rest =
         "function Before() HTTP.Headers.Values['Referer'] = MODULE.RootURL .. 'r'; return true end
         function Download() return HTTP.GET(URL) end";
-    let mut runner = open_module_with(&config(transport), CancelToken::new(), init, rest);
-    let headers = runner
+    let mut session = open_module_with(&config(transport), CancelToken::new(), init, rest);
+    let headers = session
         .before_download_image("https://img.example/1.jpg")
         .unwrap();
     assert_eq!(headers.get("Referer").map(String::as_str), Some("r"));
     assert_eq!(
-        runner.download_image("https://img.example/1.jpg").unwrap(),
+        session.download_image("https://img.example/1.jpg").unwrap(),
         b"IMAGE"
     );
 }
@@ -420,14 +420,14 @@ fn the_session_works_without_lua() {
 
 #[test]
 fn unknown_fields_read_as_nil_and_ignore_writes() {
-    let runner = runner(scripted(|_, _| Ok(respond(200, ""))));
-    runner.exec("HTTP.Nonexistent = 1; MODULE.Nonexistent = 1; MODULE.Account.Nonexistent = 1");
+    let session = open_session(scripted(|_, _| Ok(respond(200, ""))));
+    session.exec("HTTP.Nonexistent = 1; MODULE.Nonexistent = 1; MODULE.Account.Nonexistent = 1");
     let read = "tostring(HTTP.Nonexistent) .. tostring(MODULE.Nonexistent) .. tostring(MODULE.Account.Nonexistent)";
-    assert_eq!(runner.eval(read), "nilnilnil");
+    assert_eq!(session.eval(read), "nilnilnil");
     // Declared fields still read and write through to the state.
-    runner.exec("HTTP.UserAgent = 'Mine'; MODULE.Account.Status = asValid");
+    session.exec("HTTP.UserAgent = 'Mine'; MODULE.Account.Status = asValid");
     assert_eq!(
-        runner.eval("HTTP.UserAgent .. MODULE.Account.Status"),
+        session.eval("HTTP.UserAgent .. MODULE.Account.Status"),
         "Mine1"
     );
 }
