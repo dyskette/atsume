@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use xee_xpath::context::Variables;
 use xee_xpath::query::SequenceQuery;
@@ -14,13 +15,23 @@ use crate::error::Error;
 use crate::value::{Item, Sequence};
 use crate::{html, json};
 
-/// A node of a [`Document`]. It is only meaningful with the document it came
-/// from.
+/// A node of a [`Document`].
+///
+/// It remembers which document it came from. Read on another document it has
+/// no text, attributes or properties, and as an expression's context it is
+/// an error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Node(xot::Node);
+pub struct Node {
+    document: u64,
+    node: xot::Node,
+}
+
+/// The number the next document is given, so its nodes can be told apart.
+static NEXT_DOCUMENT_ID: AtomicU64 = AtomicU64::new(0);
 
 /// A parsed page that expressions run against.
 pub struct Document {
+    id: u64,
     documents: Documents,
     root: xot::Node,
     /// The page as received, which `json(*)` falls back to when the parsed
@@ -40,6 +51,7 @@ impl Document {
         let root = html::parse(documents.xot_mut(), html);
         register(&documents, root);
         Self {
+            id: NEXT_DOCUMENT_ID.fetch_add(1, Ordering::Relaxed),
             documents,
             root,
             raw: String::from_utf8_lossy(html).into_owned(),
@@ -60,7 +72,19 @@ impl Document {
     /// Returns the document node, the context an expression starts from.
     #[must_use]
     pub fn root(&self) -> Node {
-        Node(self.root)
+        self.node(self.root)
+    }
+
+    fn node(&self, node: xot::Node) -> Node {
+        Node {
+            document: self.id,
+            node,
+        }
+    }
+
+    /// Returns the tree node behind `node`, if it belongs to this document.
+    fn own(&self, node: Node) -> Option<xot::Node> {
+        (node.document == self.id).then_some(node.node)
     }
 
     /// Evaluates `expression`, starting from `context` or the document node.
@@ -72,13 +96,18 @@ impl Document {
     /// # Errors
     ///
     /// Fails if the expression does not compile, a `json()` argument is not
-    /// JSON, or the expression fails while running.
+    /// JSON, the context is a node of another document, or the expression
+    /// fails while running.
     pub fn evaluate(
         &mut self,
         engine: &Engine,
         expression: &str,
         context: Option<Node>,
     ) -> Result<Sequence, Error> {
+        if context.is_some_and(|node| self.own(node).is_none()) {
+            let message = "the context node belongs to another document".to_owned();
+            return Err(evaluate_error(expression, message));
+        }
         let prepared = engine.prepare(expression)?;
         let trees = prepared
             .json_arguments
@@ -119,7 +148,7 @@ impl Document {
     /// Reports whether a `json()` argument reads the whole page.
     fn is_whole_page(&self, argument: &str, context: Option<Node>) -> bool {
         matches!(argument.trim(), "*" | "." | "/" | "/*")
-            && context.is_none_or(|node| node.0 == self.root)
+            && context.is_none_or(|node| node.node == self.root)
     }
 
     /// Parses `text` as JSON into a tree, reusing the tree of an earlier call
@@ -152,7 +181,7 @@ impl Document {
             variables.insert(name, tree.iter().copied().collect());
         }
         let mut builder = query.dynamic_context_builder(&self.documents);
-        builder.context_node(context.map_or(self.root, |node| node.0));
+        builder.context_node(context.map_or(self.root, |node| node.node));
         builder.variables(variables);
         let dynamic = builder.build();
         // xee panics on a few arithmetic edge cases, such as round() to a huge
@@ -173,7 +202,7 @@ impl Document {
     /// `""`, as an object does upstream.
     fn item(&self, item: XeeItem) -> Item {
         match item {
-            XeeItem::Node(node) => Item::Node(Node(node)),
+            XeeItem::Node(node) => Item::Node(self.node(node)),
             other => Item::Value(other.string_value(self.documents.xot()).unwrap_or_default()),
         }
     }
@@ -182,7 +211,10 @@ impl Document {
     #[must_use]
     pub fn text(&self, item: &Item) -> String {
         match item {
-            Item::Node(node) => self.documents.xot().string_value(node.0),
+            Item::Node(node) => self
+                .own(*node)
+                .map(|node| self.documents.xot().string_value(node))
+                .unwrap_or_default(),
             Item::Value(text) => text.clone(),
         }
     }
@@ -198,8 +230,9 @@ impl Document {
     /// ignored, as upstream's `GetAttribute` ignores it.
     #[must_use]
     pub fn attribute(&self, node: Node, name: &str) -> Option<String> {
+        let node = self.own(node)?;
         let xot = self.documents.xot();
-        let attributes = xot.attributes(node.0);
+        let attributes = xot.attributes(node);
         let found = attributes
             .iter()
             .find(|(attribute, _)| xot.local_name_str(*attribute).eq_ignore_ascii_case(name));
@@ -210,13 +243,14 @@ impl Document {
     /// JSON object is read.
     #[must_use]
     pub fn property(&self, node: Node, name: &str) -> Option<Node> {
+        let node = self.own(node)?;
         let xot = self.documents.xot();
-        xot.children(node.0)
+        xot.children(node)
             .find(|&child| {
                 xot.element(child)
                     .is_some_and(|element| xot.local_name_str(element.name()) == name)
             })
-            .map(Node)
+            .map(|child| self.node(child))
     }
 }
 

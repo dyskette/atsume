@@ -373,3 +373,19 @@ fn json_keys_still_match_exactly() {
     let title = page.evaluate(&engine, r#"json(*)("title")"#, None).unwrap();
     assert_eq!(page.text_of(&title), "lower");
 }
+
+#[test]
+fn a_node_of_another_document_reads_as_nothing() {
+    let engine = Engine::new();
+    let mut first = Document::parse_html(br#"<p id="a">first</p>"#);
+    let mut second = Document::parse_html(b"<p>second</p>");
+    let paragraph = first_node(&mut first, &engine, "//p");
+    assert_eq!(second.text(&Item::Node(paragraph)), "");
+    assert_eq!(second.attribute(paragraph, "id"), None);
+    assert_eq!(second.property(paragraph, "p"), None);
+    let failed = second
+        .evaluate(&engine, "text()", Some(paragraph))
+        .unwrap_err();
+    assert!(matches!(failed, Error::Evaluate { .. }), "{failed}");
+    assert_eq!(first.text(&Item::Node(paragraph)), "first");
+}
