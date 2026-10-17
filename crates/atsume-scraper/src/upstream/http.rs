@@ -13,18 +13,20 @@ pub(crate) struct HttpObject;
 
 impl UserData for HttpObject {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
-        text_field(fields, "MimeType", |h: &mut HttpSession| &mut h.mime_type);
+        text_field(fields, "MimeType", |h: &mut HttpSession| {
+            &mut h.request_content_type
+        });
         text_field(fields, "UserAgent", |h: &mut HttpSession| &mut h.user_agent);
-        text_field(fields, "LastURL", |h: &mut HttpSession| &mut h.last.url);
+        text_field(fields, "LastURL", |h: &mut HttpSession| {
+            &mut h.last_request.url
+        });
         int_field(fields, "RetryCount", |h: &mut HttpSession| {
-            &mut h.retry_count
+            &mut h.max_retries
         });
         int_field(fields, "ResultCode", |h: &mut HttpSession| {
-            &mut h.last.status
+            &mut h.last_request.status
         });
-        bool_field(fields, "Terminated", |h: &mut HttpSession| {
-            &mut h.terminated
-        });
+        bool_field(fields, "Terminated", |h: &mut HttpSession| &mut h.cancelled);
         fields.add_field_function_get("Headers", |_, _: AnyUserData| {
             Ok(ListObject::<HttpSession>::new(|h| &mut h.headers))
         });
@@ -32,7 +34,7 @@ impl UserData for HttpObject {
             Ok(ListObject::<HttpSession>::new(|h| &mut h.cookies))
         });
         fields.add_field_function_get("Document", |_, _: AnyUserData| {
-            Ok(DocumentObject::<HttpSession>::new(|h| &mut h.document))
+            Ok(DocumentObject::<HttpSession>::new(|h| &mut h.response_body))
         });
     }
 
@@ -85,8 +87,8 @@ fn send(
 
 /// Sends a `POST` body as a form unless the module chose a type.
 fn default_to_form_body(http: &mut HttpSession) {
-    if http.mime_type.is_empty() {
-        "application/x-www-form-urlencoded".clone_into(&mut http.mime_type);
+    if http.request_content_type.is_empty() {
+        "application/x-www-form-urlencoded".clone_into(&mut http.request_content_type);
     }
 }
 

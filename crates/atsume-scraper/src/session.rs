@@ -175,7 +175,7 @@ impl Session {
     /// Returns what the last request the module made got back.
     #[must_use]
     pub fn last_request(&self) -> LastRequest {
-        self.state::<HttpSession>().last.clone()
+        self.state::<HttpSession>().last_request.clone()
     }
 
     /// Runs `OnGetNameAndLink` for one page of directory listing `listing`,
@@ -396,14 +396,14 @@ impl Session {
     ///
     /// Fails if the handler fails, returns false, or leaves no data.
     pub fn download_image(&mut self, image_url: &str) -> Result<Vec<u8>> {
-        self.state::<HttpSession>().document.clear();
+        self.state::<HttpSession>().response_body.clear();
         globals::set_url(&self.runtime.lua, image_url)?;
         let site_name = self.site_name();
         if !truthy(&self.call(Event::DownloadImage)?) {
             let message = format!("{site_name}: module declined to download {image_url}");
             return Err(Error::new(ErrorKind::Module, message));
         }
-        let data = std::mem::take(&mut self.state::<HttpSession>().document);
+        let data = std::mem::take(&mut self.state::<HttpSession>().response_body);
         if data.is_empty() {
             let message = format!("{site_name}: module returned no image data for {image_url}");
             return Err(Error::new(ErrorKind::Module, message));

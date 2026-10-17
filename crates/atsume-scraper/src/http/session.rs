@@ -25,14 +25,22 @@ pub(crate) struct HttpSession {
     pub(crate) headers: StringList,
     /// Cookies the module set or a server issued, as `name=value`.
     pub(crate) cookies: StringList,
-    /// The body of the last response.
-    pub(crate) document: Vec<u8>,
-    pub(crate) mime_type: String,
+    /// The body of the last response. Modules see it as `HTTP.Document`.
+    pub(crate) response_body: Vec<u8>,
+    /// The `Content-Type` of a request with a body. Modules see it as
+    /// `HTTP.MimeType`.
+    pub(crate) request_content_type: String,
+    /// Modules see it as `HTTP.UserAgent`.
     pub(crate) user_agent: String,
-    pub(crate) retry_count: i64,
+    /// How many times a failed request is retried. Modules see it as
+    /// `HTTP.RetryCount`.
+    pub(crate) max_retries: i64,
     /// Set once a request was refused because the scrape was cancelled.
-    pub(crate) terminated: bool,
-    pub(crate) last: LastRequest,
+    /// Modules see it as `HTTP.Terminated`.
+    pub(crate) cancelled: bool,
+    /// What the last request got back, which modules read as `HTTP.LastURL`
+    /// and `HTTP.ResultCode`.
+    pub(crate) last_request: LastRequest,
 }
 
 impl HttpSession {
@@ -48,21 +56,21 @@ impl HttpSession {
             backoff: config.retry.backoff,
             headers: StringList::default(),
             cookies: StringList::default(),
-            document: Vec::new(),
-            mime_type: String::new(),
+            response_body: Vec::new(),
+            request_content_type: String::new(),
             user_agent: DEFAULT_USER_AGENT.to_owned(),
-            retry_count: i64::from(config.retry.retries),
-            terminated: false,
-            last: LastRequest::default(),
+            max_retries: i64::from(config.retry.retries),
+            cancelled: false,
+            last_request: LastRequest::default(),
         }
     }
 
     /// Clears what one request set up, keeping cookies.
     pub(crate) fn reset(&mut self) {
         self.headers.clear();
-        self.mime_type.clear();
-        self.document.clear();
-        self.last.status = 0;
+        self.request_content_type.clear();
+        self.response_body.clear();
+        self.last_request.status = 0;
     }
 
     /// Forgets every cookie, the module's own and those in the jar.
@@ -87,18 +95,18 @@ impl HttpSession {
             .cancel_token()
             .check()
             .and_then(|()| self.request(method, url, body));
-        self.terminated |= sent.is_err();
+        self.cancelled |= sent.is_err();
         sent
     }
 
     /// Requests `url`, retrying a failure that a retry might fix.
     fn request(&mut self, method: Method, url: &str, body: &str) -> Result<bool, Cancelled> {
-        self.document.clear();
-        self.last.status = 0;
-        self.last.error = None;
-        url.clone_into(&mut self.last.requested);
+        self.response_body.clear();
+        self.last_request.status = 0;
+        self.last_request.error = None;
+        url.clone_into(&mut self.last_request.requested);
 
-        for attempt in 0..=self.retry_count {
+        for attempt in 0..=self.max_retries {
             if attempt > 0 {
                 let pause = self.backoff * u32::try_from(attempt).unwrap_or(u32::MAX);
                 self.client.cancel_token().sleep(pause)?;
@@ -107,7 +115,7 @@ impl HttpSession {
                 Ok(true) => return Ok(true),
                 Ok(false) => {}
                 Err(SendError::Cancelled) => return Err(Cancelled),
-                Err(SendError::Failed(why)) => self.last.error = Some(why),
+                Err(SendError::Failed(why)) => self.last_request.error = Some(why),
             }
             // An interstitial can be solved where an ordinary refusal cannot,
             // so it is tried before giving up on a 4xx.
@@ -115,7 +123,7 @@ impl HttpSession {
                 return Ok(true);
             }
             // A 4xx is a real answer, which a retry will not change.
-            if (400..500).contains(&self.last.status) {
+            if (400..500).contains(&self.last_request.status) {
                 return Ok(false);
             }
         }
@@ -137,11 +145,11 @@ impl HttpSession {
             response,
         } = self.client.fetch(request, self.cookies.items())?;
 
-        self.last.status = i64::from(response.status);
-        self.last.url = final_url.to_string();
-        if self.last.moved.is_none() && final_url.host_str() != parsed.host_str() {
+        self.last_request.status = i64::from(response.status);
+        self.last_request.url = final_url.to_string();
+        if self.last_request.moved.is_none() && final_url.host_str() != parsed.host_str() {
             let from = parsed.host_str().unwrap_or_default().to_owned();
-            self.last.moved = Some((from, final_url.origin().ascii_serialization()));
+            self.last_request.moved = Some((from, final_url.origin().ascii_serialization()));
         }
         // Modules read the cookies after a login, to see whether the server
         // issued the session cookie they need.
@@ -150,15 +158,15 @@ impl HttpSession {
                 self.cookies.set_value(cookie.name(), cookie.value());
             }
         }
-        self.last.challenged |= has_challenge_markers(&response.body);
-        self.document = response.body;
+        self.last_request.challenged |= has_challenge_markers(&response.body);
+        self.response_body = response.body;
         Ok((200..400).contains(&response.status))
     }
 
     fn request_headers(&self, body: &str) -> Vec<(String, String)> {
         let mut headers = vec![("User-Agent".to_owned(), self.user_agent.clone())];
-        if !self.mime_type.is_empty() && !body.is_empty() {
-            headers.push(("Content-Type".to_owned(), self.mime_type.clone()));
+        if !self.request_content_type.is_empty() && !body.is_empty() {
+            headers.push(("Content-Type".to_owned(), self.request_content_type.clone()));
         }
         for (name, value) in self.headers.pairs() {
             // A module's header replaces a default of the same name.
@@ -174,7 +182,7 @@ impl HttpSession {
         let Some(solver) = self.solver.clone() else {
             return Ok(false);
         };
-        if !looks_like_challenge(self.last.status, &self.document) {
+        if !looks_like_challenge(self.last_request.status, &self.response_body) {
             return Ok(false);
         }
         tracing::info!(url, "anti-bot challenge; solving");
@@ -186,8 +194,8 @@ impl HttpSession {
                 return Ok(false);
             }
         };
-        self.document = solution.body;
-        self.last.status = i64::from(solution.status);
+        self.response_body = solution.body;
+        self.last_request.status = i64::from(solution.status);
         // The clearance cookies are bound to the agent that earned them, so
         // both carry forward, or the next request is challenged again.
         if !solution.user_agent.is_empty() {

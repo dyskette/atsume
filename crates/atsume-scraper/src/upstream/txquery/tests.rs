@@ -32,14 +32,14 @@ struct Lists {
 fn run(source: &str) -> mlua::Result<String> {
     let lua = Lua::new();
     let mut http = HttpSession::new(&HttpConfig::default(), CancelToken::new());
-    http.document = PAGE.as_bytes().to_vec();
+    http.response_body = PAGE.as_bytes().to_vec();
     lua.set_app_data(http);
     lua.set_app_data(Lists::default());
     register(&lua)?;
     let globals = lua.globals();
     globals.set(
         "DOC",
-        DocumentObject::<HttpSession>::new(|h| &mut h.document),
+        DocumentObject::<HttpSession>::new(|h| &mut h.response_body),
     )?;
     globals.set("JSON", JSON)?;
     globals.set("LINKS", ListObject::<Lists>::new(|l| &mut l.links))?;
