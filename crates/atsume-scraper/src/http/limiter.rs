@@ -1,4 +1,4 @@
-//! Spacing out requests to each site.
+//! Spaces out the requests to each site.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -8,8 +8,8 @@ use crate::cancel::{CancelToken, Cancelled};
 
 /// Decides when a request to a host may go out.
 ///
-/// The download workers share one limiter, so a run across hundreds of sites
-/// stays polite to each of them.
+/// The download workers share one limiter, so that a run across hundreds of
+/// sites stays polite to each of them.
 pub trait Limiter: Send + Sync {
     /// Blocks until a request to `host` may proceed.
     ///
@@ -30,20 +30,22 @@ impl Limiter for Unlimited {
 
 /// Limits the rate of requests to each host separately.
 ///
-/// A global limit would either hold the whole queue to the slowest site's
-/// pace or overload a small one, so each host gets its own budget.
+/// A single global limit would either hold the whole queue to the slowest
+/// site's pace or overload a small site. Each host therefore gets its own
+/// budget.
 pub struct HostLimiter {
     /// The time between requests to one host at the steady rate.
     interval: Duration,
-    /// How many requests to one host may go out at once before spacing in.
+    /// How many requests to one host may go out at once before the limiter
+    /// starts spacing them out.
     burst: u32,
-    /// When each host's next request would be due at the steady rate.
+    /// For each host, when its next request would be due at the steady rate.
     due: Mutex<HashMap<String, Instant>>,
 }
 
 impl HostLimiter {
-    /// Allows `per_second` requests a second to each host, with bursts of up
-    /// to `burst`. A rate of zero or less means no limit.
+    /// Allows `per_second` requests per second to each host, with bursts of
+    /// up to `burst` requests. A rate of zero or less means no limit.
     #[must_use]
     pub fn new(per_second: f64, burst: u32) -> Self {
         let interval = if per_second > 0.0 {
@@ -58,11 +60,12 @@ impl HostLimiter {
         }
     }
 
-    /// Books the next request to `host` and returns when it may go out.
+    /// Books the next request to `host` and returns the time at which it may
+    /// go out.
     ///
-    /// This is the generic cell rate algorithm: each request pushes the host's
-    /// due time one interval later, and a request may go out once it is
-    /// within `burst` intervals of that time.
+    /// This is the generic cell rate algorithm. Each request pushes the host's
+    /// due time one interval later, and a request may go out once it is within
+    /// `burst` intervals of that time.
     fn reserve(&self, host: &str) -> Instant {
         let now = Instant::now();
         let mut due = self
@@ -95,7 +98,7 @@ mod tests {
         for _ in 0..3 {
             limiter.wait("a.example", &cancel).unwrap();
         }
-        // Three requests at 20 a second need two 50 ms gaps.
+        // Three requests at 20 per second need two gaps of 50 ms.
         assert!(
             start.elapsed() >= Duration::from_millis(95),
             "{:?}",
