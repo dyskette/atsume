@@ -99,6 +99,16 @@ fn failures_say_which_kind_they_are() {
 }
 
 #[test]
+fn a_panic_inside_the_engine_is_an_evaluation_error() {
+    let engine = Engine::new();
+    let mut page = page();
+    let failed = page
+        .evaluate(&engine, "round(10.3, -5000)", None)
+        .unwrap_err();
+    assert!(matches!(failed, Error::Evaluate { .. }), "{failed}");
+}
+
+#[test]
 fn an_expression_is_compiled_once() {
     let engine = Engine::new();
     let mut page = page();

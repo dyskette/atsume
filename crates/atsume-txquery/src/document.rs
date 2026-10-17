@@ -1,6 +1,7 @@
 //! A parsed page and the expressions run against it.
 
 use std::collections::HashMap;
+use std::panic::{self, AssertUnwindSafe};
 
 use xee_xpath::context::Variables;
 use xee_xpath::{Documents, Item as XeeItem, Query};
@@ -147,9 +148,16 @@ impl Document {
         builder.context_node(context.map_or(self.root, |node| node.0));
         builder.variables(variables);
         let dynamic = builder.build();
-        let result = query
-            .execute_with_context(&mut self.documents, &dynamic)
-            .map_err(|e| evaluate_error(expression, e.to_string()))?;
+        // xee panics on a few arithmetic edge cases, such as round() to a huge
+        // negative precision, and a module's expression must not end the scrape.
+        let documents = &mut self.documents;
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            query.execute_with_context(documents, &dynamic)
+        }));
+        let Ok(result) = outcome else {
+            return Err(evaluate_error(expression, "the engine panicked".to_owned()));
+        };
+        let result = result.map_err(|e| evaluate_error(expression, e.to_string()))?;
         let items = result.iter().map(|item| self.item(item)).collect();
         Ok(Sequence { items })
     }
