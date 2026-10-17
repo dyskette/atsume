@@ -1,13 +1,13 @@
-//! The shape of the links modules hand back.
+//! Puts the links that modules return into the shapes the rest of atsume uses.
 
 use url::Url;
 
-/// Puts a link into the shape upstream stores, which is the shape modules
-/// expect to be handed back later.
+/// Puts a link into the shape that upstream stores, which is the shape modules
+/// expect to get back later.
 ///
-/// Upstream gives a bare identifier a leading slash, so a module that returns
-/// `abc` and later builds `API_URL .. '/chapter' .. URL` gets `/chapter/abc`.
-/// Absolute addresses and paths pass through unchanged.
+/// Upstream gives a bare identifier a leading slash. A module that returns
+/// `abc` and later builds `API_URL .. '/chapter' .. URL` therefore gets
+/// `/chapter/abc`. Absolute addresses and paths pass through unchanged.
 pub(crate) fn normalize_link(link: &str) -> String {
     let link = link.trim();
     if link.is_empty() || link.starts_with('/') || link.contains("://") {
@@ -16,12 +16,13 @@ pub(crate) fn normalize_link(link: &str) -> String {
     format!("/{link}")
 }
 
-/// Resolves a link against the site's address, as a browser would, so a bare
-/// path or a scheme-relative `//cdn.example/p.jpg` becomes absolute.
+/// Resolves a link against the site's address, as a browser would. A bare
+/// path, or a scheme-relative link such as `//cdn.example/p.jpg`, becomes
+/// absolute.
 ///
-/// An empty link is the site's address itself. A link that is already
-/// absolute, or that cannot be resolved, is returned as it is. This is what
-/// FMD2's `MaybeFillHost` does.
+/// An empty link resolves to the site's address itself. A link that is
+/// already absolute, or that cannot be resolved, is returned unchanged. FMD2's
+/// `MaybeFillHost` behaves the same way.
 pub(crate) fn resolve_link(root_url: &str, link: &str) -> String {
     if link.is_empty() {
         return root_url.to_owned();
