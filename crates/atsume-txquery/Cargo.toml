@@ -15,5 +15,8 @@ tracing.workspace = true
 xee-xpath.workspace = true
 xot.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

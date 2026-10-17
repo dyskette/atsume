@@ -52,3 +52,24 @@ jobs:
       - run: make rust-corpus
         env:
           ATSUME_FMD2_DIR: ${{ runner.temp }}/fmd2
+
+  rust-xidel:
+    runs-on: ubuntu-latest
+    env:
+      # A development build, pinned by checksum: the last release, 0.9.8, is
+      # from 2018. See docs/MODULES.md.
+      XIDEL_BUILD: 0.9.9.20230617.8842.e14a96920e01
+      XIDEL_SHA256: 91615dfa99a8e45e4d84d3c2ed3c453c568d2d7825b1c476f95c48d6ff1a0e02
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+      - name: Install xidel
+        run: |
+          url="https://sourceforge.net/projects/videlibri/files/Xidel/Xidel%20development/xidel-$XIDEL_BUILD.linux64.tar.gz/download"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/xidel.tar.gz" "$url"
+          echo "$XIDEL_SHA256  $RUNNER_TEMP/xidel.tar.gz" | sha256sum --check
+          mkdir "$RUNNER_TEMP/xidel"
+          tar -xzf "$RUNNER_TEMP/xidel.tar.gz" -C "$RUNNER_TEMP/xidel" xidel
+      - run: make rust-xidel
+        env:
+          ATSUME_XIDEL: ${{ runner.temp }}/xidel/xidel

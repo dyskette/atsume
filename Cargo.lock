@@ -104,6 +104,7 @@ name = "atsume-txquery"
 version = "0.1.0"
 dependencies = [
  "html5ever",
+ "serde_json",
  "thiserror",
  "tracing",
  "xee-xpath",
