@@ -3,7 +3,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use super::*;
-use crate::runtime::convert::text_of;
+use crate::runtime::convert::lua_text;
 
 /// Runs `source` in a fresh sandbox over the checkout at `root` and returns
 /// its result as text.
@@ -11,7 +11,7 @@ fn eval_in(root: &Path, writable: Option<&Path>, source: &str) -> mlua::Result<S
     let lua = new_sandboxed_lua(&root.join("lua"))?;
     lua.set_app_data(WritableFile(writable.map(Path::to_path_buf)));
     let value: Value = lua.load(source).eval()?;
-    Ok(text_of(&lua, &value).unwrap_or_else(|| value.type_name().to_owned()))
+    Ok(lua_text(&lua, &value).unwrap_or_else(|| value.type_name().to_owned()))
 }
 
 fn eval(root: &Path, source: &str) -> String {

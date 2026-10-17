@@ -3,8 +3,8 @@
 
 use mlua::{Function, Lua, MetaMethod, UserData, UserDataMethods, Value};
 
-use crate::runtime::bind::{Place, state};
-use crate::runtime::convert::{int_arg, string_arg, to_int};
+use crate::runtime::bind::{Place, borrow_state};
+use crate::runtime::convert::{int_arg, lua_int, text_arg};
 use crate::string_list::{StringList, split_lines};
 
 /// The Lua face of a list kept in the runtime's state `S`.
@@ -29,12 +29,12 @@ impl<S: 'static> ListObject<S> {
     }
 
     fn with<R>(self, lua: &Lua, act: impl FnOnce(&mut StringList) -> R) -> mlua::Result<R> {
-        Ok(act((self.place)(&mut *state::<S>(lua)?)))
+        Ok(act((self.place)(&mut *borrow_state::<S>(lua)?)))
     }
 
     fn index(self, lua: &Lua, key: &Value) -> mlua::Result<Value> {
         if let Value::Integer(_) | Value::Number(_) = key {
-            let item = self.with(lua, |list| list.get(to_int(lua, key)).to_owned())?;
+            let item = self.with(lua, |list| list.get(lua_int(lua, key)).to_owned())?;
             return Ok(Value::String(lua.create_string(item)?));
         }
         let Value::String(name) = key else {
@@ -57,7 +57,7 @@ impl<S: 'static> ListObject<S> {
     fn method(self, lua: &Lua, name: &str) -> mlua::Result<Option<Function>> {
         let function = match name {
             "Add" => lua.create_function(move |lua, item: Value| {
-                let item = string_arg(lua, &item, 1)?;
+                let item = text_arg(lua, &item, 1)?;
                 self.with(lua, |list| list.add(item))
             }),
             "Clear" => lua.create_function(move |lua, ()| self.with(lua, StringList::clear)),
@@ -67,7 +67,7 @@ impl<S: 'static> ListObject<S> {
                 self.with(lua, |list| list.delete(index))
             }),
             "IndexOf" => lua.create_function(move |lua, item: Value| {
-                let item = string_arg(lua, &item, 1)?;
+                let item = text_arg(lua, &item, 1)?;
                 self.with(lua, |list| list.index_of(&item))
             }),
             "Get" => lua.create_function(move |lua, index: Value| {
@@ -82,19 +82,19 @@ impl<S: 'static> ListObject<S> {
 
     fn new_index(self, lua: &Lua, key: &Value, value: &Value) -> mlua::Result<()> {
         if let Value::Integer(_) | Value::Number(_) = key {
-            let item = string_arg(lua, value, 3)?;
-            return self.with(lua, |list| list.put(to_int(lua, key), item));
+            let item = text_arg(lua, value, 3)?;
+            return self.with(lua, |list| list.put(lua_int(lua, key), item));
         }
         let Value::String(name) = key else {
             return Ok(());
         };
         match name.to_str()?.as_ref() {
             "CommaText" => {
-                let text = string_arg(lua, value, 3)?;
+                let text = text_arg(lua, value, 3)?;
                 self.with(lua, |list| list.set_comma_text(&text))
             }
             "Text" => {
-                let lines = split_lines(&string_arg(lua, value, 3)?);
+                let lines = split_lines(&text_arg(lua, value, 3)?);
                 self.with(lua, |list| list.set(lines))
             }
             _ => Ok(()),
@@ -123,15 +123,15 @@ struct ValuesObject<S>(ListObject<S>);
 impl<S: 'static> UserData for ValuesObject<S> {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |lua, values, name: Value| {
-            let name = string_arg(lua, &name, 2)?;
+            let name = text_arg(lua, &name, 2)?;
             let value = values.0.with(lua, |list| list.value(&name).to_owned())?;
             lua.create_string(value)
         });
         methods.add_meta_method(
             MetaMethod::NewIndex,
             |lua, values, (name, value): (Value, Value)| {
-                let name = string_arg(lua, &name, 2)?;
-                let value = string_arg(lua, &value, 3)?;
+                let name = text_arg(lua, &name, 2)?;
+                let value = text_arg(lua, &value, 3)?;
                 values.0.with(lua, |list| list.set_value(&name, &value))
             },
         );

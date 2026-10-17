@@ -15,7 +15,7 @@ use mlua::{
 };
 
 use crate::http::HttpSession;
-use crate::runtime::convert::{pascal_trim, text_of};
+use crate::runtime::convert::{lua_text, pascal_trim};
 use crate::upstream::document::DocumentObject;
 
 mod value;
@@ -69,7 +69,7 @@ fn page_text(lua: &Lua, source: &Value) -> mlua::Result<Option<Vec<u8>>> {
             Ok(document) => document.bytes(lua).map(Some),
             Err(_) => Ok(None),
         },
-        other => Ok(text_of(lua, other).map(String::into_bytes)),
+        other => Ok(lua_text(lua, other).map(String::into_bytes)),
     }
 }
 
@@ -142,7 +142,7 @@ impl QueryObject {
         expression: &Value,
         context: &Value,
     ) -> mlua::Result<ValueObject> {
-        let expression = text_of(lua, expression).unwrap_or_default();
+        let expression = lua_text(lua, expression).unwrap_or_default();
         let Some(context) = ValueObject::from_lua_value(context) else {
             let items = self.run(&self.page, &expression, None)?;
             return Ok(ValueObject::new(Rc::clone(&self.page), items));
@@ -197,7 +197,7 @@ impl QueryObject {
             )?;
             return Ok(None);
         }
-        let separator = text_of(lua, &second).unwrap_or_else(|| DEFAULT_SEPARATOR.to_owned());
+        let separator = lua_text(lua, &second).unwrap_or_else(|| DEFAULT_SEPARATOR.to_owned());
         let result = self.evaluate(lua, &expression, &third)?;
         joined(lua, &result, &separator).map(Some)
     }

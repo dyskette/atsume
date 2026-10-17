@@ -12,8 +12,8 @@ use mlua::{
 };
 
 use super::{WritableFile, normalize, read_in_root};
-use crate::runtime::bind::state;
-use crate::runtime::convert::text_of;
+use crate::runtime::bind::borrow_state;
+use crate::runtime::convert::lua_text;
 
 pub(super) fn library(lua: &Lua, root: PathBuf) -> mlua::Result<Table> {
     let io = lua.create_table()?;
@@ -21,25 +21,25 @@ pub(super) fn library(lua: &Lua, root: PathBuf) -> mlua::Result<Table> {
     io.set(
         "open",
         lua.create_function(move |lua, (name, mode): (String, Option<String>)| {
-            let files = Files::now(lua, &opener)?;
+            let files = Files::openable_now(lua, &opener)?;
             let file = files.open(&name, mode.as_deref().unwrap_or("r"));
-            lua_result(lua, file.map(|file| lua.create_userdata(file)))
+            value_or_nil_and_message(lua, file.map(|file| lua.create_userdata(file)))
         })?,
     )?;
     io.set(
         "lines",
         lua.create_function(move |lua, name: String| {
-            let data = Files::now(lua, &root)?
+            let data = Files::openable_now(lua, &root)?
                 .read(&name)
                 .map_err(mlua::Error::runtime)?;
-            lines_iterator(lua, lua.create_userdata(LuaFile::reading(data))?)
+            lines_iterator(lua, lua.create_userdata(LuaFile::for_reading(data))?)
         })?,
     )?;
     Ok(io)
 }
 
 /// Converts a result into Lua's convention: the value, or `nil` and a message.
-fn lua_result<T: mlua::IntoLua>(
+fn value_or_nil_and_message<T: mlua::IntoLua>(
     lua: &Lua,
     result: Result<mlua::Result<T>, String>,
 ) -> mlua::Result<(Value, Value)> {
@@ -58,8 +58,8 @@ struct Files<'a> {
 
 impl<'a> Files<'a> {
     /// Returns what may be opened at this moment.
-    fn now(lua: &Lua, root: &'a Path) -> mlua::Result<Self> {
-        let writable = state::<WritableFile>(lua)?.0.clone();
+    fn openable_now(lua: &Lua, root: &'a Path) -> mlua::Result<Self> {
+        let writable = borrow_state::<WritableFile>(lua)?.0.clone();
         Ok(Self { root, writable })
     }
 
@@ -67,7 +67,7 @@ impl<'a> Files<'a> {
         if mode.contains(['w', 'a', '+']) {
             self.open_for_writing(name, mode)
         } else {
-            self.read(name).map(LuaFile::reading)
+            self.read(name).map(LuaFile::for_reading)
         }
     }
 
@@ -128,7 +128,7 @@ struct LuaFile {
 }
 
 impl LuaFile {
-    fn reading(data: Vec<u8>) -> Self {
+    fn for_reading(data: Vec<u8>) -> Self {
         Self {
             data,
             pos: 0,
@@ -203,7 +203,7 @@ impl UserData for LuaFile {
         methods.add_method_mut("close", |lua, file, ()| {
             file.check_open()?;
             file.closed = true;
-            lua_result(lua, file.save().map(|()| Ok(true)))
+            value_or_nil_and_message(lua, file.save().map(|()| Ok(true)))
         });
     }
 }
@@ -242,10 +242,13 @@ fn file_write(
     let mut file = handle.borrow_mut::<LuaFile>()?;
     file.check_open()?;
     if file.path.is_none() {
-        return lua_result::<Value>(lua, Err("file not opened for writing".to_owned()));
+        return value_or_nil_and_message::<Value>(
+            lua,
+            Err("file not opened for writing".to_owned()),
+        );
     }
     for (i, arg) in args.iter().enumerate() {
-        let text = text_of(lua, arg).ok_or_else(|| {
+        let text = lua_text(lua, arg).ok_or_else(|| {
             mlua::Error::runtime(format!(
                 "bad argument #{} to 'write' (string expected, got {})",
                 i + 1,

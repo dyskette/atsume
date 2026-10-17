@@ -12,9 +12,9 @@ use crate::model::{
     SiteDeclaration,
 };
 use crate::runtime::Runtime;
-use crate::runtime::bind::state;
+use crate::runtime::bind::borrow_state;
 use crate::runtime::budget::DEFAULT_CPU_LIMIT;
-use crate::runtime::convert::{to_int, truthy};
+use crate::runtime::convert::{lua_int, truthy};
 use crate::runtime::sandbox::WritableFile;
 use crate::upstream::chapter_pages::ChapterPagesRecord;
 use crate::upstream::directory::{DirectoryPageRecord, StatusSink};
@@ -80,31 +80,34 @@ impl Session {
         clippy::expect_used,
         reason = "the session sets every state value before handing itself out, and calls into it never overlap a binding"
     )]
-    fn state<S: 'static>(&self) -> AppDataRefMut<'_, S> {
-        state::<S>(&self.runtime.lua).expect("session state is set and not in use")
+    fn borrow_state<S: 'static>(&self) -> AppDataRefMut<'_, S> {
+        borrow_state::<S>(&self.runtime.lua).expect("session state is set and not in use")
     }
 
     /// Returns the website as its declaration stands now. A module may change
     /// some of it while it runs, such as its address.
     #[must_use]
     pub fn declaration(&self) -> SiteDeclaration {
-        self.state::<SiteRecord>().declaration.clone()
+        self.borrow_state::<SiteRecord>().declaration.clone()
     }
 
     /// Returns the website's name, for error messages.
     fn site_name(&self) -> String {
-        self.state::<SiteRecord>().declaration.name.clone()
+        self.borrow_state::<SiteRecord>().declaration.name.clone()
     }
 
     /// Returns the address the website is reached at now.
     fn root_url(&self) -> String {
-        self.state::<SiteRecord>().declaration.root_url.clone()
+        self.borrow_state::<SiteRecord>()
+            .declaration
+            .root_url
+            .clone()
     }
 
     /// Reports whether the module implements `event`.
     #[must_use]
     pub fn has_handler(&self, event: Event) -> bool {
-        self.state::<SiteRecord>()
+        self.borrow_state::<SiteRecord>()
             .declaration
             .handler(event)
             .is_some()
@@ -118,7 +121,7 @@ impl Session {
     /// suit it: a toggle takes a flag, a number a whole number, a choice
     /// the index of one of its items, and a text setting text.
     pub fn set_option(&mut self, name: &str, value: OptionValue) -> Result<()> {
-        let mut site = self.state::<SiteRecord>();
+        let mut site = self.borrow_state::<SiteRecord>();
         let declaration = &site.declaration;
         let Some(option) = declaration.options.iter().find(|o| o.name == name) else {
             let message = format!("module {} has no setting named {name:?}", declaration.name);
@@ -143,7 +146,7 @@ impl Session {
 
     /// Supplies credentials for a module that implements `OnLogin`.
     pub fn set_account(&mut self, username: &str, password: &str) {
-        let mut account = self.state::<AccountRecord>();
+        let mut account = self.borrow_state::<AccountRecord>();
         account.enabled = !username.is_empty();
         username.clone_into(&mut account.username);
         password.clone_into(&mut account.password);
@@ -152,13 +155,13 @@ impl Session {
     /// Returns the login state the module recorded.
     #[must_use]
     pub fn account_status(&self) -> AccountStatus {
-        self.state::<AccountRecord>().status
+        self.borrow_state::<AccountRecord>().status
     }
 
     /// Points `MODULE.CurrentDirectoryIndex` at directory listing `index`,
     /// counting from 0, which the module reads to know which listing to walk.
     fn select_listing(&mut self, index: u32) -> Result<()> {
-        let mut site = self.state::<SiteRecord>();
+        let mut site = self.borrow_state::<SiteRecord>();
         if index >= site.declaration.listing_count {
             let message = format!(
                 "module {} has {} directory listings, not {}",
@@ -175,7 +178,7 @@ impl Session {
     /// Returns what the last request the module made got back.
     #[must_use]
     pub fn last_request(&self) -> LastRequest {
-        self.state::<HttpSession>().last_request.clone()
+        self.borrow_state::<HttpSession>().last_request.clone()
     }
 
     /// Runs `OnGetNameAndLink` for one page of directory listing `listing`,
@@ -189,9 +192,9 @@ impl Session {
     /// failed ([`Network`](ErrorKind::Network)).
     pub fn directory_page(&mut self, listing: u32, page: u32) -> Result<DirectoryPage> {
         self.select_listing(listing)?;
-        *self.state::<DirectoryPageRecord>() = DirectoryPageRecord::default();
+        *self.borrow_state::<DirectoryPageRecord>() = DirectoryPageRecord::default();
         globals::set_url_to_directory_page(&self.runtime.lua, page)?;
-        let code = to_int(
+        let code = lua_int(
             &self.runtime.lua,
             &self.call_handler(Event::ListDirectoryPage)?,
         );
@@ -203,13 +206,13 @@ impl Session {
                 self.last_request(),
             ));
         }
-        Ok(std::mem::take(&mut *self.state::<DirectoryPageRecord>()).into_page())
+        Ok(std::mem::take(&mut *self.borrow_state::<DirectoryPageRecord>()).into_page())
     }
 
     /// Sends the progress messages a module reports while it runs, through
     /// `UPDATELIST.UpdateStatusText`, to `report`.
     pub fn set_status_reporter(&mut self, report: impl FnMut(&str) + 'static) {
-        self.state::<StatusSink>().0 = Some(Box::new(report));
+        self.borrow_state::<StatusSink>().0 = Some(Box::new(report));
     }
 
     /// Runs `OnGetDirectoryPageNumber`, returning how many pages directory
@@ -240,9 +243,9 @@ impl Session {
     /// request it needed failed ([`Network`](ErrorKind::Network)), or the page
     /// holds no series ([`NotFound`](ErrorKind::NotFound)).
     pub fn series_info(&mut self, series_url: &str) -> Result<SeriesInfo> {
-        *self.state::<SeriesRecord>() = SeriesRecord::for_url(series_url);
+        *self.borrow_state::<SeriesRecord>() = SeriesRecord::for_url(series_url);
         globals::set_url(&self.runtime.lua, series_url)?;
-        let code = to_int(&self.runtime.lua, &self.call_handler(Event::ReadSeries)?);
+        let code = lua_int(&self.runtime.lua, &self.call_handler(Event::ReadSeries)?);
         let site_name = self.site_name();
         match code {
             globals::RETURN_NETWORK_FAILURE => {
@@ -257,7 +260,7 @@ impl Session {
             }
             _ => {}
         }
-        Ok(std::mem::take(&mut *self.state::<SeriesRecord>()).into_series())
+        Ok(std::mem::take(&mut *self.borrow_state::<SeriesRecord>()).into_series())
     }
 
     /// Runs `OnGetPageNumber` for the chapter at `chapter_url`, returning its
@@ -274,14 +277,14 @@ impl Session {
     /// ([`Network`](ErrorKind::Network)), or it lists no pages
     /// ([`NotFound`](ErrorKind::NotFound)).
     pub fn pages(&mut self, chapter_url: &str) -> Result<Vec<ChapterPage>> {
-        *self.state::<ChapterPagesRecord>() = ChapterPagesRecord::for_chapter(chapter_url);
+        *self.borrow_state::<ChapterPagesRecord>() = ChapterPagesRecord::for_chapter(chapter_url);
         globals::set_url(&self.runtime.lua, chapter_url)?;
         let result = self.call_handler(Event::ListChapterPages)?;
         self.check_page_handler_result(&result, &format!("reading pages for {chapter_url}"))?;
 
         let resolvable = self.has_handler(Event::ResolvePageImage);
         let pages = self
-            .state::<ChapterPagesRecord>()
+            .borrow_state::<ChapterPagesRecord>()
             .pages(&self.root_url(), resolvable);
         if pages.is_empty() {
             let message = format!("{}: no pages listed for {chapter_url}", self.site_name());
@@ -305,11 +308,17 @@ impl Session {
     /// address.
     pub fn resolve_page(&mut self, chapter_url: &str, index: usize) -> Result<String> {
         let root_url = self.root_url();
-        if !self.state::<ChapterPagesRecord>().is_for(chapter_url) {
+        if !self
+            .borrow_state::<ChapterPagesRecord>()
+            .is_for(chapter_url)
+        {
             let message = format!("list the pages of {chapter_url} before resolving one");
             return Err(Error::new(ErrorKind::Unsupported, message));
         }
-        if let ChapterPage::Image(url) = self.state::<ChapterPagesRecord>().page(&root_url, index) {
+        if let ChapterPage::Image(url) = self
+            .borrow_state::<ChapterPagesRecord>()
+            .page(&root_url, index)
+        {
             return Ok(url);
         }
         globals::set_url(&self.runtime.lua, chapter_url)?;
@@ -317,7 +326,10 @@ impl Session {
         let action = format!("resolving page {} of {chapter_url}", index + 1);
         let result = self.call_handler(Event::ResolvePageImage)?;
         self.check_page_handler_result(&result, &action)?;
-        match self.state::<ChapterPagesRecord>().page(&root_url, index) {
+        match self
+            .borrow_state::<ChapterPagesRecord>()
+            .page(&root_url, index)
+        {
             ChapterPage::Image(url) => Ok(url),
             ChapterPage::Unresolved => {
                 let message = format!("{}: no image address after {action}", self.site_name());
@@ -359,7 +371,7 @@ impl Session {
         if !self.has_handler(Event::Login) {
             return Err(no_handler(&site_name, Event::Login));
         }
-        if !self.state::<AccountRecord>().enabled {
+        if !self.borrow_state::<AccountRecord>().enabled {
             let message = format!("module {site_name} has no credentials configured");
             return Err(Error::new(ErrorKind::Unsupported, message));
         }
@@ -381,10 +393,10 @@ impl Session {
         if !self.has_handler(Event::BeforeDownloadImage) {
             return Ok(HashMap::new());
         }
-        self.state::<HttpSession>().headers.clear();
+        self.borrow_state::<HttpSession>().headers.clear();
         globals::set_url(&self.runtime.lua, image_url)?;
         self.call_handler(Event::BeforeDownloadImage)?;
-        let http = self.state::<HttpSession>();
+        let http = self.borrow_state::<HttpSession>();
         Ok(http
             .headers
             .pairs()
@@ -399,14 +411,14 @@ impl Session {
     ///
     /// Fails if the handler fails, returns false, or leaves no data.
     pub fn download_image(&mut self, image_url: &str) -> Result<Vec<u8>> {
-        self.state::<HttpSession>().response_body.clear();
+        self.borrow_state::<HttpSession>().response_body.clear();
         globals::set_url(&self.runtime.lua, image_url)?;
         let site_name = self.site_name();
         if !truthy(&self.call_handler(Event::DownloadImage)?) {
             let message = format!("{site_name}: module declined to download {image_url}");
             return Err(Error::new(ErrorKind::Module, message));
         }
-        let data = std::mem::take(&mut self.state::<HttpSession>().response_body);
+        let data = std::mem::take(&mut self.borrow_state::<HttpSession>().response_body);
         if data.is_empty() {
             let message = format!("{site_name}: module returned no image data for {image_url}");
             return Err(Error::new(ErrorKind::Module, message));
@@ -425,9 +437,9 @@ impl Session {
             return Ok(());
         }
         globals::set_filename(&self.runtime.lua, path)?;
-        self.state::<WritableFile>().0 = Some(path.to_path_buf());
+        self.borrow_state::<WritableFile>().0 = Some(path.to_path_buf());
         let result = self.call_handler(Event::AfterImageSaved);
-        self.state::<WritableFile>().0 = None;
+        self.borrow_state::<WritableFile>().0 = None;
         result.map(|_| ())
     }
 
@@ -435,7 +447,7 @@ impl Session {
     pub(crate) fn call_handler(&self, event: Event) -> Result<Value> {
         let site_name = self.site_name();
         let function = self
-            .state::<SiteRecord>()
+            .borrow_state::<SiteRecord>()
             .declaration
             .handler(event)
             .map(str::to_owned);
@@ -464,7 +476,7 @@ impl Session {
     /// Points `event` at another Lua function, for tests.
     #[cfg(test)]
     pub(crate) fn set_handler(&self, event: Event, function: &str) {
-        let mut site = self.state::<SiteRecord>();
+        let mut site = self.borrow_state::<SiteRecord>();
         site.declaration.handlers.insert(event, function.to_owned());
     }
 

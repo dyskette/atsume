@@ -3,8 +3,10 @@
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods, Value};
 
 use crate::http::{HttpSession, Method};
-use crate::runtime::bind::{bool_field, int_field, lenient, state, text_field};
-use crate::runtime::convert::{bad_argument, string_arg, text_of};
+use crate::runtime::bind::{
+    bool_field, borrow_state, ignore_unknown_fields, int_field, text_field,
+};
+use crate::runtime::convert::{bad_argument, lua_text, text_arg};
 use crate::upstream::document::DocumentObject;
 use crate::upstream::string_list::ListObject;
 
@@ -52,21 +54,21 @@ impl UserData for HttpObject {
             send(lua, Method::Get, &url, None, announce_in_page_request)
         });
         methods.add_function("Reset", |lua, ()| {
-            state::<HttpSession>(lua)?.reset();
+            borrow_state::<HttpSession>(lua)?.reset();
             Ok(())
         });
         methods.add_function("ResetBasic", |lua, ()| {
-            state::<HttpSession>(lua)?.reset();
+            borrow_state::<HttpSession>(lua)?.reset();
             Ok(())
         });
         methods.add_function("ClearCookies", clear_cookies);
         methods.add_function("GetCookies", |lua, ()| {
-            Ok(state::<HttpSession>(lua)?.cookies.items().join("; "))
+            Ok(borrow_state::<HttpSession>(lua)?.cookies.items().join("; "))
         });
         methods.add_function("AddServerCookies", add_server_cookies);
         // Proxying is the host's policy, not the module's.
         methods.add_function("SetProxy", |_, _: mlua::MultiValue| Ok(()));
-        lenient(methods);
+        ignore_unknown_fields(methods);
     }
 }
 
@@ -78,9 +80,11 @@ fn send(
     body: Option<&Value>,
     prepare: fn(&mut HttpSession),
 ) -> mlua::Result<bool> {
-    let url = text_of(lua, url).ok_or_else(|| bad_argument(1, "string", url))?;
-    let body = body.and_then(|body| text_of(lua, body)).unwrap_or_default();
-    let mut http = state::<HttpSession>(lua)?;
+    let url = lua_text(lua, url).ok_or_else(|| bad_argument(1, "string", url))?;
+    let body = body
+        .and_then(|body| lua_text(lua, body))
+        .unwrap_or_default();
+    let mut http = borrow_state::<HttpSession>(lua)?;
     prepare(&mut http);
     http.send(method, &url, &body).map_err(mlua::Error::runtime)
 }
@@ -100,13 +104,13 @@ fn announce_in_page_request(http: &mut HttpSession) {
 
 /// `ClearCookies()`, which modules call through `HTTP` or `MODULE`.
 pub(crate) fn clear_cookies(lua: &Lua, (): ()) -> mlua::Result<()> {
-    state::<HttpSession>(lua)?.clear_cookies();
+    borrow_state::<HttpSession>(lua)?.clear_cookies();
     Ok(())
 }
 
 /// `AddServerCookies(url, cookie)`. Upstream takes the cookie second.
 pub(crate) fn add_server_cookies(lua: &Lua, (_, cookie): (Value, Value)) -> mlua::Result<()> {
-    let cookie = string_arg(lua, &cookie, 2)?;
-    state::<HttpSession>(lua)?.cookies.add(cookie);
+    let cookie = text_arg(lua, &cookie, 2)?;
+    borrow_state::<HttpSession>(lua)?.cookies.add(cookie);
     Ok(())
 }

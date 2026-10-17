@@ -5,7 +5,7 @@ use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods};
 
 use crate::links::resolve_link;
 use crate::model::ChapterPage;
-use crate::runtime::bind::{Place, int_field, lenient, text_field};
+use crate::runtime::bind::{Place, ignore_unknown_fields, int_field, text_field};
 use crate::string_list::StringList;
 use crate::upstream::string_list::ListObject;
 
@@ -106,7 +106,7 @@ impl UserData for ChapterPagesObject {
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        lenient(methods);
+        ignore_unknown_fields(methods);
     }
 }
 

@@ -5,8 +5,10 @@ use std::collections::HashMap;
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods, Value};
 
 use crate::model::{AccountStatus, OptionValue, SiteDeclaration};
-use crate::runtime::bind::{bool_field, int_field, lenient, state, text_field};
-use crate::runtime::convert::to_int;
+use crate::runtime::bind::{
+    bool_field, borrow_state, ignore_unknown_fields, int_field, text_field,
+};
+use crate::runtime::convert::lua_int;
 use crate::upstream::declaration::StorageObject;
 use crate::upstream::http::{add_server_cookies, clear_cookies};
 
@@ -90,12 +92,13 @@ impl UserData for ModuleObject {
         });
         fields.add_field_function_get("TotalDirectory", |lua, _: AnyUserData| {
             Ok(i64::from(
-                state::<SiteRecord>(lua)?.declaration.listing_count,
+                borrow_state::<SiteRecord>(lua)?.declaration.listing_count,
             ))
         });
         fields.add_field_function_set("TotalDirectory", |lua, _: AnyUserData, value: Value| {
-            let count = to_int(lua, &value).clamp(1, i64::from(u32::MAX));
-            state::<SiteRecord>(lua)?.declaration.listing_count = u32::try_from(count).unwrap_or(1);
+            let count = lua_int(lua, &value).clamp(1, i64::from(u32::MAX));
+            borrow_state::<SiteRecord>(lua)?.declaration.listing_count =
+                u32::try_from(count).unwrap_or(1);
             Ok(())
         });
         fields.add_field_function_get("Storage", |_, _: AnyUserData| Ok(StorageObject));
@@ -109,16 +112,16 @@ impl UserData for ModuleObject {
         methods.add_function("ClearCookies", clear_cookies);
         methods.add_function("RemoveCookies", clear_cookies);
         methods.add_function("AddServerCookies", add_server_cookies);
-        lenient(methods);
+        ignore_unknown_fields(methods);
     }
 }
 
 /// `MODULE.GetOption(name)`: the setting's value, or `nil` if it has none.
 fn get_option(lua: &Lua, name: &str) -> mlua::Result<Value> {
-    let site = state::<SiteRecord>(lua)?;
+    let site = borrow_state::<SiteRecord>(lua)?;
     site.options
         .get(name)
-        .map_or(Ok(Value::Nil), |value| value.to_lua(lua))
+        .map_or(Ok(Value::Nil), |value| value.to_lua_value(lua))
 }
 
 /// `MODULE.Account`. It holds nothing itself; every access reaches [`AccountRecord`].
@@ -131,15 +134,16 @@ impl UserData for AccountObject {
         text_field(fields, "Password", |a: &mut AccountRecord| &mut a.password);
         text_field(fields, "Cookies", |a: &mut AccountRecord| &mut a.cookies);
         fields.add_field_function_get("Status", |lua, _: AnyUserData| {
-            Ok(state::<AccountRecord>(lua)?.status.code())
+            Ok(borrow_state::<AccountRecord>(lua)?.status.code())
         });
         fields.add_field_function_set("Status", |lua, _: AnyUserData, value: Value| {
-            state::<AccountRecord>(lua)?.status = AccountStatus::from_code(to_int(lua, &value));
+            borrow_state::<AccountRecord>(lua)?.status =
+                AccountStatus::from_code(lua_int(lua, &value));
             Ok(())
         });
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        lenient(methods);
+        ignore_unknown_fields(methods);
     }
 }

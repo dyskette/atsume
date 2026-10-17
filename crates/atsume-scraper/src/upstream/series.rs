@@ -4,8 +4,8 @@ use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods, Value};
 
 use crate::links::normalise_link;
 use crate::model::{Chapter, SeriesInfo, SeriesStatus};
-use crate::runtime::bind::{lenient, text_field};
-use crate::runtime::convert::{string_arg, text_of};
+use crate::runtime::bind::{ignore_unknown_fields, text_field};
+use crate::runtime::convert::{lua_text, text_arg};
 use crate::string_list::StringList;
 use crate::upstream::string_list::ListObject;
 
@@ -145,7 +145,7 @@ impl UserData for SeriesObject {
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        lenient(methods);
+        ignore_unknown_fields(methods);
     }
 }
 
@@ -167,11 +167,11 @@ fn status_from_keywords(
     lua: &Lua,
     (text, ongoing, completed, hiatus, dropped): (Value, Value, Value, Value, Value),
 ) -> mlua::Result<&'static str> {
-    let text = string_arg(lua, &text, 1)?;
+    let text = text_arg(lua, &text, 1)?;
     let lists = [ongoing, completed, hiatus, dropped];
     let mut keywords = DEFAULT_KEYWORDS.map(str::to_owned);
     for (keyword, list) in keywords.iter_mut().zip(&lists) {
-        if let Some(list) = text_of(lua, list) {
+        if let Some(list) = lua_text(lua, list) {
             *keyword = list;
         }
     }

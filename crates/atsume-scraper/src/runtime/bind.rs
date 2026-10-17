@@ -10,7 +10,7 @@ use mlua::{
     AnyUserData, AppDataRefMut, Lua, MetaMethod, UserData, UserDataFields, UserDataMethods, Value,
 };
 
-use crate::runtime::convert::{text_of, to_int, truthy};
+use crate::runtime::convert::{lua_int, lua_text, truthy};
 
 /// Returns the place in a state value that a field reads and writes.
 pub(crate) type Place<S, V> = fn(&mut S) -> &mut V;
@@ -19,7 +19,7 @@ pub(crate) type Place<S, V> = fn(&mut S) -> &mut V;
 ///
 /// A conflicting borrow, which only a binding calling back into another
 /// binding could cause, is reported as a Lua error rather than a panic.
-pub(crate) fn state<S: 'static>(lua: &Lua) -> mlua::Result<AppDataRefMut<'_, S>> {
+pub(crate) fn borrow_state<S: 'static>(lua: &Lua) -> mlua::Result<AppDataRefMut<'_, S>> {
     let name = std::any::type_name::<S>()
         .rsplit("::")
         .next()
@@ -41,10 +41,10 @@ pub(crate) fn text_field<U: UserData, S: 'static, F: UserDataFields<U>>(
     place: Place<S, String>,
 ) {
     fields.add_field_function_get(name, move |lua, _: AnyUserData| {
-        lua.create_string(place(&mut *state::<S>(lua)?).as_str())
+        lua.create_string(place(&mut *borrow_state::<S>(lua)?).as_str())
     });
     fields.add_field_function_set(name, move |lua, _: AnyUserData, value: Value| {
-        *place(&mut *state::<S>(lua)?) = text_of(lua, &value).unwrap_or_default();
+        *place(&mut *borrow_state::<S>(lua)?) = lua_text(lua, &value).unwrap_or_default();
         Ok(())
     });
 }
@@ -57,10 +57,10 @@ pub(crate) fn int_field<U: UserData, S: 'static, F: UserDataFields<U>>(
     place: Place<S, i64>,
 ) {
     fields.add_field_function_get(name, move |lua, _: AnyUserData| {
-        Ok(*place(&mut *state::<S>(lua)?))
+        Ok(*place(&mut *borrow_state::<S>(lua)?))
     });
     fields.add_field_function_set(name, move |lua, _: AnyUserData, value: Value| {
-        *place(&mut *state::<S>(lua)?) = to_int(lua, &value);
+        *place(&mut *borrow_state::<S>(lua)?) = lua_int(lua, &value);
         Ok(())
     });
 }
@@ -72,10 +72,10 @@ pub(crate) fn bool_field<U: UserData, S: 'static, F: UserDataFields<U>>(
     place: Place<S, bool>,
 ) {
     fields.add_field_function_get(name, move |lua, _: AnyUserData| {
-        Ok(*place(&mut *state::<S>(lua)?))
+        Ok(*place(&mut *borrow_state::<S>(lua)?))
     });
     fields.add_field_function_set(name, move |lua, _: AnyUserData, value: Value| {
-        *place(&mut *state::<S>(lua)?) = truthy(&value);
+        *place(&mut *borrow_state::<S>(lua)?) = truthy(&value);
         Ok(())
     });
 }
@@ -83,7 +83,7 @@ pub(crate) fn bool_field<U: UserData, S: 'static, F: UserDataFields<U>>(
 /// Makes unknown fields read as `nil` and ignores writes to them, as
 /// upstream's objects do. mlua consults these only for keys that are not
 /// declared fields or methods.
-pub(crate) fn lenient<U: UserData, M: UserDataMethods<U>>(methods: &mut M) {
+pub(crate) fn ignore_unknown_fields<U: UserData, M: UserDataMethods<U>>(methods: &mut M) {
     methods.add_meta_function(MetaMethod::Index, |_, _: (AnyUserData, Value)| {
         Ok(Value::Nil)
     });

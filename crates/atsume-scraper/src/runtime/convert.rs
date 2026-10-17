@@ -4,7 +4,7 @@ use mlua::{Lua, Value};
 
 /// Reads a string or number as the text Lua would concatenate, and anything
 /// else as `None`.
-pub(crate) fn text_of(lua: &Lua, value: &Value) -> Option<String> {
+pub(crate) fn lua_text(lua: &Lua, value: &Value) -> Option<String> {
     let (Value::String(_) | Value::Integer(_) | Value::Number(_)) = value else {
         return None;
     };
@@ -25,7 +25,7 @@ pub(crate) fn truthy(value: &Value) -> bool {
 
 /// Reads a number, or a string holding one, truncated toward zero. Anything
 /// else is 0.
-pub(crate) fn to_int(lua: &Lua, value: &Value) -> i64 {
+pub(crate) fn lua_int(lua: &Lua, value: &Value) -> i64 {
     if let Value::Integer(n) = value {
         return *n;
     }
@@ -41,15 +41,15 @@ pub(crate) fn to_int(lua: &Lua, value: &Value) -> i64 {
 }
 
 /// Reads argument `position` as a string, accepting a number as Lua does.
-pub(crate) fn string_arg(lua: &Lua, value: &Value, position: usize) -> mlua::Result<String> {
-    text_of(lua, value).ok_or_else(|| bad_argument(position, "string", value))
+pub(crate) fn text_arg(lua: &Lua, value: &Value, position: usize) -> mlua::Result<String> {
+    lua_text(lua, value).ok_or_else(|| bad_argument(position, "string", value))
 }
 
 /// Reads argument `position` as an integer, accepting a float or a numeric
 /// string and truncating it.
 pub(crate) fn int_arg(lua: &Lua, value: &Value, position: usize) -> mlua::Result<i64> {
     match lua.coerce_number(value.clone()) {
-        Ok(Some(_)) => Ok(to_int(lua, value)),
+        Ok(Some(_)) => Ok(lua_int(lua, value)),
         _ => Err(bad_argument(position, "number", value)),
     }
 }

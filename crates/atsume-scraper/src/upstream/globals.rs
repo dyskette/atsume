@@ -7,7 +7,7 @@
 use mlua::{Lua, Value};
 
 use crate::model::AccountStatus;
-use crate::runtime::convert::to_int;
+use crate::runtime::convert::lua_int;
 
 /// The code a handler returns when a request it needed failed. Modules read
 /// it as `net_problem`.
@@ -68,5 +68,5 @@ pub(crate) fn set_directory_page_count(lua: &Lua, pages: i64) -> mlua::Result<()
 
 /// Reads `PAGENUMBER` back as a whole number.
 pub(crate) fn directory_page_count(lua: &Lua) -> mlua::Result<i64> {
-    Ok(to_int(lua, &lua.globals().get::<Value>("PAGENUMBER")?))
+    Ok(lua_int(lua, &lua.globals().get::<Value>("PAGENUMBER")?))
 }

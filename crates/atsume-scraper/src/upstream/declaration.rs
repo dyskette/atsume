@@ -11,13 +11,13 @@ use std::path::Path;
 use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataMethods, Value, Variadic};
 
 use crate::model::{Event, OptionKind, OptionValue, SiteDeclaration, SiteOption};
-use crate::runtime::bind::state;
-use crate::runtime::convert::{string_arg, text_of, truthy};
+use crate::runtime::bind::borrow_state;
+use crate::runtime::convert::{lua_text, text_arg, truthy};
 use crate::string_list::split_lines;
 
 impl OptionValue {
     /// Reads a Lua value, or `None` for `nil` and for values no setting holds.
-    pub(crate) fn from_lua(value: &Value) -> Option<Self> {
+    pub(crate) fn from_lua_value(value: &Value) -> Option<Self> {
         match value {
             Value::Boolean(b) => Some(Self::Bool(*b)),
             Value::Integer(n) => Some(Self::Int(*n)),
@@ -27,7 +27,7 @@ impl OptionValue {
         }
     }
 
-    pub(crate) fn to_lua(&self, lua: &Lua) -> mlua::Result<Value> {
+    pub(crate) fn to_lua_value(&self, lua: &Lua) -> mlua::Result<Value> {
         Ok(match self {
             Self::Bool(b) => Value::Boolean(*b),
             Self::Int(n) => Value::Integer(*n),
@@ -64,13 +64,15 @@ struct PendingDeclaration {
 /// returns.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     let new_website_module = lua.create_function(|lua, ()| {
-        let index = state::<PendingDeclarations>(lua)?.0.len();
+        let index = borrow_state::<PendingDeclarations>(lua)?.0.len();
         let table = declaration_table(lua, index)?;
         let declaration = PendingDeclaration {
             table: table.clone(),
             options: Vec::new(),
         };
-        state::<PendingDeclarations>(lua)?.0.push(declaration);
+        borrow_state::<PendingDeclarations>(lua)?
+            .0
+            .push(declaration);
         Ok(table)
     })?;
     lua.globals().set("NewWebsiteModule", new_website_module)
@@ -121,8 +123,8 @@ fn declaration_table(lua: &Lua, index: usize) -> mlua::Result<Table> {
         ("AddOptionEditBox", OptionKind::Text),
     ] {
         let setter = lua.create_function(move |lua, args: Variadic<Value>| {
-            let option = parse_option(lua, kind, &args)?;
-            state::<PendingDeclarations>(lua)?.0[index]
+            let option = option_from_setter_args(lua, kind, &args)?;
+            borrow_state::<PendingDeclarations>(lua)?.0[index]
                 .options
                 .push(option);
             Ok(())
@@ -134,9 +136,13 @@ fn declaration_table(lua: &Lua, index: usize) -> mlua::Result<Table> {
 
 /// Reads a setter's arguments: name, caption, then the default, with a choice
 /// setting's items between the caption and the default.
-fn parse_option(lua: &Lua, kind: OptionKind, args: &[Value]) -> mlua::Result<SiteOption> {
+fn option_from_setter_args(
+    lua: &Lua,
+    kind: OptionKind,
+    args: &[Value],
+) -> mlua::Result<SiteOption> {
     let arg = |i: usize| args.get(i).unwrap_or(&Value::Nil);
-    let name = string_arg(lua, arg(0), 1)?;
+    let name = text_arg(lua, arg(0), 1)?;
     let (items, default) = match kind {
         OptionKind::Choice => (choice_list(lua, arg(2)), arg(3)),
         _ => (Vec::new(), arg(2)),
@@ -144,8 +150,8 @@ fn parse_option(lua: &Lua, kind: OptionKind, args: &[Value]) -> mlua::Result<Sit
     Ok(SiteOption {
         kind,
         name,
-        caption: text_of(lua, arg(1)).unwrap_or_default(),
-        default: OptionValue::from_lua(default),
+        caption: lua_text(lua, arg(1)).unwrap_or_default(),
+        default: OptionValue::from_lua_value(default),
         items,
     })
 }
@@ -157,7 +163,11 @@ fn choice_list(lua: &Lua, value: &Value) -> Vec<String> {
         Value::String(s) => split_lines(&s.to_string_lossy()),
         Value::Table(t) => t
             .sequence_values::<Value>()
-            .map(|item| item.ok().and_then(|v| text_of(lua, &v)).unwrap_or_default())
+            .map(|item| {
+                item.ok()
+                    .and_then(|v| lua_text(lua, &v))
+                    .unwrap_or_default()
+            })
             .collect(),
         _ => Vec::new(),
     }
@@ -173,7 +183,7 @@ fn read_declaration(
     file: &Path,
 ) -> mlua::Result<SiteDeclaration> {
     let text = |key: &str| -> mlua::Result<String> {
-        Ok(text_of(lua, &table.get::<Value>(key)?).unwrap_or_default())
+        Ok(lua_text(lua, &table.get::<Value>(key)?).unwrap_or_default())
     };
     let mut handlers = HashMap::new();
     for event in Event::ALL {
@@ -221,8 +231,8 @@ pub(crate) struct StorageObject;
 impl UserData for StorageObject {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_function(MetaMethod::Index, |lua, (_, key): (AnyUserData, Value)| {
-            let key = string_arg(lua, &key, 2)?;
-            Ok(state::<Storage>(lua)?
+            let key = text_arg(lua, &key, 2)?;
+            Ok(borrow_state::<Storage>(lua)?
                 .0
                 .get(&key)
                 .cloned()
@@ -231,9 +241,9 @@ impl UserData for StorageObject {
         methods.add_meta_function(
             MetaMethod::NewIndex,
             |lua, (_, key, value): (AnyUserData, Value, Value)| {
-                let key = string_arg(lua, &key, 2)?;
-                let value = string_arg(lua, &value, 3)?;
-                state::<Storage>(lua)?.0.insert(key, value);
+                let key = text_arg(lua, &key, 2)?;
+                let value = text_arg(lua, &value, 3)?;
+                borrow_state::<Storage>(lua)?.0.insert(key, value);
                 Ok(())
             },
         );

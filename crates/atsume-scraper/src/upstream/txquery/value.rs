@@ -11,7 +11,7 @@ use atsume_txquery::{Item, Node, Page};
 use mlua::{Function, Lua, LuaString, MetaMethod, UserData, UserDataMethods, Value};
 
 use super::SharedPage;
-use crate::runtime::convert::{text_of, to_int};
+use crate::runtime::convert::{lua_int, lua_text};
 
 /// The items an expression returned, with the page they came from.
 #[derive(Clone)]
@@ -129,20 +129,20 @@ impl ValueObject {
         let function = match name {
             "Get" => lua.create_function(move |lua, position: Option<Value>| match position {
                 Some(position) => {
-                    let item = value.item_at(to_int(lua, &position));
+                    let item = value.item_at(lua_int(lua, &position));
                     Ok(Value::UserData(lua.create_userdata(item)?))
                 }
                 None => value.iterator(lua).map(Value::Function),
             }),
             "GetAttribute" => lua.create_function(move |lua, attribute: Value| {
-                let attribute = text_of(lua, &attribute).unwrap_or_default();
+                let attribute = lua_text(lua, &attribute).unwrap_or_default();
                 match value.first_node() {
                     Some(node) => value.attribute_of(&Item::Node(node), &attribute),
                     None => Ok(String::new()),
                 }
             }),
             "GetProperty" => lua.create_function(move |lua, property: Value| {
-                value.property(&text_of(lua, &property).unwrap_or_default())
+                value.property(&lua_text(lua, &property).unwrap_or_default())
             }),
             "ToString" => lua.create_function(move |lua, ()| value.text(lua)),
             _ => return Ok(None),

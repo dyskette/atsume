@@ -7,7 +7,7 @@
 
 use mlua::{Lua, MetaMethod, UserData, UserDataMethods, Value};
 
-use crate::runtime::bind::{Place, state};
+use crate::runtime::bind::{Place, borrow_state};
 
 /// The Lua face of a body kept in the runtime's state `S`.
 pub(crate) struct DocumentObject<S> {
@@ -29,17 +29,17 @@ impl<S: 'static> DocumentObject<S> {
 
     /// Returns a copy of the body.
     pub(crate) fn bytes(self, lua: &Lua) -> mlua::Result<Vec<u8>> {
-        let mut owner = state::<S>(lua)?;
+        let mut owner = borrow_state::<S>(lua)?;
         Ok((self.place)(&mut *owner).clone())
     }
 
     fn text(self, lua: &Lua) -> mlua::Result<mlua::LuaString> {
-        let mut owner = state::<S>(lua)?;
+        let mut owner = borrow_state::<S>(lua)?;
         lua.create_string((self.place)(&mut *owner).as_slice())
     }
 
     fn size(self, lua: &Lua) -> mlua::Result<i64> {
-        let mut owner = state::<S>(lua)?;
+        let mut owner = borrow_state::<S>(lua)?;
         Ok(i64::try_from((self.place)(&mut *owner).len()).unwrap_or(i64::MAX))
     }
 }

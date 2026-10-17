@@ -5,8 +5,8 @@ use mlua::{Lua, UserData, UserDataFields, UserDataMethods, Value};
 
 use crate::links::normalise_link;
 use crate::model::{DirectoryEntry, DirectoryPage};
-use crate::runtime::bind::{int_field, lenient, state};
-use crate::runtime::convert::string_arg;
+use crate::runtime::bind::{borrow_state, ignore_unknown_fields, int_field};
+use crate::runtime::convert::text_arg;
 use crate::string_list::StringList;
 use crate::upstream::string_list::ListObject;
 
@@ -74,13 +74,13 @@ impl UserData for UpdateListObject {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_function("UpdateStatusText", |lua, text: Value| {
-            let text = string_arg(lua, &text, 1)?;
-            if let Some(report) = state::<StatusSink>(lua)?.0.as_mut() {
+            let text = text_arg(lua, &text, 1)?;
+            if let Some(report) = borrow_state::<StatusSink>(lua)?.0.as_mut() {
                 report(&text);
             }
             Ok(())
         });
-        lenient(methods);
+        ignore_unknown_fields(methods);
     }
 }
 
