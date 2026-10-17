@@ -3,7 +3,7 @@
 
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods};
 
-use crate::links::fill_host;
+use crate::links::resolve_link;
 use crate::model::ChapterPage;
 use crate::runtime::bind::{Place, int_field, lenient, text_field};
 use crate::string_list::StringList;
@@ -69,7 +69,7 @@ impl ChapterPagesRecord {
             .get(index)
             .map(|link| link.trim())
         {
-            Some(link) if !link.is_empty() => ChapterPage::Image(fill_host(root_url, link)),
+            Some(link) if !link.is_empty() => ChapterPage::Image(resolve_link(root_url, link)),
             _ => ChapterPage::Unresolved,
         }
     }

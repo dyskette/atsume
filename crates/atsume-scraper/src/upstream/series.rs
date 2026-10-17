@@ -152,8 +152,9 @@ impl UserData for SeriesObject {
 /// Sets the globals `MANGAINFO` and `MangaInfoStatusIfPos`.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set("MANGAINFO", SeriesObject)?;
-    let status_if_pos = lua.create_function(status_if_pos)?;
-    lua.globals().set("MangaInfoStatusIfPos", status_if_pos)
+    let status_from_keywords = lua.create_function(status_from_keywords)?;
+    lua.globals()
+        .set("MangaInfoStatusIfPos", status_from_keywords)
 }
 
 /// `MangaInfoStatusIfPos(text, ongoing, completed, hiatus, dropped)`: the word
@@ -162,7 +163,7 @@ pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
 /// Each keyword list is `|`-separated, and a list left out or `nil` takes the
 /// default. Upstream returns numeric codes; these words are what
 /// `MANGAINFO.Status` is read back from.
-fn status_if_pos(
+fn status_from_keywords(
     lua: &Lua,
     (text, ongoing, completed, hiatus, dropped): (Value, Value, Value, Value, Value),
 ) -> mlua::Result<&'static str> {

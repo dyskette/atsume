@@ -9,17 +9,19 @@ use mlua::{Lua, Value};
 use crate::model::AccountStatus;
 use crate::runtime::convert::to_int;
 
-/// The code a handler returns when a request it needed failed.
-pub(crate) const NET_PROBLEM: i64 = 1;
+/// The code a handler returns when a request it needed failed. Modules read
+/// it as `net_problem`.
+pub(crate) const RETURN_NETWORK_FAILURE: i64 = 1;
 
-/// The code `OnGetInfo` returns when the page holds no series.
-pub(crate) const INFORMATION_NOT_FOUND: i64 = 2;
+/// The code `OnGetInfo` returns when the page holds no series. Modules read
+/// it as `information_not_found`.
+pub(crate) const RETURN_SERIES_NOT_FOUND: i64 = 2;
 
 /// A handler's return codes, which modules read as globals.
 const RETURN_CODES: [(&str, i64); 3] = [
     ("no_error", 0),
-    ("net_problem", NET_PROBLEM),
-    ("information_not_found", INFORMATION_NOT_FOUND),
+    ("net_problem", RETURN_NETWORK_FAILURE),
+    ("information_not_found", RETURN_SERIES_NOT_FOUND),
 ];
 
 /// Sets the constants every module reads: return codes and account states.

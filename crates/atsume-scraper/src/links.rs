@@ -20,8 +20,9 @@ pub(crate) fn normalise_link(link: &str) -> String {
 /// path or a scheme-relative `//cdn.example/p.jpg` becomes absolute.
 ///
 /// An empty link is the site's address itself. A link that is already
-/// absolute, or that cannot be resolved, is returned as it is.
-pub(crate) fn fill_host(root_url: &str, link: &str) -> String {
+/// absolute, or that cannot be resolved, is returned as it is. This is what
+/// FMD2's `MaybeFillHost` does.
+pub(crate) fn resolve_link(root_url: &str, link: &str) -> String {
     if link.is_empty() {
         return root_url.to_owned();
     }
@@ -40,17 +41,20 @@ mod tests {
     #[test]
     fn a_link_is_resolved_against_the_site() {
         let root = "https://site.example/manga/";
-        assert_eq!(fill_host(root, "/p/1.jpg"), "https://site.example/p/1.jpg");
         assert_eq!(
-            fill_host(root, "//cdn.example/p.jpg"),
+            resolve_link(root, "/p/1.jpg"),
+            "https://site.example/p/1.jpg"
+        );
+        assert_eq!(
+            resolve_link(root, "//cdn.example/p.jpg"),
             "https://cdn.example/p.jpg"
         );
         assert_eq!(
-            fill_host(root, "http://other.example/x"),
+            resolve_link(root, "http://other.example/x"),
             "http://other.example/x"
         );
-        assert_eq!(fill_host(root, ""), root);
-        assert_eq!(fill_host("not a url", "/p"), "/p");
+        assert_eq!(resolve_link(root, ""), root);
+        assert_eq!(resolve_link("not a url", "/p"), "/p");
     }
 
     #[test]

@@ -192,7 +192,7 @@ impl Session {
         *self.state::<DirectoryPageRecord>() = DirectoryPageRecord::default();
         globals::set_url_to_directory_page(&self.runtime.lua, page)?;
         let code = to_int(&self.runtime.lua, &self.call(Event::GetNameAndLink)?);
-        if code == globals::NET_PROBLEM {
+        if code == globals::RETURN_NETWORK_FAILURE {
             let what = format!("listing page {}", u64::from(page) + 1);
             return Err(Error::network(
                 &self.site_name(),
@@ -242,11 +242,11 @@ impl Session {
         let code = to_int(&self.runtime.lua, &self.call(Event::GetInfo)?);
         let site_name = self.site_name();
         match code {
-            globals::NET_PROBLEM => {
+            globals::RETURN_NETWORK_FAILURE => {
                 let what = format!("fetching {series_url}");
                 return Err(Error::network(&site_name, &what, self.last_request()));
             }
-            globals::INFORMATION_NOT_FOUND => {
+            globals::RETURN_SERIES_NOT_FOUND => {
                 let message = format!(
                     "{site_name}: no series information at {series_url}; the page may have moved"
                 );
@@ -330,7 +330,7 @@ impl Session {
     /// failed request, though Lua reads both codes as true.
     fn check_outcome(&self, result: &Value, what: &str) -> Result<()> {
         let site_name = self.site_name();
-        let net_problem = globals::NET_PROBLEM;
+        let net_problem = globals::RETURN_NETWORK_FAILURE;
         match result {
             Value::Nil | Value::Boolean(false) => {
                 let status = self.last_request().status;
