@@ -177,7 +177,7 @@ fn read_declaration(
     };
     let mut handlers = HashMap::new();
     for event in Event::ALL {
-        let function = text(event.slot())?;
+        let function = text(event.declaration_field())?;
         if !function.is_empty() {
             handlers.insert(event, function);
         }

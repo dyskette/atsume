@@ -191,7 +191,7 @@ impl Session {
         self.select_listing(listing)?;
         *self.state::<DirectoryPageRecord>() = DirectoryPageRecord::default();
         globals::set_url_to_directory_page(&self.runtime.lua, page)?;
-        let code = to_int(&self.runtime.lua, &self.call(Event::GetNameAndLink)?);
+        let code = to_int(&self.runtime.lua, &self.call(Event::ListDirectoryPage)?);
         if code == globals::RETURN_NETWORK_FAILURE {
             let what = format!("listing page {}", u64::from(page) + 1);
             return Err(Error::network(
@@ -219,11 +219,11 @@ impl Session {
     /// ([`Unsupported`](ErrorKind::Unsupported)) or the handler fails.
     pub fn directory_page_count(&mut self, listing: u32) -> Result<u32> {
         self.select_listing(listing)?;
-        if !self.has_handler(Event::GetDirectoryPageNumber) {
+        if !self.has_handler(Event::CountDirectoryPages) {
             return Ok(1);
         }
         globals::set_directory_page_count(&self.runtime.lua, 1)?;
-        self.call(Event::GetDirectoryPageNumber)?;
+        self.call(Event::CountDirectoryPages)?;
         let pages = globals::directory_page_count(&self.runtime.lua)?;
         Ok(u32::try_from(pages.max(1)).unwrap_or(u32::MAX))
     }
@@ -239,7 +239,7 @@ impl Session {
     pub fn info(&mut self, series_url: &str) -> Result<SeriesInfo> {
         *self.state::<SeriesRecord>() = SeriesRecord::for_url(series_url);
         globals::set_url(&self.runtime.lua, series_url)?;
-        let code = to_int(&self.runtime.lua, &self.call(Event::GetInfo)?);
+        let code = to_int(&self.runtime.lua, &self.call(Event::ReadSeries)?);
         let site_name = self.site_name();
         match code {
             globals::RETURN_NETWORK_FAILURE => {
@@ -273,10 +273,10 @@ impl Session {
     pub fn pages(&mut self, chapter_url: &str) -> Result<Vec<ChapterPage>> {
         *self.state::<ChapterPagesRecord>() = ChapterPagesRecord::for_chapter(chapter_url);
         globals::set_url(&self.runtime.lua, chapter_url)?;
-        let result = self.call(Event::GetPageNumber)?;
+        let result = self.call(Event::ListChapterPages)?;
         self.check_outcome(&result, &format!("reading pages for {chapter_url}"))?;
 
-        let resolvable = self.has_handler(Event::GetImageUrl);
+        let resolvable = self.has_handler(Event::ResolvePageImage);
         let pages = self
             .state::<ChapterPagesRecord>()
             .pages(&self.root_url(), resolvable);
@@ -312,7 +312,7 @@ impl Session {
         globals::set_url(&self.runtime.lua, chapter_url)?;
         globals::set_page_to_resolve(&self.runtime.lua, index)?;
         let what = format!("resolving page {} of {chapter_url}", index + 1);
-        let result = self.call(Event::GetImageUrl)?;
+        let result = self.call(Event::ResolvePageImage)?;
         self.check_outcome(&result, &what)?;
         match self.state::<ChapterPagesRecord>().page(&root_url, index) {
             ChapterPage::Image(url) => Ok(url),

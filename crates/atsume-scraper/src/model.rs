@@ -56,19 +56,26 @@ impl SiteDeclaration {
     }
 }
 
-/// An event a module may handle, named after the slot it assigns in `Init()`.
+/// An event a module may handle, named after the work it asks for.
+///
+/// [`declaration_field`](Self::declaration_field) names the field a module
+/// assigns its handler to in `Init()`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Event {
-    /// Lists one page of the site's directory.
-    GetNameAndLink,
-    /// Reads a series' details and chapter list.
-    GetInfo,
-    /// Lists a chapter's pages.
-    GetPageNumber,
-    /// Counts the pages of the site's directory.
-    GetDirectoryPageNumber,
-    /// Resolves a page to its image address.
-    GetImageUrl,
+    /// Lists one page of the site's directory. Modules handle it in
+    /// `OnGetNameAndLink`.
+    ListDirectoryPage,
+    /// Reads a series' details and chapter list. Modules handle it in
+    /// `OnGetInfo`.
+    ReadSeries,
+    /// Lists a chapter's pages. Modules handle it in `OnGetPageNumber`.
+    ListChapterPages,
+    /// Counts the pages of the site's directory. Modules handle it in
+    /// `OnGetDirectoryPageNumber`.
+    CountDirectoryPages,
+    /// Resolves a page to its image address. Modules handle it in
+    /// `OnGetImageURL`.
+    ResolvePageImage,
     /// Prepares the request for a page image, usually by setting a `Referer`.
     BeforeDownloadImage,
     /// Fetches a page image itself, possibly transforming it.
@@ -85,20 +92,20 @@ pub enum Event {
     CheckSite,
     /// Reports the account's state.
     AccountState,
-    /// Prepares a directory update.
-    BeforeUpdateList,
-    /// Finishes a directory update.
-    AfterUpdateList,
+    /// Prepares a directory update. Modules handle it in `OnBeforeUpdateList`.
+    BeforeDirectoryUpdate,
+    /// Finishes a directory update. Modules handle it in `OnAfterUpdateList`.
+    AfterDirectoryUpdate,
 }
 
 impl Event {
     /// Every event, in upstream's order.
     pub const ALL: [Self; 15] = [
-        Self::GetNameAndLink,
-        Self::GetInfo,
-        Self::GetPageNumber,
-        Self::GetDirectoryPageNumber,
-        Self::GetImageUrl,
+        Self::ListDirectoryPage,
+        Self::ReadSeries,
+        Self::ListChapterPages,
+        Self::CountDirectoryPages,
+        Self::ResolvePageImage,
         Self::BeforeDownloadImage,
         Self::DownloadImage,
         Self::AfterImageSaved,
@@ -107,19 +114,19 @@ impl Event {
         Self::TaskStart,
         Self::CheckSite,
         Self::AccountState,
-        Self::BeforeUpdateList,
-        Self::AfterUpdateList,
+        Self::BeforeDirectoryUpdate,
+        Self::AfterDirectoryUpdate,
     ];
 
     /// Returns the declaration field a module assigns the handler to.
     #[must_use]
-    pub fn slot(self) -> &'static str {
+    pub fn declaration_field(self) -> &'static str {
         match self {
-            Self::GetNameAndLink => "OnGetNameAndLink",
-            Self::GetInfo => "OnGetInfo",
-            Self::GetPageNumber => "OnGetPageNumber",
-            Self::GetDirectoryPageNumber => "OnGetDirectoryPageNumber",
-            Self::GetImageUrl => "OnGetImageURL",
+            Self::ListDirectoryPage => "OnGetNameAndLink",
+            Self::ReadSeries => "OnGetInfo",
+            Self::ListChapterPages => "OnGetPageNumber",
+            Self::CountDirectoryPages => "OnGetDirectoryPageNumber",
+            Self::ResolvePageImage => "OnGetImageURL",
             Self::BeforeDownloadImage => "OnBeforeDownloadImage",
             Self::DownloadImage => "OnDownloadImage",
             Self::AfterImageSaved => "OnAfterImageSaved",
@@ -128,15 +135,15 @@ impl Event {
             Self::TaskStart => "OnTaskStart",
             Self::CheckSite => "OnCheckSite",
             Self::AccountState => "OnAccountState",
-            Self::BeforeUpdateList => "OnBeforeUpdateList",
-            Self::AfterUpdateList => "OnAfterUpdateList",
+            Self::BeforeDirectoryUpdate => "OnBeforeUpdateList",
+            Self::AfterDirectoryUpdate => "OnAfterUpdateList",
         }
     }
 }
 
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.slot())
+        f.write_str(self.declaration_field())
     }
 }
 

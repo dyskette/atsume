@@ -244,7 +244,7 @@ fn cancelling_ends_a_module_looping_over_requests() {
     let init = "local m = NewWebsiteModule(); m.Name = 'Pager'; m.OnGetInfo = 'List'";
     let rest = "function List() local n = 0 while true do HTTP.GET('https://a.example/' .. n); n = n + 1 end end";
     let runner = open_module_with(&config(transport.clone()), cancel, init, rest);
-    let err = runner.call(Event::GetInfo).unwrap_err();
+    let err = runner.call(Event::ReadSeries).unwrap_err();
     assert!(err.kind() == ErrorKind::Cancelled, "{err}");
     assert_eq!(transport.seen.lock().unwrap().len(), 3);
 }
@@ -264,7 +264,7 @@ fn cancelling_abandons_a_request_in_flight() {
         cancel.cancel();
     });
     let start = Instant::now();
-    let err = runner.call(Event::GetInfo).unwrap_err();
+    let err = runner.call(Event::ReadSeries).unwrap_err();
     assert!(err.kind() == ErrorKind::Cancelled, "{err}");
     assert!(
         start.elapsed() < Duration::from_secs(2),

@@ -29,7 +29,7 @@ fn example() -> Session {
 #[test]
 fn handlers_reach_templates_through_require() {
     let session = example();
-    let result = session.call(Event::GetInfo).unwrap();
+    let result = session.call(Event::ReadSeries).unwrap();
     assert_eq!(
         session.lua().coerce_string(result).unwrap().unwrap(),
         "template"
@@ -46,7 +46,7 @@ fn a_failing_call_names_the_handler() {
         "module Example has no OnLogin handler"
     );
 
-    let undefined = session.call(Event::GetPageNumber).unwrap_err();
+    let undefined = session.call(Event::ListChapterPages).unwrap_err();
     assert_eq!(undefined.kind(), ErrorKind::Module);
     assert_eq!(
         undefined.to_string(),
@@ -220,7 +220,7 @@ fn looping_session(cpu_limit: u64) -> (Session, Checkout, CancelToken) {
 #[test]
 fn a_runaway_loop_stops_at_the_cpu_limit() {
     let (session, _, _) = looping_session(1_000_000);
-    let err = session.call(Event::GetInfo).unwrap_err();
+    let err = session.call(Event::ReadSeries).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::CpuLimit, "{err}");
     assert!(err.to_string().contains("ran too long"), "{err}");
     // The limit is per call, so the session is still usable.
@@ -239,7 +239,7 @@ fn the_cpu_limit_reaches_into_coroutines() {
 #[test]
 fn cancelling_stops_the_running_call_and_every_later_one() {
     let (session, checkout, cancel) = looping_session(SessionConfig::default().cpu_limit);
-    let running = session.call(Event::GetPageNumber).unwrap_err();
+    let running = session.call(Event::ListChapterPages).unwrap_err();
     assert_eq!(running.kind(), ErrorKind::Cancelled, "{running}");
     let later = session.call(Event::CheckSite).unwrap_err();
     assert_eq!(later.kind(), ErrorKind::Cancelled, "{later}");
@@ -268,7 +268,7 @@ fn a_caught_termination_is_still_a_cancellation() {
 #[test]
 fn a_loop_that_keeps_catching_the_termination_still_stops() {
     let (session, _, _) = looping_session(SessionConfig::default().cpu_limit);
-    let err = session.call(Event::GetImageUrl).unwrap_err();
+    let err = session.call(Event::ResolvePageImage).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Cancelled, "{err}");
 }
 
@@ -308,7 +308,7 @@ fn the_cpu_limit_leaves_room_for_a_large_json_decode() {
     session.lua().globals().set("DATA", json.as_str()).unwrap();
 
     let start = std::time::Instant::now();
-    let decoded = session.call(Event::GetInfo).unwrap();
+    let decoded = session.call(Event::ReadSeries).unwrap();
     let elapsed = start.elapsed();
     assert_eq!(decoded.as_integer(), Some(8000));
 

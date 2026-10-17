@@ -77,8 +77,8 @@ fn a_file_declares_its_websites() {
         root_url: "https://two.example".into(),
         category: "English".into(),
         handlers: HashMap::from([
-            (Event::GetInfo, "GetInfo".into()),
-            (Event::GetPageNumber, "Missing".into()),
+            (Event::ReadSeries, "GetInfo".into()),
+            (Event::ListChapterPages, "Missing".into()),
         ]),
         options: vec![
             option(
