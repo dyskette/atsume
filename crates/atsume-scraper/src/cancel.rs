@@ -1,4 +1,4 @@
-//! Cancelling a scrape from another thread.
+//! Cancels a scrape from another thread.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,9 +9,9 @@ pub(crate) const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Cancels a scrape from any thread.
 ///
-/// Clones share one token. Once it is cancelled, no new call into the module
-/// starts, a running call stops at the CPU budget's next check, and a request
-/// or wait in progress is abandoned.
+/// All clones of a token share one cancellation state. Once the token is
+/// cancelled, no new call into the module starts, a running call stops at the
+/// CPU budget's next check, and any request or wait in progress is abandoned.
 #[derive(Clone, Debug, Default)]
 pub struct CancelToken(Arc<AtomicBool>);
 
