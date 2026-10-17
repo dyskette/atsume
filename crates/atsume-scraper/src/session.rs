@@ -16,11 +16,11 @@ use crate::runtime::bind::state;
 use crate::runtime::budget::DEFAULT_CPU_LIMIT;
 use crate::runtime::convert::{to_int, truthy};
 use crate::runtime::sandbox::WritableFile;
-use crate::upstream::directory::{Directory, StatusSink};
+use crate::upstream::chapter_pages::ChapterPagesRecord;
+use crate::upstream::directory::{DirectoryPageRecord, StatusSink};
 use crate::upstream::globals;
-use crate::upstream::mangainfo::MangaInfo;
-use crate::upstream::module::{Account, ModuleObject, SiteState};
-use crate::upstream::task::Task;
+use crate::upstream::module::{AccountRecord, ModuleObject, SiteRecord};
+use crate::upstream::series::SeriesRecord;
 
 /// How the sessions a [`Site`](crate::Site) opens reach the network and how
 /// long their calls may run.
@@ -67,7 +67,7 @@ pub struct Session {
 impl Session {
     pub(crate) fn new(runtime: Runtime, declaration: SiteDeclaration) -> Result<Self> {
         // The one value `upstream::install` leaves out: it needs the declaration.
-        runtime.lua.set_app_data(SiteState::new(declaration));
+        runtime.lua.set_app_data(SiteRecord::new(declaration));
         runtime.lua.globals().set("MODULE", ModuleObject)?;
         Ok(Self { runtime })
     }
@@ -88,23 +88,23 @@ impl Session {
     /// some of it while it runs, such as its address.
     #[must_use]
     pub fn declaration(&self) -> SiteDeclaration {
-        self.state::<SiteState>().declaration.clone()
+        self.state::<SiteRecord>().declaration.clone()
     }
 
     /// Returns the website's name, for error messages.
     fn site_name(&self) -> String {
-        self.state::<SiteState>().declaration.name.clone()
+        self.state::<SiteRecord>().declaration.name.clone()
     }
 
     /// Returns the address the website is reached at now.
     fn root_url(&self) -> String {
-        self.state::<SiteState>().declaration.root_url.clone()
+        self.state::<SiteRecord>().declaration.root_url.clone()
     }
 
     /// Reports whether the module implements `event`.
     #[must_use]
     pub fn has_handler(&self, event: Event) -> bool {
-        self.state::<SiteState>()
+        self.state::<SiteRecord>()
             .declaration
             .handler(event)
             .is_some()
@@ -118,7 +118,7 @@ impl Session {
     /// suit it: a checkbox takes a flag, a number field a whole number, a
     /// choice the index of one of its items, and a text field text.
     pub fn set_option(&mut self, name: &str, value: OptionValue) -> Result<()> {
-        let mut site = self.state::<SiteState>();
+        let mut site = self.state::<SiteRecord>();
         let declaration = &site.declaration;
         let Some(option) = declaration.options.iter().find(|o| o.name == name) else {
             let message = format!("module {} has no setting named {name:?}", declaration.name);
@@ -143,7 +143,7 @@ impl Session {
 
     /// Supplies credentials for a module that implements `OnLogin`.
     pub fn set_account(&mut self, username: &str, password: &str) {
-        let mut account = self.state::<Account>();
+        let mut account = self.state::<AccountRecord>();
         account.enabled = !username.is_empty();
         username.clone_into(&mut account.username);
         password.clone_into(&mut account.password);
@@ -152,13 +152,13 @@ impl Session {
     /// Returns the login state the module recorded.
     #[must_use]
     pub fn account_status(&self) -> AccountStatus {
-        self.state::<Account>().status
+        self.state::<AccountRecord>().status
     }
 
     /// Points `MODULE.CurrentDirectoryIndex` at directory listing `index`,
     /// counting from 0, which the module reads to know which listing to walk.
     fn select_listing(&mut self, index: u32) -> Result<()> {
-        let mut site = self.state::<SiteState>();
+        let mut site = self.state::<SiteRecord>();
         if index >= site.declaration.listing_count {
             let message = format!(
                 "module {} has {} directory listings, not {}",
@@ -189,7 +189,7 @@ impl Session {
     /// failed ([`Network`](ErrorKind::Network)).
     pub fn list(&mut self, listing: u32, page: u32) -> Result<DirectoryPage> {
         self.select_listing(listing)?;
-        *self.state::<Directory>() = Directory::default();
+        *self.state::<DirectoryPageRecord>() = DirectoryPageRecord::default();
         globals::set_url_to_directory_page(&self.runtime.lua, page)?;
         let code = to_int(&self.runtime.lua, &self.call(Event::GetNameAndLink)?);
         if code == globals::NET_PROBLEM {
@@ -200,7 +200,7 @@ impl Session {
                 self.last_request(),
             ));
         }
-        Ok(std::mem::take(&mut *self.state::<Directory>()).into_page())
+        Ok(std::mem::take(&mut *self.state::<DirectoryPageRecord>()).into_page())
     }
 
     /// Sends the progress messages a module reports while it runs, through
@@ -237,7 +237,7 @@ impl Session {
     /// request it needed failed ([`Network`](ErrorKind::Network)), or the page
     /// holds no series ([`NotFound`](ErrorKind::NotFound)).
     pub fn info(&mut self, series_url: &str) -> Result<SeriesInfo> {
-        *self.state::<MangaInfo>() = MangaInfo::for_url(series_url);
+        *self.state::<SeriesRecord>() = SeriesRecord::for_url(series_url);
         globals::set_url(&self.runtime.lua, series_url)?;
         let code = to_int(&self.runtime.lua, &self.call(Event::GetInfo)?);
         let site_name = self.site_name();
@@ -254,7 +254,7 @@ impl Session {
             }
             _ => {}
         }
-        Ok(std::mem::take(&mut *self.state::<MangaInfo>()).into_series())
+        Ok(std::mem::take(&mut *self.state::<SeriesRecord>()).into_series())
     }
 
     /// Runs `OnGetPageNumber` for the chapter at `chapter_url`, returning its
@@ -271,13 +271,15 @@ impl Session {
     /// ([`Network`](ErrorKind::Network)), or it lists no pages
     /// ([`NotFound`](ErrorKind::NotFound)).
     pub fn pages(&mut self, chapter_url: &str) -> Result<Vec<ChapterPage>> {
-        *self.state::<Task>() = Task::for_chapter(chapter_url);
+        *self.state::<ChapterPagesRecord>() = ChapterPagesRecord::for_chapter(chapter_url);
         globals::set_url(&self.runtime.lua, chapter_url)?;
         let result = self.call(Event::GetPageNumber)?;
         self.check_outcome(&result, &format!("reading pages for {chapter_url}"))?;
 
         let resolvable = self.has_handler(Event::GetImageUrl);
-        let pages = self.state::<Task>().pages(&self.root_url(), resolvable);
+        let pages = self
+            .state::<ChapterPagesRecord>()
+            .pages(&self.root_url(), resolvable);
         if pages.is_empty() {
             let message = format!("{}: no pages listed for {chapter_url}", self.site_name());
             return Err(Error::new(ErrorKind::NotFound, message));
@@ -300,11 +302,11 @@ impl Session {
     /// address.
     pub fn resolve_page(&mut self, chapter_url: &str, index: usize) -> Result<String> {
         let root_url = self.root_url();
-        if !self.state::<Task>().is_for(chapter_url) {
+        if !self.state::<ChapterPagesRecord>().is_for(chapter_url) {
             let message = format!("list the pages of {chapter_url} before resolving one");
             return Err(Error::new(ErrorKind::Unsupported, message));
         }
-        if let ChapterPage::Image(url) = self.state::<Task>().page(&root_url, index) {
+        if let ChapterPage::Image(url) = self.state::<ChapterPagesRecord>().page(&root_url, index) {
             return Ok(url);
         }
         globals::set_url(&self.runtime.lua, chapter_url)?;
@@ -312,7 +314,7 @@ impl Session {
         let what = format!("resolving page {} of {chapter_url}", index + 1);
         let result = self.call(Event::GetImageUrl)?;
         self.check_outcome(&result, &what)?;
-        match self.state::<Task>().page(&root_url, index) {
+        match self.state::<ChapterPagesRecord>().page(&root_url, index) {
             ChapterPage::Image(url) => Ok(url),
             ChapterPage::Unresolved => {
                 let message = format!("{}: no image address after {what}", self.site_name());
@@ -354,7 +356,7 @@ impl Session {
         if !self.has_handler(Event::Login) {
             return Err(no_handler(&site_name, Event::Login));
         }
-        if !self.state::<Account>().enabled {
+        if !self.state::<AccountRecord>().enabled {
             let message = format!("module {site_name} has no credentials configured");
             return Err(Error::new(ErrorKind::Unsupported, message));
         }
@@ -430,7 +432,7 @@ impl Session {
     pub(crate) fn call(&self, event: Event) -> Result<Value> {
         let site_name = self.site_name();
         let function = self
-            .state::<SiteState>()
+            .state::<SiteRecord>()
             .declaration
             .handler(event)
             .map(str::to_owned);
@@ -459,7 +461,7 @@ impl Session {
     /// Points `event` at another Lua function, for tests.
     #[cfg(test)]
     pub(crate) fn set_handler(&self, event: Event, function: &str) {
-        let mut site = self.state::<SiteState>();
+        let mut site = self.state::<SiteRecord>();
         site.declaration.handlers.insert(event, function.to_owned());
     }
 

@@ -11,7 +11,7 @@ use crate::upstream::string_list::ListObject;
 
 /// What `TASK` holds for the chapter being read, kept in the runtime.
 #[derive(Debug, Default)]
-pub(crate) struct Task {
+pub(crate) struct ChapterPagesRecord {
     /// The chapter the pages belong to.
     link: String,
     /// How many pages the chapter has, when the module counts them rather
@@ -28,7 +28,7 @@ pub(crate) struct Task {
     chapter_names: StringList,
 }
 
-impl Task {
+impl ChapterPagesRecord {
     /// Returns an empty record for the chapter at `link`.
     pub(crate) fn for_chapter(link: &str) -> Self {
         Self {
@@ -68,17 +68,21 @@ impl Task {
     }
 }
 
-/// `TASK`. It holds nothing itself; every access reaches [`Task`].
-pub(crate) struct TaskObject;
+/// `TASK`. It holds nothing itself; every access reaches [`ChapterPagesRecord`].
+pub(crate) struct ChapterPagesObject;
 
-impl UserData for TaskObject {
+impl UserData for ChapterPagesObject {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
-        text_field(fields, "Link", |t: &mut Task| &mut t.link);
-        int_field(fields, "PageNumber", |t: &mut Task| &mut t.page_count);
-        int_field(fields, "CurrentDownloadChapterPtr", |t: &mut Task| {
-            &mut t.current_download_chapter_ptr
+        text_field(fields, "Link", |t: &mut ChapterPagesRecord| &mut t.link);
+        int_field(fields, "PageNumber", |t: &mut ChapterPagesRecord| {
+            &mut t.page_count
         });
-        let lists: [(&str, Place<Task, StringList>); 5] = [
+        int_field(
+            fields,
+            "CurrentDownloadChapterPtr",
+            |t: &mut ChapterPagesRecord| &mut t.current_download_chapter_ptr,
+        );
+        let lists: [(&str, Place<ChapterPagesRecord, StringList>); 5] = [
             ("PageLinks", |t| &mut t.page_links),
             ("PageContainerLinks", |t| &mut t.page_container_links),
             ("FileNames", |t| &mut t.file_names),
@@ -87,7 +91,7 @@ impl UserData for TaskObject {
         ];
         for (name, place) in lists {
             fields.add_field_function_get(name, move |_, _: AnyUserData| {
-                Ok(ListObject::<Task>::new(place))
+                Ok(ListObject::<ChapterPagesRecord>::new(place))
             });
         }
     }
@@ -99,29 +103,29 @@ impl UserData for TaskObject {
 
 /// Sets the global `TASK`.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
-    lua.globals().set("TASK", TaskObject)
+    lua.globals().set("TASK", ChapterPagesObject)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn task(links: &[&str], containers: usize, page_count: i64) -> Task {
-        let mut task = Task::for_chapter("/c/1");
+    fn record(links: &[&str], containers: usize, page_count: i64) -> ChapterPagesRecord {
+        let mut record = ChapterPagesRecord::for_chapter("/c/1");
         for link in links {
-            task.page_links.add(*link);
+            record.page_links.add(*link);
         }
         for i in 0..containers {
-            task.page_container_links.add(format!("/c/1/{i}"));
+            record.page_container_links.add(format!("/c/1/{i}"));
         }
-        task.page_count = page_count;
-        task
+        record.page_count = page_count;
+        record
     }
 
     #[test]
     fn known_pages_are_absolute_and_the_rest_unresolved() {
         let root = "https://site.example/";
-        let pages = task(&["/p/1.jpg", "", "//cdn.example/3.jpg"], 0, 4).pages(root, true);
+        let pages = record(&["/p/1.jpg", "", "//cdn.example/3.jpg"], 0, 4).pages(root, true);
         assert_eq!(
             pages,
             [
@@ -136,14 +140,14 @@ mod tests {
     #[test]
     fn listed_containers_count_as_pages() {
         assert_eq!(
-            task(&[], 3, 0).pages("https://site.example/", true).len(),
+            record(&[], 3, 0).pages("https://site.example/", true).len(),
             3
         );
     }
 
     #[test]
     fn pages_nothing_can_resolve_are_left_out() {
-        let pages = task(&["/1.jpg", "/2.jpg"], 4, 5).pages("https://site.example/", false);
+        let pages = record(&["/1.jpg", "/2.jpg"], 4, 5).pages("https://site.example/", false);
         assert_eq!(pages.len(), 2);
     }
 }

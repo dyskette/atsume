@@ -1,4 +1,4 @@
-//! The globals FMD2 gives modules, each in a file named after it.
+//! The globals FMD2 gives modules, in files named after what each holds.
 //!
 //! An object here keeps no state of its own. What it reads and writes is a
 //! plain Rust value kept in the runtime, so the host reads a handler's results
@@ -8,16 +8,16 @@
 //! uses is in the string that binds it and in the doc comment of the Rust
 //! item behind it, so a grep for `TASK.PageNumber` finds both.
 
+pub(crate) mod chapter_pages;
 pub(crate) mod declaration;
 pub(crate) mod directory;
 pub(crate) mod document;
 pub(crate) mod globals;
 pub(crate) mod http;
 pub(crate) mod libs;
-pub(crate) mod mangainfo;
 pub(crate) mod module;
+pub(crate) mod series;
 pub(crate) mod string_list;
-pub(crate) mod task;
 pub(crate) mod txquery;
 
 use std::path::Path;
@@ -39,23 +39,23 @@ pub(crate) fn install(lua: &Lua, lua_dir: &Path, http: HttpSession) -> mlua::Res
     // The global `Storage`, and `MODULE.Storage`.
     lua.set_app_data(declaration::Storage::default());
     // `MODULE.Account`.
-    lua.set_app_data(module::Account::default());
+    lua.set_app_data(module::AccountRecord::default());
     // `HTTP`, and the lists and document it hands out.
     lua.set_app_data(http);
     // `MANGAINFO`.
-    lua.set_app_data(mangainfo::MangaInfo::default());
+    lua.set_app_data(series::SeriesRecord::default());
     // `TASK`.
-    lua.set_app_data(task::Task::default());
+    lua.set_app_data(chapter_pages::ChapterPagesRecord::default());
     // `LINKS`, `NAMES` and `UPDATELIST`, and where progress messages go.
-    lua.set_app_data(directory::Directory::default());
+    lua.set_app_data(directory::DirectoryPageRecord::default());
     lua.set_app_data(directory::StatusSink::default());
 
     globals::set_constants(lua)?;
     libs::preload(lua, lua_dir)?;
     lua.globals().set("HTTP", http::HttpObject)?;
     declaration::register(lua)?;
-    mangainfo::register(lua)?;
-    task::register(lua)?;
+    series::register(lua)?;
+    chapter_pages::register(lua)?;
     directory::register(lua)?;
     txquery::register(lua)
 }

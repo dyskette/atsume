@@ -60,7 +60,7 @@ impl SeriesStatus {
 
 /// What `MANGAINFO` holds while `OnGetInfo` runs, kept in the runtime.
 #[derive(Debug, Default)]
-pub(crate) struct MangaInfo {
+pub(crate) struct SeriesRecord {
     url: String,
     title: String,
     alt_titles: String,
@@ -74,7 +74,7 @@ pub(crate) struct MangaInfo {
     chapter_names: StringList,
 }
 
-impl MangaInfo {
+impl SeriesRecord {
     /// Returns an empty record for the series at `url`.
     pub(crate) fn for_url(url: &str) -> Self {
         Self {
@@ -119,25 +119,29 @@ impl MangaInfo {
     }
 }
 
-/// `MANGAINFO`. It holds nothing itself; every access reaches [`MangaInfo`].
-pub(crate) struct MangaInfoObject;
+/// `MANGAINFO`. It holds nothing itself; every access reaches [`SeriesRecord`].
+pub(crate) struct SeriesObject;
 
-impl UserData for MangaInfoObject {
+impl UserData for SeriesObject {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
-        text_field(fields, "URL", |m: &mut MangaInfo| &mut m.url);
-        text_field(fields, "Title", |m: &mut MangaInfo| &mut m.title);
-        text_field(fields, "AltTitles", |m: &mut MangaInfo| &mut m.alt_titles);
-        text_field(fields, "CoverLink", |m: &mut MangaInfo| &mut m.cover_link);
-        text_field(fields, "Authors", |m: &mut MangaInfo| &mut m.authors);
-        text_field(fields, "Artists", |m: &mut MangaInfo| &mut m.artists);
-        text_field(fields, "Genres", |m: &mut MangaInfo| &mut m.genres);
-        text_field(fields, "Status", |m: &mut MangaInfo| &mut m.status);
-        text_field(fields, "Summary", |m: &mut MangaInfo| &mut m.summary);
+        text_field(fields, "URL", |m: &mut SeriesRecord| &mut m.url);
+        text_field(fields, "Title", |m: &mut SeriesRecord| &mut m.title);
+        text_field(fields, "AltTitles", |m: &mut SeriesRecord| {
+            &mut m.alt_titles
+        });
+        text_field(fields, "CoverLink", |m: &mut SeriesRecord| {
+            &mut m.cover_link
+        });
+        text_field(fields, "Authors", |m: &mut SeriesRecord| &mut m.authors);
+        text_field(fields, "Artists", |m: &mut SeriesRecord| &mut m.artists);
+        text_field(fields, "Genres", |m: &mut SeriesRecord| &mut m.genres);
+        text_field(fields, "Status", |m: &mut SeriesRecord| &mut m.status);
+        text_field(fields, "Summary", |m: &mut SeriesRecord| &mut m.summary);
         fields.add_field_function_get("ChapterLinks", |_, _: AnyUserData| {
-            Ok(ListObject::<MangaInfo>::new(|m| &mut m.chapter_links))
+            Ok(ListObject::<SeriesRecord>::new(|m| &mut m.chapter_links))
         });
         fields.add_field_function_get("ChapterNames", |_, _: AnyUserData| {
-            Ok(ListObject::<MangaInfo>::new(|m| &mut m.chapter_names))
+            Ok(ListObject::<SeriesRecord>::new(|m| &mut m.chapter_names))
         });
     }
 
@@ -148,7 +152,7 @@ impl UserData for MangaInfoObject {
 
 /// Sets the globals `MANGAINFO` and `MangaInfoStatusIfPos`.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
-    lua.globals().set("MANGAINFO", MangaInfoObject)?;
+    lua.globals().set("MANGAINFO", SeriesObject)?;
     let status_if_pos = lua.create_function(status_if_pos)?;
     lua.globals().set("MangaInfoStatusIfPos", status_if_pos)
 }
@@ -207,7 +211,7 @@ mod tests {
 
     #[test]
     fn chapters_pair_links_with_names() {
-        let mut info = MangaInfo::for_url("/series/x");
+        let mut info = SeriesRecord::for_url("/series/x");
         for link in ["chapter-1", "/chapter-2", "", "https://a.example/3"] {
             info.chapter_links.add(link);
         }

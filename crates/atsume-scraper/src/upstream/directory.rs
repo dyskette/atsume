@@ -13,7 +13,7 @@ use crate::upstream::string_list::ListObject;
 /// What `LINKS`, `NAMES` and `UPDATELIST` hold while a directory page is
 /// read, kept in the runtime.
 #[derive(Debug, Default)]
-pub(crate) struct Directory {
+pub(crate) struct DirectoryPageRecord {
     links: StringList,
     names: StringList,
     /// How many pages the directory has, if the module reported it. Modules
@@ -21,7 +21,7 @@ pub(crate) struct Directory {
     reported_page_count: i64,
 }
 
-impl Directory {
+impl DirectoryPageRecord {
     /// Reads what the module listed into a [`DirectoryPage`].
     ///
     /// Each link is paired with the name at the same position, put in the
@@ -60,14 +60,16 @@ pub(crate) type StatusReport = Box<dyn FnMut(&str)>;
 #[derive(Default)]
 pub(crate) struct StatusSink(pub(crate) Option<StatusReport>);
 
-/// `UPDATELIST`. It holds nothing itself; every access reaches [`Directory`].
+/// `UPDATELIST`. It holds nothing itself; every access reaches [`DirectoryPageRecord`].
 struct UpdateListObject;
 
 impl UserData for UpdateListObject {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
-        int_field(fields, "CurrentDirectoryPageNumber", |d: &mut Directory| {
-            &mut d.reported_page_count
-        });
+        int_field(
+            fields,
+            "CurrentDirectoryPageNumber",
+            |d: &mut DirectoryPageRecord| &mut d.reported_page_count,
+        );
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
@@ -85,8 +87,14 @@ impl UserData for UpdateListObject {
 /// Sets the globals `LINKS`, `NAMES` and `UPDATELIST`.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     let globals = lua.globals();
-    globals.set("LINKS", ListObject::<Directory>::new(|d| &mut d.links))?;
-    globals.set("NAMES", ListObject::<Directory>::new(|d| &mut d.names))?;
+    globals.set(
+        "LINKS",
+        ListObject::<DirectoryPageRecord>::new(|d| &mut d.links),
+    )?;
+    globals.set(
+        "NAMES",
+        ListObject::<DirectoryPageRecord>::new(|d| &mut d.names),
+    )?;
     globals.set("UPDATELIST", UpdateListObject)
 }
 
@@ -96,7 +104,7 @@ mod tests {
 
     #[test]
     fn entries_pair_links_with_names() {
-        let mut directory = Directory::default();
+        let mut directory = DirectoryPageRecord::default();
         for link in ["manga/a", "", "/manga/c"] {
             directory.links.add(link);
         }
@@ -110,6 +118,11 @@ mod tests {
             .collect();
         assert_eq!(entries, [("/manga/a", "A"), ("/manga/c", "/manga/c")]);
         assert_eq!(page.reported_page_count, Some(12));
-        assert_eq!(Directory::default().into_page().reported_page_count, None);
+        assert_eq!(
+            DirectoryPageRecord::default()
+                .into_page()
+                .reported_page_count,
+            None
+        );
     }
 }
