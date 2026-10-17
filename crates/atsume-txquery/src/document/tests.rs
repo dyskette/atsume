@@ -316,3 +316,18 @@ fn nodes_of_a_replaced_page_still_read_from_it() {
     let from_old = page.evaluate(&engine, "text()", Some(old)).unwrap();
     assert_eq!(page.text_of(&from_old), "old");
 }
+
+#[test]
+fn capitalised_names_match_html_in_any_case_and_json_exactly() {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(br#"<TotalPage>3</TotalPage><div data-URL="/x"></div>"#);
+    let total = page.evaluate(&engine, "//TotalPage", None).unwrap();
+    assert_eq!(page.text_of(&total), "3");
+    let url = page.evaluate(&engine, "//DIV/@data-URL", None).unwrap();
+    assert_eq!(page.text_of(&url), "/x");
+    let mut json = Document::parse_html(br#"{"pageProps": {"Title": "A", "title": "B"}}"#);
+    let title = json
+        .evaluate(&engine, "json(*)/pageProps/Title", None)
+        .unwrap();
+    assert_eq!(json.text_of(&title), "AB");
+}

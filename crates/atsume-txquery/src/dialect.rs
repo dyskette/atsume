@@ -13,6 +13,10 @@
 //! | `jn:keys(X)`, `jn:members(X)` | `((X)/*/name())`, `((X)/*)`       |
 //! | `css("sel")`                  | the selector as a path            |
 //! | `true`, `false`, `null`       | `true()`, `false()`, `"null"`     |
+//! | `TotalPage`, a capital in a name test | `*[name() = ("TotalPage", "totalpage")]` |
+//!
+//! The last row exists because upstream matches HTML names ignoring case,
+//! while html5ever stores them in lowercase and JSON keys keep their case.
 
 use crate::css;
 
@@ -203,6 +207,7 @@ impl<'e> Rewriter<'_, 'e> {
             (Kind::Symbol, "(") => self.call_on_value()?,
             (Kind::Name, "jn:keys" | "jn:members" | "css") => self.function(token.text)?,
             (Kind::Name, "true" | "false" | "null") => self.literal(token.text),
+            (Kind::Name, name) if name.contains(char::is_uppercase) => self.capitalised_name(name),
             _ => false,
         };
         if !handled {
@@ -358,6 +363,23 @@ impl<'e> Rewriter<'_, 'e> {
         });
         self.at += 1;
         self.before = Before::Value;
+        true
+    }
+
+    /// A name test with a capital matches the name as written, for a JSON key,
+    /// and in lowercase, for an HTML name. A prefixed name, a function's name
+    /// and an axis are left alone.
+    fn capitalised_name(&mut self, name: &str) -> bool {
+        let is_call_or_axis = self
+            .next_significant()
+            .is_some_and(|(_, t)| t.text == "(" || t.text == "::");
+        if name.contains(':') || is_call_or_axis {
+            return false;
+        }
+        let test = format!("*[name() = (\"{name}\", \"{}\")]", name.to_lowercase());
+        self.out.push_str(&test);
+        self.at += 1;
+        self.before = Before::Step;
         true
     }
 

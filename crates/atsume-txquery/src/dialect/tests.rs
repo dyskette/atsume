@@ -49,9 +49,9 @@ fn calling_a_value_reads_its_members_or_one_of_them() {
         // An ordinary function call is left alone.
         ("concat(a, b)", "concat(a, b)"),
     ]);
-    let dynamic = rewrite("(groups)(PH)").unwrap();
+    let dynamic = rewrite("(groups)(key)").unwrap();
     assert!(
-        dynamic.starts_with("(groups)/*[let $atsume_key := (PH)"),
+        dynamic.starts_with("(groups)/*[let $atsume_key := (key)"),
         "{dynamic}"
     );
 }
@@ -67,8 +67,8 @@ fn lookups_are_child_steps() {
         ("poster?image", "poster/image"),
         ("($json0)?data?items?1", "($json0)/data/items/*[1]"),
         (
-            "chapters?*[not(isUnreleased=true)]",
-            "chapters/*[not(isUnreleased=true())]",
+            "chapters?*[not(unreleased=true)]",
+            "chapters/*[not(unreleased=true())]",
         ),
         // A unary lookup reads from the context item.
         ("?name", "name"),
@@ -83,8 +83,8 @@ fn jsoniq_functions_become_paths() {
     check(&[
         ("jn:keys(groups)", "((groups)/*/name())"),
         (
-            "jn:members(result)[Number=PH]/Identification",
-            "((result)/*)[Number=PH]/Identification",
+            "jn:members(result)[number=$n]/identification",
+            "((result)/*)[number=$n]/identification",
         ),
         ("jn:keys(($json0))", "((($json0))/*/name())"),
     ]);
@@ -126,4 +126,24 @@ fn strings_and_comments_are_left_alone() {
         ("//a (: a comment with ?x :)", "//a (: a comment with ?x :)"),
     ]);
     assert!(rewrite("'open").is_err());
+}
+
+#[test]
+fn a_capitalised_name_matches_either_case() {
+    check(&[
+        ("//TotalPage", r#"//*[name() = ("TotalPage", "totalpage")]"#),
+        (
+            "//div/@data-URL",
+            r#"//div/@*[name() = ("data-URL", "data-url")]"#,
+        ),
+        (
+            "jn:members(result)[Number=$n]",
+            r#"((result)/*)[*[name() = ("Number", "number")]=$n]"#,
+        ),
+        // Functions, axes, prefixed names and JSON properties keep their case.
+        ("Foo(1)", "Foo(1)"),
+        ("xs:dateTime('x')", "xs:dateTime('x')"),
+        ("($json0).pageProps", "($json0)/pageProps"),
+        ("($json0)?pageProps", "($json0)/pageProps"),
+    ]);
 }
