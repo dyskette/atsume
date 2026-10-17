@@ -1,8 +1,9 @@
-//! What can go wrong loading or running a module.
+//! The failures that can happen while loading or running a module.
 
 use crate::http::LastRequest;
 
-/// What kind of failure an [`Error`] is, for a caller to decide what to do.
+/// The kind of failure that an [`Error`] reports, so that a caller can decide
+/// what to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ErrorKind {
@@ -12,27 +13,27 @@ pub enum ErrorKind {
     CpuLimit,
     /// A module file could not be loaded, or declared no website.
     Load,
-    /// The module failed while handling an event: it raised, named a
-    /// function it does not define, or produced nothing usable.
+    /// The module failed while handling an event. It raised an error, named a
+    /// function that it does not define, or produced nothing usable.
     Module,
     /// The module reported that a request it needed failed. The error's
     /// [`last_request`](Error::last_request) says what the site sent back.
     Network,
-    /// The page the module was given holds nothing it recognizes, which
-    /// usually means the site moved it.
+    /// The page the module was given holds nothing the module recognizes.
+    /// This usually means that the site moved the page.
     NotFound,
     /// The site rejected the credentials.
     LoginRejected,
-    /// The caller asked for something the module does not offer: a website,
-    /// handler or setting it does not declare, or a login without
-    /// credentials.
+    /// The caller asked for something the module does not offer, such as a
+    /// website, handler or setting that it does not declare, or a login
+    /// without credentials.
     Unsupported,
 }
 
-/// A failure loading or running a module.
+/// A failure while loading or running a module.
 ///
-/// The message names where it happened, such as the module file or the
-/// handler, followed by the cause.
+/// The message first names where the failure happened, such as the module
+/// file or the handler, and then gives the cause.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{message}")]
 pub struct Error {
@@ -50,8 +51,8 @@ impl Error {
         }
     }
 
-    /// Reports a network problem the module ran into while doing `action`,
-    /// with what its last request got back.
+    /// Reports a network problem that the module ran into while doing
+    /// `action`. The error keeps what the module's last request got back.
     pub(crate) fn network(site_name: &str, action: &str, last: LastRequest) -> Self {
         let from = if last.requested_url.is_empty() {
             String::new()
@@ -84,8 +85,8 @@ impl Error {
         Self::new(ErrorKind::CpuLimit, message)
     }
 
-    /// Prefixes where the failure happened, and classifies it as `kind`
-    /// unless it is a cancellation or the CPU limit, which stay what they are.
+    /// Prefixes the message with where the failure happened, and classifies
+    /// the failure as `kind`. A cancellation or a CPU limit keeps its own kind.
     pub(crate) fn with_context(self, context: impl std::fmt::Display, kind: ErrorKind) -> Self {
         let kind = match self.kind {
             ErrorKind::Cancelled | ErrorKind::CpuLimit => self.kind,
@@ -104,8 +105,8 @@ impl Error {
         self.kind
     }
 
-    /// Returns what the module's last request got back, for a
-    /// [`Network`](ErrorKind::Network) error.
+    /// Returns what the module's last request got back. Only a
+    /// [`Network`](ErrorKind::Network) error has one.
     #[must_use]
     pub fn last_request(&self) -> Option<&LastRequest> {
         self.last_request.as_deref()
