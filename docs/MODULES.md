@@ -144,6 +144,15 @@ lookups, `jn:keys`, `jn:members`, `css()` and bare `true`/`false`/`null`.
 revision measured, 3602 of 3603 call sites compile; the corpus test in
 `src/corpus.rs` fails below 99%.
 
+`tests/internettools.rs` ports cases from internettools' own XPath tests,
+which are GPL-3.0-or-later and so may be copied. Only cases for what the
+modules use are kept: `json()`, the string functions they call, sequences and
+`css()`. Cases left out are those that depend on internettools parsing its
+test pages as XML, where FMD2 and atsume parse HTML, and those for features no
+module uses, such as `:nth-child(2n+1)` or namespaced selectors. Where atsume
+still differs, as on case-insensitive comparison, the case is pinned with both
+results, so closing the gap shows up as a failing test.
+
 `crates/atsume-scraper/src/query.rs` gives modules `CreateTXQuery`, following
 `baseunits/lua/LuaXQuery.pas` and `LuaIXQValue.pas` rather than the Go port:
 
