@@ -9,13 +9,14 @@ use crate::error::ErrorKind;
 use crate::http::HttpConfig;
 use crate::{CancelToken, Catalog, Error, Result, Session, SessionConfig, Site};
 
-/// An FMD2-shaped checkout in a temporary directory.
+/// A checkout laid out like FMD2's, in a temporary directory.
 pub(crate) struct Checkout {
     dir: TempDir,
 }
 
 impl Checkout {
-    /// Writes each `(path, source)` under the checkout's `lua` directory.
+    /// Creates the checkout and writes each `(path, source)` pair under its
+    /// `lua` directory.
     pub(crate) fn new(files: &[(&str, &str)]) -> Self {
         let dir = TempDir::new().unwrap();
         for (name, source) in files {
@@ -81,7 +82,7 @@ pub(crate) fn open_module(init: &str, rest: &str) -> Session {
     open_module_with(&HttpConfig::default(), CancelToken::new(), init, rest)
 }
 
-/// Opens a module that reaches the network through `http`, cancelled by
+/// Opens a module that reaches the network through `http` and is cancelled by
 /// `cancel`.
 pub(crate) fn open_module_with(
     http: &HttpConfig,
@@ -98,8 +99,8 @@ pub(crate) fn open_module_with(
     site.open(&config, cancel).unwrap()
 }
 
-/// Returns the `lua` directory of the FMD2 checkout in `ATSUME_FMD2_DIR`, for
-/// tests marked `#[ignore]` that need upstream's modules.
+/// Returns the `lua` directory of the FMD2 checkout that `ATSUME_FMD2_DIR`
+/// names. Tests marked `#[ignore]` use it when they need upstream's modules.
 pub(crate) fn fmd2_lua_dir() -> PathBuf {
     let checkout =
         std::env::var_os("ATSUME_FMD2_DIR").expect("set ATSUME_FMD2_DIR to an FMD2 checkout");
