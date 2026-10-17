@@ -1,8 +1,8 @@
-//! Pascal's `TStringList`, which modules use for links, names, page lists,
-//! headers and cookies.
+//! An ordered list of strings, like Pascal's `TStringList`, which modules use
+//! for links, names, page lists, headers and cookies.
 //!
-//! This is the plain list the host reads; `upstream::string_list` is how
-//! modules see it.
+//! This is the plain list that the host reads. `upstream::string_list` shows
+//! the same list to modules.
 
 /// An ordered list of strings.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -27,7 +27,7 @@ impl StringList {
         self.items.clear();
     }
 
-    /// Replaces every item.
+    /// Replaces every item with `items`.
     pub(crate) fn replace_all(&mut self, items: Vec<String>) {
         self.items = items;
     }
@@ -69,7 +69,8 @@ impl StringList {
         position.map_or(-1, |i| i64::try_from(i).unwrap_or(i64::MAX))
     }
 
-    /// Reads the value of the `name=value` pair named `name`, ignoring case.
+    /// Returns the value of the `name=value` pair whose name is `name`,
+    /// ignoring case. Returns `""` when there is no such pair.
     #[must_use]
     pub(crate) fn value_of(&self, name: &str) -> &str {
         self.position_of(name)
@@ -77,8 +78,8 @@ impl StringList {
             .map_or("", |(_, value)| value)
     }
 
-    /// Writes a `name=value` pair, replacing any with the same name. An empty
-    /// value removes the pair.
+    /// Writes a `name=value` pair, replacing any pair with the same name. An
+    /// empty value removes the pair.
     pub(crate) fn set_value(&mut self, name: &str, value: &str) {
         let position = self.position_of(name);
         match (position, value.is_empty()) {
@@ -91,7 +92,7 @@ impl StringList {
         }
     }
 
-    /// Returns the `name=value` pairs as separate names and values.
+    /// Returns each `name=value` pair as a separate name and value.
     pub(crate) fn pairs(&self) -> impl Iterator<Item = (&str, &str)> {
         self.items
             .iter()
@@ -111,13 +112,14 @@ impl StringList {
         self.items.reverse();
     }
 
-    /// Returns how many items there are, as Lua reads a count.
+    /// Returns how many items there are, as the integer that Lua reads.
     pub(crate) fn count(&self) -> i64 {
         i64::try_from(self.items.len()).unwrap_or(i64::MAX)
     }
 
-    /// Renders the list as Pascal's `CommaText`: comma-separated, with an item
-    /// quoted when it holds a comma, a quote or a space.
+    /// Renders the list as Pascal's `CommaText`. The items are separated by
+    /// commas, and an item is quoted when it contains a comma, a quote or a
+    /// space.
     #[must_use]
     pub(crate) fn comma_text(&self) -> String {
         let quote = |item: &String| {
