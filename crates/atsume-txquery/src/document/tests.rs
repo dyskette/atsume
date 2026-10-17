@@ -209,3 +209,64 @@ fn text_that_is_not_json_fails_naming_the_expression() {
     );
     assert!(err.to_string().contains("invalid JSON"), "{err}");
 }
+
+#[test]
+fn internettools_json_syntax_evaluates() {
+    assert_eq!(json_texts("json(*).data.title"), ["Solo"]);
+    assert_eq!(
+        json_texts("json(*).data.items().name"),
+        ["Chapter 2", "Chapter 1"]
+    );
+    assert_eq!(
+        json_texts("string-join(json(*).data.items()?url, ', ')"),
+        ["/c/2, /c/1"]
+    );
+    assert_eq!(json_texts("json(*)?data?items?2?name"), ["Chapter 1"]);
+    assert_eq!(json_texts("count(json(*).data.items())"), ["2"]);
+    assert_eq!(json_texts("jn:keys(json(*))"), ["data", "z", "a"]);
+    assert_eq!(
+        json_texts("json(*).data.items()[external = null]/name"),
+        ["Chapter 2"]
+    );
+    assert_eq!(json_texts(r#"(json(*).data)("title")"#), ["Solo"]);
+}
+
+#[test]
+fn a_listed_json_item_is_the_context_for_the_next_expression() {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(API.as_bytes());
+    let items = page
+        .evaluate(&engine, "json(*).data.items()", None)
+        .unwrap();
+    let names: Vec<String> = items
+        .items()
+        .iter()
+        .map(|item| {
+            let Item::Node(node) = item else {
+                panic!("an item should be a node")
+            };
+            let name = page.evaluate(&engine, "name", Some(*node)).unwrap();
+            page.text_of(&name)
+        })
+        .collect();
+    assert_eq!(names, ["Chapter 2", "Chapter 1"]);
+}
+
+#[test]
+fn css_selects_from_the_page() {
+    assert_eq!(
+        texts(r#"css("li.wp-manga-chapter > a")/@href"#),
+        ["/manga/solo/2/", "/manga/solo/1/"]
+    );
+    assert_eq!(texts(r#"css("div.post-title h1")"#), ["Solo Leveling "]);
+}
+
+#[test]
+fn a_property_xpath_cannot_name_is_still_read() {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(br#"{"image": {"1280x720": {"url": "/big.jpg"}}}"#);
+    let url = page
+        .evaluate(&engine, "json(*).image.1280x720.url", None)
+        .unwrap();
+    assert_eq!(page.text_of(&url), "/big.jpg");
+}

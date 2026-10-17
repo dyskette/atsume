@@ -14,6 +14,10 @@
 //! assert_eq!(page.text_of(&status), "Ongoing");
 //! ```
 
+#[cfg(test)]
+mod corpus;
+mod css;
+mod dialect;
 mod document;
 mod engine;
 mod error;

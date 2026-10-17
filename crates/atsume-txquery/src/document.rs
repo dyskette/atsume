@@ -9,7 +9,7 @@ use xot::xmlname::OwnedName;
 use crate::engine::{Engine, json_variable};
 use crate::error::Error;
 use crate::value::{Item, Sequence};
-use crate::{html, json};
+use crate::{dialect, html, json};
 
 /// A node of a [`Document`]. It is only meaningful with the document it came
 /// from.
@@ -54,7 +54,9 @@ impl Document {
     /// Evaluates `expression`, starting from `context` or the document node.
     ///
     /// Each `json(…)` call is evaluated first: its argument's text is parsed
-    /// as JSON, and the call is replaced by the resulting tree.
+    /// as JSON, and the call is replaced by the resulting tree. The rest of
+    /// internettools' syntax is then rewritten into standard XPath; see
+    /// [`dialect`].
     ///
     /// # Errors
     ///
@@ -73,13 +75,18 @@ impl Document {
         let mut last = 0;
         for (index, call) in calls.iter().enumerate() {
             rewritten.push_str(&expression[last..call.span.start]);
-            rewritten.push('$');
+            // Parenthesised, so a dot after the call reads as a property
+            // rather than as part of the variable's name.
+            rewritten.push_str("($");
             rewritten.push_str(&json_variable(index));
+            rewritten.push(')');
             trees.push(self.json_tree(engine, &expression[call.argument.clone()], context)?);
             last = call.span.end;
         }
         rewritten.push_str(&expression[last..]);
-        self.run(engine, &rewritten, context, &trees)
+        let standard =
+            dialect::rewrite(&rewritten).map_err(|message| compile_error(expression, message))?;
+        self.run(engine, &standard, context, &trees)
             .map_err(|e| e.for_expression(expression))
     }
 

@@ -1,0 +1,129 @@
+use super::*;
+
+fn check(cases: &[(&str, &str)]) {
+    for (internettools, standard) in cases {
+        assert_eq!(
+            rewrite(internettools).unwrap(),
+            *standard,
+            "{internettools}"
+        );
+    }
+}
+
+#[test]
+fn dots_after_a_value_read_properties() {
+    check(&[
+        ("($json0).data.items", "($json0)/data/items"),
+        (
+            "($json0).props.pageProps.series",
+            "($json0)/props/pageProps/series",
+        ),
+        ("(//a)[1].href", "(//a)[1]/href"),
+        // A quoted name, or one XPath cannot write as a step, matches by name.
+        (r#"($json0)."PH".slug"#, r#"($json0)/*[name() = "PH"]/slug"#),
+        (
+            "($json0).data.image.1280x1840_480.url",
+            r#"($json0)/data/image/*[name() = "1280x1840_480"]/url"#,
+        ),
+        // Elsewhere a dot is the context item, part of a name, or a number.
+        ("./a", "./a"),
+        ("//data.items", "//data.items"),
+        ("1.5 + .5", "1.5 + .5"),
+    ]);
+}
+
+#[test]
+fn calling_a_value_reads_its_members_or_one_of_them() {
+    check(&[
+        ("($json0).data.items()", "($json0)/data/items/*"),
+        ("($json0)()[2]()", "($json0)/*[2]/*"),
+        (
+            "($json0).chapter.pages().url",
+            "($json0)/chapter/pages/*/url",
+        ),
+        (
+            r#"(($json0).chapters)("PH")"#,
+            r#"(($json0)/chapters)/*[name() = "PH"]"#,
+        ),
+        ("(groups)(2)", "(groups)/*[2]"),
+        // An ordinary function call is left alone.
+        ("concat(a, b)", "concat(a, b)"),
+    ]);
+    let dynamic = rewrite("(groups)(PH)").unwrap();
+    assert!(
+        dynamic.starts_with("(groups)/*[let $atsume_key := (PH)"),
+        "{dynamic}"
+    );
+}
+
+#[test]
+fn lookups_are_child_steps() {
+    check(&[
+        (
+            "string-join(alt_titles?*, \", \")",
+            "string-join(alt_titles/*, \", \")",
+        ),
+        ("authors?*?name", "authors/*/name"),
+        ("poster?image", "poster/image"),
+        ("($json0)?data?items?1", "($json0)/data/items/*[1]"),
+        (
+            "chapters?*[not(isUnreleased=true)]",
+            "chapters/*[not(isUnreleased=true())]",
+        ),
+        // A unary lookup reads from the context item.
+        ("?name", "name"),
+        ("count(?*)", "count(*)"),
+        // An occurrence indicator in a type is not a lookup.
+        ("$a instance of xs:string?", "$a instance of xs:string?"),
+    ]);
+}
+
+#[test]
+fn jsoniq_functions_become_paths() {
+    check(&[
+        ("jn:keys(groups)", "((groups)/*/name())"),
+        (
+            "jn:members(result)[Number=PH]/Identification",
+            "((result)/*)[Number=PH]/Identification",
+        ),
+        ("jn:keys(($json0))", "((($json0))/*/name())"),
+    ]);
+}
+
+#[test]
+fn css_selectors_become_paths() {
+    check(&[
+        (r#"css("div#info > h1")"#, r#"(.//div[@id = "info"]/h1)"#),
+        (
+            r#"css("img.cover")/@src"#,
+            r#"(.//img[contains(concat(' ', normalize-space(@class), ' '), " cover ")])/@src"#,
+        ),
+    ]);
+    assert!(rewrite("css(//a)").is_err());
+}
+
+#[test]
+fn json_literals_are_values_unless_they_are_steps() {
+    check(&[
+        (
+            "restricted_view?is_open=true",
+            "restricted_view/is_open=true()",
+        ),
+        ("a = null", "a = \"null\""),
+        ("x = false", "x = false()"),
+        // A path step, a function, or text inside a string is left alone.
+        ("//true", "//true"),
+        ("true()", "true()"),
+        ("@data-show=\"false\"", "@data-show=\"false\""),
+    ]);
+}
+
+#[test]
+fn strings_and_comments_are_left_alone() {
+    check(&[
+        ("concat('a.b?c', \"x()\")", "concat('a.b?c', \"x()\")"),
+        ("'it''s'.x", "'it''s'.x"),
+        ("//a (: a comment with ?x :)", "//a (: a comment with ?x :)"),
+    ]);
+    assert!(rewrite("'open").is_err());
+}
