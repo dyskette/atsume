@@ -9,7 +9,7 @@ use xee_xpath::context::StaticContextBuilder;
 use xee_xpath::query::SequenceQuery;
 use xot::xmlname::OwnedName;
 
-use crate::dialect::{self, json_variable};
+use crate::dialect::{self, json_variable_name};
 use crate::error::Error;
 
 /// How many compiled expressions an engine keeps. Modules use a few dozen
@@ -38,7 +38,7 @@ pub struct Engine {
 pub(crate) struct Prepared {
     pub(crate) query: SequenceQuery,
     /// The arguments in the order of their variables; see
-    /// [`dialect::json_variable`].
+    /// [`dialect::json_variable_name`].
     pub(crate) json_arguments: Vec<String>,
 }
 
@@ -97,7 +97,7 @@ impl Engine {
             .try_into()
             .map_err(|e: iri_string::validate::Error| e.to_string())?;
         let mut context = StaticContextBuilder::default();
-        context.variable_names((0..variables).map(|i| OwnedName::name(&json_variable(i))));
+        context.variable_names((0..variables).map(|i| OwnedName::name(&json_variable_name(i))));
         context.default_collation(collation);
         self.queries
             .sequence_with_context(xpath, context.build())

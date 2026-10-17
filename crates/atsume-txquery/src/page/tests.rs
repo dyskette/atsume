@@ -343,7 +343,7 @@ fn nodes_of_a_replaced_page_still_read_from_it() {
 }
 
 #[test]
-fn capitalised_names_match_html_in_any_case_and_json_exactly() {
+fn capitalized_names_match_html_in_any_case_and_json_exactly() {
     let engine = Engine::new();
     let mut page = Page::parse_html(br#"<TotalPage>3</TotalPage><div data-URL="/x"></div>"#);
     let total = page.evaluate(&engine, "//TotalPage", None).unwrap();

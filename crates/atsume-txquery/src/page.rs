@@ -9,7 +9,7 @@ use xee_xpath::query::SequenceQuery;
 use xee_xpath::{Documents, Item as XeeItem, Query};
 use xot::xmlname::OwnedName;
 
-use crate::dialect::json_variable;
+use crate::dialect::json_variable_name;
 use crate::engine::Engine;
 use crate::error::Error;
 use crate::value::{Item, Sequence};
@@ -178,7 +178,7 @@ impl Page {
     ) -> Result<Sequence, Error> {
         let mut variables = Variables::default();
         for (index, tree) in trees.iter().enumerate() {
-            let name = OwnedName::name(&json_variable(index));
+            let name = OwnedName::name(&json_variable_name(index));
             variables.insert(name, tree.iter().copied().collect());
         }
         let mut builder = query.dynamic_context_builder(&self.documents);

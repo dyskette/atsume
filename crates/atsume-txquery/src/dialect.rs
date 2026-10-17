@@ -26,7 +26,7 @@ use crate::css;
 /// What kind of token comes before the one being read, which decides whether
 /// a `.`, `(` or `?` is internettools syntax.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Before {
+enum PreviousToken {
     /// The start of the expression, or an operator: nothing a value ends in.
     Operator,
     /// A closing `)`, `]` or `}`, or a value this rewrite produced: a dot or
@@ -39,9 +39,9 @@ enum Before {
 
 /// An expression in standard XPath, with the `json()` arguments it needs.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Rewritten {
+pub(crate) struct RewrittenExpression {
     /// The expression, where the `n`th `json()` call is the variable named by
-    /// [`json_variable`]`(n)`.
+    /// [`json_variable_name`]`(n)`.
     pub(crate) xpath: String,
     /// Each `json()` call's argument as written, to evaluate before the
     /// expression runs.
@@ -49,14 +49,14 @@ pub(crate) struct Rewritten {
 }
 
 /// Rewrites `expression`'s internettools extensions into standard XPath.
-pub(crate) fn rewrite(expression: &str) -> Result<Rewritten, String> {
+pub(crate) fn rewrite(expression: &str) -> Result<RewrittenExpression, String> {
     let tokens = tokenize(expression)?;
-    Rewriter::new(&tokens, Vec::new()).run()
+    Rewriter::new(&tokens, Vec::new()).rewrite_all()
 }
 
 /// Returns the name of the variable that holds the tree of the `index`th
 /// `json()` call.
-pub(crate) fn json_variable(index: usize) -> String {
+pub(crate) fn json_variable_name(index: usize) -> String {
     format!("json{index}")
 }
 
@@ -66,8 +66,9 @@ const STEP_MARKERS: [char; 3] = ['/', '!', '['];
 
 /// The kinds of token the rewrite tells apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
-    Space,
+enum TokenKind {
+    /// Whitespace or a comment, which the rewrite copies but never reads.
+    Trivia,
     String,
     Number,
     Name,
@@ -77,12 +78,12 @@ enum Kind {
 
 #[derive(Clone, Copy, Debug)]
 struct Token<'e> {
-    kind: Kind,
+    kind: TokenKind,
     text: &'e str,
 }
 
 /// Operators of two characters, which must not be read as two of one.
-const PAIRED_SYMBOLS: [&str; 11] = [
+const TWO_CHAR_OPERATORS: [&str; 11] = [
     "//", "::", "!=", "<=", ">=", "||", "=>", ":=", "..", "<<", ">>",
 ];
 
@@ -100,22 +101,24 @@ fn tokenize(expression: &str) -> Result<Vec<Token<'_>>, String> {
     Ok(tokens)
 }
 
-/// Returns the kind and length of the token `rest` starts with.
-fn token_at(rest: &str, first: char) -> Result<(Kind, usize), String> {
+/// Returns the kind and length of the token `rest` starts with, given its
+/// `first` character, which the caller has already read to know `rest` is not
+/// empty.
+fn token_at(rest: &str, first: char) -> Result<(TokenKind, usize), String> {
     let starts_number = first.is_ascii_digit()
         || (first == '.' && rest[1..].starts_with(|c: char| c.is_ascii_digit()));
     Ok(match first {
         c if c.is_whitespace() => (
-            Kind::Space,
+            TokenKind::Trivia,
             rest.find(|ch: char| !ch.is_whitespace())
                 .unwrap_or(rest.len()),
         ),
-        '(' if rest.starts_with("(:") => (Kind::Space, comment_length(rest)?),
-        '"' | '\'' => (Kind::String, string_length(rest, first)?),
-        '$' => (Kind::Variable, 1 + qname_length(&rest[1..])),
-        _ if starts_number => (Kind::Number, number_length(rest)),
-        c if c.is_alphabetic() || c == '_' => (Kind::Name, qname_length(rest)),
-        _ => (Kind::Symbol, symbol_length(rest, first)),
+        '(' if rest.starts_with("(:") => (TokenKind::Trivia, comment_length(rest)?),
+        '"' | '\'' => (TokenKind::String, string_length(rest, first)?),
+        '$' => (TokenKind::Variable, 1 + qname_length(&rest[1..])),
+        _ if starts_number => (TokenKind::Number, number_length(rest)),
+        c if c.is_alphabetic() || c == '_' => (TokenKind::Name, qname_length(rest)),
+        _ => (TokenKind::Symbol, symbol_length(rest, first)),
     })
 }
 
@@ -194,7 +197,7 @@ fn comment_length(text: &str) -> Result<usize, String> {
 }
 
 fn symbol_length(text: &str, first: char) -> usize {
-    PAIRED_SYMBOLS
+    TWO_CHAR_OPERATORS
         .iter()
         .find(|pair| text.starts_with(**pair))
         .map_or(first.len_utf8(), |pair| pair.len())
@@ -205,7 +208,7 @@ struct Rewriter<'t, 'e> {
     tokens: &'t [Token<'e>],
     at: usize,
     out: String,
-    before: Before,
+    previous: PreviousToken,
     /// The `json()` arguments found so far, shared with nested rewrites so the
     /// variables are numbered across the whole expression.
     json_arguments: Vec<String>,
@@ -217,16 +220,16 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             tokens,
             at: 0,
             out: String::new(),
-            before: Before::Operator,
+            previous: PreviousToken::Operator,
             json_arguments,
         }
     }
 
-    fn run(mut self) -> Result<Rewritten, String> {
+    fn rewrite_all(mut self) -> Result<RewrittenExpression, String> {
         while self.at < self.tokens.len() {
-            self.step()?;
+            self.rewrite_next_construct()?;
         }
-        Ok(Rewritten {
+        Ok(RewrittenExpression {
             xpath: self.out,
             json_arguments: self.json_arguments,
         })
@@ -236,22 +239,26 @@ impl<'t, 'e> Rewriter<'t, 'e> {
     /// argument, keeping the `json()` arguments in one list.
     fn rewrite_nested(&mut self, tokens: &[Token<'_>]) -> Result<String, String> {
         let json_arguments = std::mem::take(&mut self.json_arguments);
-        let nested = Rewriter::new(tokens, json_arguments).run()?;
+        let nested = Rewriter::new(tokens, json_arguments).rewrite_all()?;
         self.json_arguments = nested.json_arguments;
         Ok(nested.xpath)
     }
 
     /// Rewrites the construct at the current token and moves past it.
-    fn step(&mut self) -> Result<(), String> {
+    fn rewrite_next_construct(&mut self) -> Result<(), String> {
         let token = self.tokens[self.at];
         let handled = match (token.kind, token.text) {
-            (Kind::Symbol, ".") => self.property_chain(),
-            (Kind::Symbol, "?") => self.lookup(),
-            (Kind::Symbol, "(") => self.call_on_value()?,
-            (Kind::Name, "json") => self.json_call()?,
-            (Kind::Name, "jn:keys" | "jn:members" | "css") => self.function(token.text)?,
-            (Kind::Name, "true" | "false" | "null") => self.literal(token.text),
-            (Kind::Name, name) if name.contains(char::is_uppercase) => self.capitalised_name(name),
+            (TokenKind::Symbol, ".") => self.property_chain(),
+            (TokenKind::Symbol, "?") => self.lookup(),
+            (TokenKind::Symbol, "(") => self.call_on_value()?,
+            (TokenKind::Name, "json") => self.json_call()?,
+            (TokenKind::Name, "jn:keys" | "jn:members" | "css") => {
+                self.jsoniq_or_css_call(token.text)?
+            }
+            (TokenKind::Name, "true" | "false" | "null") => self.json_literal(token.text),
+            (TokenKind::Name, name) if name.contains(char::is_uppercase) => {
+                self.capitalized_name(name)
+            }
             _ => false,
         };
         if !handled {
@@ -263,19 +270,23 @@ impl<'t, 'e> Rewriter<'t, 'e> {
     fn copy(&mut self, token: Token<'_>) {
         self.out.push_str(token.text);
         self.at += 1;
-        if token.kind != Kind::Space {
-            self.before = self.classify(token);
+        if token.kind != TokenKind::Trivia {
+            self.previous = self.classify(token);
         }
     }
 
     /// Decides what a copied token is to whatever follows it.
-    fn classify(&self, token: Token<'_>) -> Before {
+    fn classify(&self, token: Token<'_>) -> PreviousToken {
         match (token.kind, token.text) {
-            (Kind::Symbol, ")" | "]" | "}") => Before::Value,
-            (Kind::Name | Kind::Variable, _) | (Kind::Symbol, "." | "..") => Before::Step,
+            (TokenKind::Symbol, ")" | "]" | "}") => PreviousToken::Value,
+            (TokenKind::Name | TokenKind::Variable, _) | (TokenKind::Symbol, "." | "..") => {
+                PreviousToken::Step
+            }
             // `*` after an operand multiplies; anywhere else it is a step.
-            (Kind::Symbol, "*") if self.before == Before::Operator => Before::Step,
-            _ => Before::Operator,
+            (TokenKind::Symbol, "*") if self.previous == PreviousToken::Operator => {
+                PreviousToken::Step
+            }
+            _ => PreviousToken::Operator,
         }
     }
 
@@ -288,7 +299,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
     fn next_significant(&self) -> Option<(usize, Token<'e>)> {
         (1..)
             .map_while(|offset| self.peek(offset).map(|t| (offset, t)))
-            .find(|(_, t)| t.kind != Kind::Space)
+            .find(|(_, t)| t.kind != TokenKind::Trivia)
     }
 
     /// `X.a.b`: each dotted name after a value is a property read.
@@ -296,15 +307,15 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         let Some(next) = self.peek(1) else {
             return false;
         };
-        if self.before != Before::Value {
+        if self.previous != PreviousToken::Value {
             return false;
         }
         let steps: Vec<String> = match next.kind {
-            Kind::Name if !next.text.split('.').any(str::is_empty) => {
+            TokenKind::Name if !next.text.split('.').any(str::is_empty) => {
                 next.text.split('.').map(property_step).collect()
             }
             // `X."key"` reads a property whose name is quoted.
-            Kind::String => vec![named(next.text)],
+            TokenKind::String => vec![child_named(next.text)],
             _ => return false,
         };
         for step in steps {
@@ -312,7 +323,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             self.out.push_str(&step);
         }
         self.at += 2;
-        self.before = Before::Value;
+        self.previous = PreviousToken::Value;
         true
     }
 
@@ -323,20 +334,20 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             return false;
         };
         let step = match (key.kind, key.text) {
-            (Kind::Name, name) => name.to_owned(),
-            (Kind::Symbol, "*") => "*".to_owned(),
-            (Kind::Number, index) if index.bytes().all(|b| b.is_ascii_digit()) => {
+            (TokenKind::Name, name) => name.to_owned(),
+            (TokenKind::Symbol, "*") => "*".to_owned(),
+            (TokenKind::Number, index) if index.bytes().all(|b| b.is_ascii_digit()) => {
                 format!("*[{index}]")
             }
-            (Kind::String, name) => named(name),
+            (TokenKind::String, name) => child_named(name),
             _ => return false,
         };
-        if self.before != Before::Operator {
+        if self.previous != PreviousToken::Operator {
             self.out.push('/');
         }
         self.out.push_str(&step);
         self.at += 2;
-        self.before = Before::Value;
+        self.previous = PreviousToken::Value;
         true
     }
 
@@ -344,15 +355,15 @@ impl<'t, 'e> Rewriter<'t, 'e> {
     /// property by name, or a member by position. A call after a name is an
     /// ordinary function call and is left alone.
     fn call_on_value(&mut self) -> Result<bool, String> {
-        if self.before != Before::Value {
+        if self.previous != PreviousToken::Value {
             return Ok(false);
         }
         let close = self.closing_parenthesis()?;
-        let inner = significant(&self.tokens[self.at + 1..close]);
+        let inner = without_trivia(&self.tokens[self.at + 1..close]);
         let selection = match inner.as_slice() {
             [] => "/*".to_owned(),
-            [key] if key.kind == Kind::String => format!("/{}", named(key.text)),
-            [index] if index.kind == Kind::Number => format!("/*[{}]", index.text),
+            [key] if key.kind == TokenKind::String => format!("/{}", child_named(key.text)),
+            [index] if index.kind == TokenKind::Number => format!("/*[{}]", index.text),
             _ => {
                 let tokens = self.tokens;
                 let key = self.rewrite_nested(&tokens[self.at + 1..close])?;
@@ -364,12 +375,12 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         };
         self.out.push_str(&selection);
         self.at = close + 1;
-        self.before = Before::Value;
+        self.previous = PreviousToken::Value;
         Ok(true)
     }
 
     /// `jn:keys(X)`, `jn:members(X)` and `css("sel")`.
-    fn function(&mut self, name: &str) -> Result<bool, String> {
+    fn jsoniq_or_css_call(&mut self, name: &str) -> Result<bool, String> {
         let Some((offset, open)) = self.next_significant() else {
             return Ok(false);
         };
@@ -387,7 +398,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         };
         self.out.push_str(&rewritten);
         self.at = close + 1;
-        self.before = Before::Value;
+        self.previous = PreviousToken::Value;
         Ok(true)
     }
 
@@ -409,23 +420,23 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             .iter()
             .map(|t| t.text)
             .collect();
-        let variable = json_variable(self.json_arguments.len());
+        let variable = json_variable_name(self.json_arguments.len());
         self.json_arguments.push(argument);
-        // Parenthesised, so a dot after the call reads as a property rather
+        // Parenthesized, so a dot after the call reads as a property rather
         // than as part of the variable's name.
         self.out.push_str("($");
         self.out.push_str(&variable);
         self.out.push(')');
         self.at = close + 1;
-        self.before = Before::Value;
+        self.previous = PreviousToken::Value;
         Ok(true)
     }
 
     /// `true`, `false` and `null` are values, as in JSONiq, unless they are a
     /// path step or a function's name.
-    fn literal(&mut self, word: &str) -> bool {
-        let is_step =
-            matches!(self.before, Before::Step) || self.out.trim_end().ends_with(['/', '@', ':']);
+    fn json_literal(&mut self, word: &str) -> bool {
+        let is_step = matches!(self.previous, PreviousToken::Step)
+            || self.out.trim_end().ends_with(['/', '@', ':']);
         let is_call = self
             .next_significant()
             .is_some_and(|(_, t)| t.text == "(" || t.text == "::");
@@ -438,14 +449,14 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             _ => "\"null\"",
         });
         self.at += 1;
-        self.before = Before::Value;
+        self.previous = PreviousToken::Value;
         true
     }
 
     /// A name test with a capital matches the name as written, for a JSON key,
     /// and in lowercase, for an HTML name. A prefixed name, a function's name
     /// and an axis are left alone.
-    fn capitalised_name(&mut self, name: &str) -> bool {
+    fn capitalized_name(&mut self, name: &str) -> bool {
         let is_call_or_axis = self
             .next_significant()
             .is_some_and(|(_, t)| t.text == "(" || t.text == "::");
@@ -458,7 +469,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         );
         self.out.push_str(&test);
         self.at += 1;
-        self.before = Before::Step;
+        self.previous = PreviousToken::Step;
         true
     }
 
@@ -467,8 +478,8 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         let mut depth = 0;
         for (index, token) in self.tokens.iter().enumerate().skip(self.at) {
             let change = match (token.kind, token.text) {
-                (Kind::Symbol, "(") => 1,
-                (Kind::Symbol, ")") => -1,
+                (TokenKind::Symbol, "(") => 1,
+                (TokenKind::Symbol, ")") => -1,
                 _ => 0,
             };
             depth += change;
@@ -487,30 +498,30 @@ fn property_step(name: &str) -> String {
     if is_step_name {
         name.to_owned()
     } else {
-        named(&format!("\"{name}\""))
+        child_named(&format!("\"{name}\""))
     }
 }
 
 /// Returns a step to the child whose name is exactly the string literal
 /// `quoted_name`.
-fn named(quoted_name: &str) -> String {
+fn child_named(quoted_name: &str) -> String {
     format!("*[codepoint-equal(name(), {quoted_name})]")
 }
 
-fn significant<'e>(tokens: &[Token<'e>]) -> Vec<Token<'e>> {
+fn without_trivia<'e>(tokens: &[Token<'e>]) -> Vec<Token<'e>> {
     tokens
         .iter()
         .copied()
-        .filter(|t| t.kind != Kind::Space)
+        .filter(|t| t.kind != TokenKind::Trivia)
         .collect()
 }
 
 /// Translates `css()`'s argument, which must be a single string literal.
 fn css_argument(argument: &[Token<'_>]) -> Result<String, String> {
-    let [selector] = significant(argument)[..] else {
+    let [selector] = without_trivia(argument)[..] else {
         return Err("css() takes one string literal".to_owned());
     };
-    if selector.kind != Kind::String {
+    if selector.kind != TokenKind::String {
         return Err("css() takes one string literal".to_owned());
     }
     let quote = &selector.text[..1];

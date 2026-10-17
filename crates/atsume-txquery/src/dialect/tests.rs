@@ -132,7 +132,7 @@ fn strings_and_comments_are_left_alone() {
 }
 
 #[test]
-fn a_capitalised_name_matches_either_case() {
+fn a_capitalized_name_matches_either_case() {
     check(&[
         (
             "//TotalPage",
