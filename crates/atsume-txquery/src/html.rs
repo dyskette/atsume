@@ -12,14 +12,14 @@ use std::collections::HashMap;
 use html5ever::tendril::{StrTendril, TendrilSink};
 use html5ever::tree_builder::{ElemName, ElementFlags, NodeOrText, QuirksMode, TreeSink};
 use html5ever::{Attribute, LocalName, Namespace, QualName, local_name, ns};
-use xot::{Node, Xot};
+use xot::Xot;
 
 /// Parses `html` into `xot` and returns the document node.
 ///
 /// Names are lowercase and in no namespace, so `//div` matches as modules
 /// expect, and whitespace is kept. Comments and processing instructions are
 /// left out, as upstream reads them. Invalid UTF-8 is replaced.
-pub(crate) fn parse(xot: &mut Xot, html: &[u8]) -> Node {
+pub(crate) fn parse(xot: &mut Xot, html: &[u8]) -> xot::Node {
     let document = xot.new_document();
     let sink = Sink {
         xot: RefCell::new(xot),
@@ -38,18 +38,18 @@ pub(crate) fn parse(xot: &mut Xot, html: &[u8]) -> Node {
 /// `RefCell`.
 struct Sink<'x> {
     xot: RefCell<&'x mut Xot>,
-    document: Node,
+    document: xot::Node,
     /// The full name of each element, which html5ever asks back for.
-    names: RefCell<HashMap<Node, QualName>>,
+    names: RefCell<HashMap<xot::Node, QualName>>,
     /// The detached node holding each `template` element's contents.
-    templates: RefCell<HashMap<Node, Node>>,
+    templates: RefCell<HashMap<xot::Node, xot::Node>>,
 }
 
 /// An element's name as html5ever asks for it.
 #[derive(Debug)]
-struct OwnedName(QualName);
+struct ElementName(QualName);
 
-impl ElemName for OwnedName {
+impl ElemName for ElementName {
     fn ns(&self) -> &Namespace {
         &self.0.ns
     }
@@ -61,7 +61,11 @@ impl ElemName for OwnedName {
 
 impl Sink<'_> {
     /// Adds a node, skipping the kinds upstream leaves out of its tree.
-    fn attach(&self, place: impl FnOnce(&mut Xot, Node) -> Result<(), xot::Error>, child: Node) {
+    fn attach(
+        &self,
+        place: impl FnOnce(&mut Xot, xot::Node) -> Result<(), xot::Error>,
+        child: xot::Node,
+    ) {
         let mut xot = self.xot.borrow_mut();
         if xot.is_comment(child) {
             return;
@@ -69,20 +73,20 @@ impl Sink<'_> {
         log_if_refused(place(&mut xot, child));
     }
 
-    fn new_text(&self, text: &str) -> Node {
+    fn new_text(&self, text: &str) -> xot::Node {
         self.xot.borrow_mut().new_text(text)
     }
 }
 
 impl TreeSink for Sink<'_> {
-    type Handle = Node;
-    type Output = Node;
+    type Handle = xot::Node;
+    type Output = xot::Node;
     type ElemName<'a>
-        = OwnedName
+        = ElementName
     where
         Self: 'a;
 
-    fn finish(self) -> Node {
+    fn finish(self) -> xot::Node {
         self.document
     }
 
@@ -90,17 +94,22 @@ impl TreeSink for Sink<'_> {
     /// repairs are expected rather than worth reporting.
     fn parse_error(&self, _: Cow<'static, str>) {}
 
-    fn get_document(&self) -> Node {
+    fn get_document(&self) -> xot::Node {
         self.document
     }
 
-    fn elem_name<'a>(&'a self, target: &'a Node) -> OwnedName {
+    fn elem_name<'a>(&'a self, target: &'a xot::Node) -> ElementName {
         let names = self.names.borrow();
         let name = names.get(target).cloned();
-        OwnedName(name.unwrap_or_else(|| QualName::new(None, ns!(), local_name!(""))))
+        ElementName(name.unwrap_or_else(|| QualName::new(None, ns!(), local_name!(""))))
     }
 
-    fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> Node {
+    fn create_element(
+        &self,
+        name: QualName,
+        attrs: Vec<Attribute>,
+        flags: ElementFlags,
+    ) -> xot::Node {
         let mut xot = self.xot.borrow_mut();
         let element_name = xot.add_name(&name.local);
         let element = xot.new_element(element_name);
@@ -118,17 +127,17 @@ impl TreeSink for Sink<'_> {
         element
     }
 
-    fn create_comment(&self, text: StrTendril) -> Node {
+    fn create_comment(&self, text: StrTendril) -> xot::Node {
         self.xot.borrow_mut().new_comment(&text)
     }
 
     /// Upstream leaves processing instructions out, so this returns a
     /// placeholder that is never attached.
-    fn create_pi(&self, _: StrTendril, _: StrTendril) -> Node {
+    fn create_pi(&self, _: StrTendril, _: StrTendril) -> xot::Node {
         self.xot.borrow_mut().new_comment("")
     }
 
-    fn append(&self, parent: &Node, child: NodeOrText<Node>) {
+    fn append(&self, parent: &xot::Node, child: NodeOrText<xot::Node>) {
         let child = match child {
             NodeOrText::AppendNode(node) => node,
             NodeOrText::AppendText(text) => self.new_text(&text),
@@ -138,9 +147,9 @@ impl TreeSink for Sink<'_> {
 
     fn append_based_on_parent_node(
         &self,
-        element: &Node,
-        prev_element: &Node,
-        child: NodeOrText<Node>,
+        element: &xot::Node,
+        prev_element: &xot::Node,
+        child: NodeOrText<xot::Node>,
     ) {
         let attached = self.xot.borrow().parent(*element).is_some();
         if attached {
@@ -153,7 +162,7 @@ impl TreeSink for Sink<'_> {
     /// The tree has no doctype node, as XPath has none.
     fn append_doctype_to_document(&self, _: StrTendril, _: StrTendril, _: StrTendril) {}
 
-    fn get_template_contents(&self, target: &Node) -> Node {
+    fn get_template_contents(&self, target: &xot::Node) -> xot::Node {
         self.templates
             .borrow()
             .get(target)
@@ -161,13 +170,13 @@ impl TreeSink for Sink<'_> {
             .unwrap_or(*target)
     }
 
-    fn same_node(&self, x: &Node, y: &Node) -> bool {
+    fn same_node(&self, x: &xot::Node, y: &xot::Node) -> bool {
         x == y
     }
 
     fn set_quirks_mode(&self, _: QuirksMode) {}
 
-    fn append_before_sibling(&self, sibling: &Node, new_node: NodeOrText<Node>) {
+    fn append_before_sibling(&self, sibling: &xot::Node, new_node: NodeOrText<xot::Node>) {
         let child = match new_node {
             NodeOrText::AppendNode(node) => node,
             NodeOrText::AppendText(text) => self.new_text(&text),
@@ -175,7 +184,7 @@ impl TreeSink for Sink<'_> {
         self.attach(|xot, child| xot.insert_before(*sibling, child), child);
     }
 
-    fn add_attrs_if_missing(&self, target: &Node, attrs: Vec<Attribute>) {
+    fn add_attrs_if_missing(&self, target: &xot::Node, attrs: Vec<Attribute>) {
         let mut xot = self.xot.borrow_mut();
         for attr in attrs {
             let attr_name = xot.add_name(&attr.name.local);
@@ -186,13 +195,13 @@ impl TreeSink for Sink<'_> {
         }
     }
 
-    fn remove_from_parent(&self, target: &Node) {
+    fn remove_from_parent(&self, target: &xot::Node) {
         log_if_refused(self.xot.borrow_mut().detach(*target));
     }
 
-    fn reparent_children(&self, node: &Node, new_parent: &Node) {
+    fn reparent_children(&self, node: &xot::Node, new_parent: &xot::Node) {
         let mut xot = self.xot.borrow_mut();
-        let children: Vec<Node> = xot.children(*node).collect();
+        let children: Vec<xot::Node> = xot.children(*node).collect();
         for child in children {
             log_if_refused(
                 xot.detach(child)

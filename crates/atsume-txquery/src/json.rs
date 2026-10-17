@@ -14,7 +14,7 @@
 
 use std::ops::Range;
 
-use xot::{Node, Xot};
+use xot::Xot;
 
 /// The element name for an array member, and for an empty key.
 pub(crate) const MEMBER: &str = "_";
@@ -335,7 +335,7 @@ fn number_text(lexeme: &str) -> Result<String, String> {
 /// Builds each value as a document of its own and returns the document
 /// nodes. A document's children are the value: an object's properties, an
 /// array's members, or a scalar's text.
-pub(crate) fn build(xot: &mut Xot, values: &[Json]) -> Vec<Node> {
+pub(crate) fn build(xot: &mut Xot, values: &[Json]) -> Vec<xot::Node> {
     values
         .iter()
         .map(|value| {
@@ -346,7 +346,7 @@ pub(crate) fn build(xot: &mut Xot, values: &[Json]) -> Vec<Node> {
         .collect()
 }
 
-fn append(xot: &mut Xot, parent: Node, value: &Json) {
+fn append(xot: &mut Xot, parent: xot::Node, value: &Json) {
     let text = match value {
         Json::Object(properties) => {
             for (key, property) in properties {
@@ -376,7 +376,7 @@ fn append(xot: &mut Xot, parent: Node, value: &Json) {
     }
 }
 
-fn append_element(xot: &mut Xot, parent: Node, name: &str, value: &Json) {
+fn append_element(xot: &mut Xot, parent: xot::Node, name: &str, value: &Json) {
     let name = xot.add_name(name);
     let element = xot.new_element(name);
     append(xot, element, value);
