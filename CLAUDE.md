@@ -57,3 +57,7 @@ that line, and then say why in the attribute's `reason`.
   in commit messages.
 - Do not state counts or facts that can go stale ("used by 113 modules")
   unless a test keeps them checked.
+- Name Rust items after what they are, even where FMD2's name says
+  otherwise. The FMD2 name stays in the string that binds it and in the
+  item's doc comment, in backticks (``Modules see it as `TASK.PageNumber`.``),
+  so a grep for the Lua name finds the Rust one.

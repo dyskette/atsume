@@ -3,6 +3,10 @@
 //! An object here keeps no state of its own. What it reads and writes is a
 //! plain Rust value kept in the runtime, so the host reads a handler's results
 //! straight back; see [`crate::runtime::bind`].
+//!
+//! Rust names say what a value is, not what FMD2 calls it. The name a module
+//! uses is in the string that binds it and in the doc comment of the Rust
+//! item behind it, so a grep for `TASK.PageNumber` finds both.
 
 pub(crate) mod declaration;
 pub(crate) mod directory;
