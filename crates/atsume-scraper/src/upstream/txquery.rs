@@ -18,9 +18,9 @@ use crate::http::HttpSession;
 use crate::runtime::convert::{lua_text, pascal_trim};
 use crate::upstream::document::DocumentObject;
 
-mod value;
+mod xpath_result;
 
-use value::ValueObject;
+use xpath_result::XPathResultObject;
 
 /// What `XPathStringAll` joins values with when the module names nothing.
 const DEFAULT_SEPARATOR: &str = ", ";
@@ -49,7 +49,7 @@ fn create_query(
 ) -> mlua::Result<Option<QueryObject>> {
     let html = match arguments.front() {
         None => Vec::new(),
-        Some(source) => match page_text(lua, source)? {
+        Some(source) => match page_bytes(lua, source)? {
             Some(html) => html,
             None => return Ok(None),
         },
@@ -62,7 +62,7 @@ fn create_query(
 }
 
 /// Reads the page a module passes: a string, a number, or `HTTP.Document`.
-fn page_text(lua: &Lua, source: &Value) -> mlua::Result<Option<Vec<u8>>> {
+fn page_bytes(lua: &Lua, source: &Value) -> mlua::Result<Option<Vec<u8>>> {
     match source {
         Value::String(text) => Ok(Some(text.as_bytes().to_vec())),
         Value::UserData(data) => match data.borrow::<DocumentObject<HttpSession>>() {
@@ -117,10 +117,10 @@ impl QueryObject {
                 })
             }
             "XPathHREFAll" => lua.create_function(move |lua, arguments| {
-                query.links_and_names(lua, arguments, LinkName::Text)
+                query.links_and_names(lua, arguments, LinkNameSource::Text)
             }),
             "XPathHREFTitleAll" => lua.create_function(move |lua, arguments| {
-                query.links_and_names(lua, arguments, LinkName::Title)
+                query.links_and_names(lua, arguments, LinkNameSource::Title)
             }),
             "ParseHTML" => {
                 lua.create_function(move |lua, source: Value| query.parse_html(lua, &source))
@@ -141,22 +141,22 @@ impl QueryObject {
         lua: &Lua,
         expression: &Value,
         context: &Value,
-    ) -> mlua::Result<ValueObject> {
+    ) -> mlua::Result<XPathResultObject> {
         let expression = lua_text(lua, expression).unwrap_or_default();
-        let Some(context) = ValueObject::from_lua_value(context) else {
-            let items = self.run(&self.page, &expression, None)?;
-            return Ok(ValueObject::new(Rc::clone(&self.page), items));
+        let Some(context) = XPathResultObject::from_lua_value(context) else {
+            let items = self.evaluate_or_nothing(&self.page, &expression, None)?;
+            return Ok(XPathResultObject::new(Rc::clone(&self.page), items));
         };
         let Some(node) = context.first_node() else {
-            return Ok(ValueObject::new(context.shared_page(), Vec::new()));
+            return Ok(XPathResultObject::new(context.shared_page(), Vec::new()));
         };
-        let items = self.run(&context.shared_page(), &expression, Some(node))?;
-        Ok(ValueObject::new(context.shared_page(), items))
+        let items = self.evaluate_or_nothing(&context.shared_page(), &expression, Some(node))?;
+        Ok(XPathResultObject::new(context.shared_page(), items))
     }
 
     /// Runs an expression on `page`, logging a failure and returning no
     /// items for it.
-    fn run(
+    fn evaluate_or_nothing(
         &self,
         page: &SharedPage,
         expression: &str,
@@ -184,7 +184,7 @@ impl QueryObject {
         lua: &Lua,
         (expression, second, third): (Value, Value, Value),
     ) -> mlua::Result<Option<LuaString>> {
-        if ValueObject::from_lua_value(&second).is_some() {
+        if XPathResultObject::from_lua_value(&second).is_some() {
             let result = self.evaluate(lua, &expression, &second)?;
             return joined(lua, &result, DEFAULT_SEPARATOR).map(Some);
         }
@@ -208,7 +208,7 @@ impl QueryObject {
         &self,
         lua: &Lua,
         (expression, links, names, context): (Value, Value, Value, Value),
-        source: LinkName,
+        source: LinkNameSource,
     ) -> mlua::Result<()> {
         let result = self.evaluate(lua, &expression, &context)?;
         let mut hrefs = Vec::new();
@@ -224,7 +224,7 @@ impl QueryObject {
     /// Replaces the page, unless the text given is empty, as upstream's
     /// `ParseHTML` does.
     fn parse_html(&self, lua: &Lua, source: &Value) -> mlua::Result<()> {
-        let Some(html) = page_text(lua, source)?.filter(|html| !html.is_empty()) else {
+        let Some(html) = page_bytes(lua, source)?.filter(|html| !html.is_empty()) else {
             return Ok(());
         };
         let mut page = self
@@ -238,20 +238,20 @@ impl QueryObject {
 
 /// Where `XPathHREFAll` and `XPathHREFTitleAll` read a link's name.
 #[derive(Clone, Copy)]
-enum LinkName {
+enum LinkNameSource {
     /// The link's text.
     Text,
     /// The link's `title`, or its text when it has none.
     Title,
 }
 
-impl LinkName {
+impl LinkNameSource {
     /// Reads the name of a selected link.
     ///
     /// Upstream gives a link with no text, such as one wrapping only a cover
     /// image, an empty name. atsume falls back to its `title`, which is where
     /// those sites put the name; this only ever replaces nothing.
-    fn read(self, result: &ValueObject, item: &Item) -> mlua::Result<String> {
+    fn read(self, result: &XPathResultObject, item: &Item) -> mlua::Result<String> {
         let text = pascal_trim(&result.item_text(item)?).to_owned();
         let title = result.attribute_of(item, "title")?;
         let preferred = match self {
@@ -271,7 +271,7 @@ impl LinkName {
 
 /// Joins a result's trimmed values that are not empty, as upstream's
 /// `AddSeparatorString` does.
-fn joined(lua: &Lua, result: &ValueObject, separator: &str) -> mlua::Result<LuaString> {
+fn joined(lua: &Lua, result: &XPathResultObject, separator: &str) -> mlua::Result<LuaString> {
     let texts = result.texts()?;
     let values: Vec<&str> = texts
         .iter()

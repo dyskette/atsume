@@ -1,4 +1,4 @@
-//! The value object `XPath` returns: a sequence of nodes and values.
+//! The result object `XPath` returns: a sequence of nodes and values.
 //!
 //! Upstream gives modules one object for any result, whether a list of nodes,
 //! one node or a string. `Get(i)` reads one item as another such object, and
@@ -15,12 +15,12 @@ use crate::runtime::convert::{lua_int, lua_text};
 
 /// The items an expression returned, with the page they came from.
 #[derive(Clone)]
-pub(super) struct ValueObject {
+pub(super) struct XPathResultObject {
     page: SharedPage,
     items: Rc<[Item]>,
 }
 
-impl ValueObject {
+impl XPathResultObject {
     pub(super) fn new(page: SharedPage, items: Vec<Item>) -> Self {
         Self {
             page,
@@ -28,7 +28,7 @@ impl ValueObject {
         }
     }
 
-    /// Returns the value object a Lua value holds, if it holds one.
+    /// Returns the result object a Lua value holds, if it holds one.
     pub(super) fn from_lua_value(value: &Value) -> Option<Self> {
         let Value::UserData(data) = value else {
             return None;
@@ -110,58 +110,58 @@ impl ValueObject {
 
     /// Builds the function a generic `for` calls for each item in turn.
     fn iterator(&self, lua: &Lua) -> mlua::Result<Function> {
-        let value = self.clone();
+        let result = self.clone();
         let next_position = Cell::new(1);
         lua.create_function(move |_, ()| {
             let position = next_position.get();
-            if position > value.count() {
+            if position > result.count() {
                 return Ok(None);
             }
             next_position.set(position + 1);
-            Ok(Some(value.item_at(position)))
+            Ok(Some(result.item_at(position)))
         })
     }
 
     /// Builds the method named `name`. Modules call them with a dot, so the
     /// arguments start with the first real one.
     fn method(&self, lua: &Lua, name: &str) -> mlua::Result<Option<Function>> {
-        let value = self.clone();
+        let result = self.clone();
         let function = match name {
             "Get" => lua.create_function(move |lua, position: Option<Value>| match position {
                 Some(position) => {
-                    let item = value.item_at(lua_int(lua, &position));
+                    let item = result.item_at(lua_int(lua, &position));
                     Ok(Value::UserData(lua.create_userdata(item)?))
                 }
-                None => value.iterator(lua).map(Value::Function),
+                None => result.iterator(lua).map(Value::Function),
             }),
             "GetAttribute" => lua.create_function(move |lua, attribute: Value| {
                 let attribute = lua_text(lua, &attribute).unwrap_or_default();
-                match value.first_node() {
-                    Some(node) => value.attribute_of(&Item::Node(node), &attribute),
+                match result.first_node() {
+                    Some(node) => result.attribute_of(&Item::Node(node), &attribute),
                     None => Ok(String::new()),
                 }
             }),
             "GetProperty" => lua.create_function(move |lua, property: Value| {
-                value.property(&lua_text(lua, &property).unwrap_or_default())
+                result.property(&lua_text(lua, &property).unwrap_or_default())
             }),
-            "ToString" => lua.create_function(move |lua, ()| value.text(lua)),
+            "ToString" => lua.create_function(move |lua, ()| result.text(lua)),
             _ => return Ok(None),
         };
         function.map(Some)
     }
 }
 
-impl UserData for ValueObject {
+impl UserData for XPathResultObject {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_meta_method(MetaMethod::Index, |lua, value, key: Value| {
+        methods.add_meta_method(MetaMethod::Index, |lua, result, key: Value| {
             let Value::String(key) = key else {
                 return Ok(Value::Nil);
             };
             let key = key.to_str()?;
             if &*key == "Count" {
-                return Ok(Value::Integer(value.count()));
+                return Ok(Value::Integer(result.count()));
             }
-            let method = value.method(lua, &key)?;
+            let method = result.method(lua, &key)?;
             Ok(method.map_or(Value::Nil, Value::Function))
         });
     }
