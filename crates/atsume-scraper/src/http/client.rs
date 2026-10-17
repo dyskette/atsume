@@ -1,4 +1,4 @@
-//! Redirects, cookies and rate limiting on top of a [`Transport`].
+//! Adds redirects, cookies and rate limiting on top of a [`Transport`].
 
 use std::sync::{Arc, mpsc};
 
@@ -9,7 +9,7 @@ use super::limiter::Limiter;
 use super::transport::{Method, Request, Response, Transport};
 use crate::cancel::{CANCEL_POLL_INTERVAL, CancelToken, Cancelled};
 
-/// How many redirects one request may follow, as browsers allow.
+/// How many redirects one request may follow. Browsers allow the same number.
 const MAX_REDIRECTS: usize = 10;
 
 /// Why a fetch ended without a response.
@@ -17,7 +17,7 @@ const MAX_REDIRECTS: usize = 10;
 pub(crate) enum FetchError {
     /// The scrape was cancelled.
     Cancelled,
-    /// No response arrived, or the redirects did not end.
+    /// No response arrived, or the redirects never ended.
     Failed(String),
 }
 
@@ -27,7 +27,7 @@ impl From<Cancelled> for FetchError {
     }
 }
 
-/// The response a fetch ended at, and the address it came from.
+/// The response that a fetch ended at, and the address it came from.
 pub(crate) struct Exchange {
     pub(crate) url: Url,
     pub(crate) response: Response,
@@ -63,11 +63,12 @@ impl Client {
         self.jar.clear();
     }
 
-    /// Sends `request`, following redirects, and returns the final response.
+    /// Sends `request`, follows its redirects, and returns the final response.
     ///
-    /// `cookies` are the `name=value` pairs the module set itself. They go
-    /// with the jar's cookies, but only to the requested host and its
-    /// subdomains, so a redirect elsewhere does not carry them off.
+    /// `cookies` are the `name=value` pairs that the module set itself. They
+    /// are sent along with the jar's cookies, but only to the requested host
+    /// and its subdomains, so a redirect to another site does not carry them
+    /// off.
     pub(crate) fn fetch(
         &mut self,
         mut request: Request,
@@ -94,8 +95,9 @@ impl Client {
         )))
     }
 
-    /// Sends `request` once, without following a redirect: waits for the
-    /// limiter, adds the cookies and stores the ones the response sets.
+    /// Sends `request` once and returns the response without following any
+    /// redirect. It waits for the rate limiter first, attaches the cookies, and
+    /// stores any cookies that the response sets.
     fn send_one_hop(
         &mut self,
         request: &Request,
@@ -115,8 +117,9 @@ impl Client {
         Ok(response)
     }
 
-    /// Builds the `Cookie` header: the jar's cookies for `url`, then the
-    /// module's own, skipping any the jar already sends.
+    /// Builds the `Cookie` header. It holds the jar's cookies for `url`,
+    /// followed by the module's own cookies, except those the jar already
+    /// sends.
     fn cookie_header(&self, url: &Url, module_cookies: &[String]) -> Option<String> {
         let mut pairs: Vec<String> = self
             .jar
@@ -146,8 +149,8 @@ fn same_site(origin: &str, url: &Url) -> bool {
 /// Returns the request a redirect response points to, or `None` if the
 /// response is not a redirect.
 ///
-/// As browsers do, a 303, or a 301 or 302 answering a POST, continues as a
-/// GET without the body.
+/// As browsers do, the request continues as a GET without its body after a
+/// 303, or after a 301 or 302 that answers a POST.
 fn redirect(request: &Request, response: &Response) -> Option<Request> {
     if !matches!(response.status, 301 | 302 | 303 | 307 | 308) {
         return None;
@@ -169,11 +172,11 @@ fn redirect(request: &Request, response: &Response) -> Option<Request> {
     Some(next)
 }
 
-/// Sends `request` on its own thread and waits for it, giving up as soon as
-/// the scrape is cancelled.
+/// Sends `request` on its own thread and waits for the response, giving up as
+/// soon as the scrape is cancelled.
 ///
 /// An abandoned request finishes in the background and its response is
-/// dropped, so a cancelled scrape never waits out a slow site.
+/// dropped. A cancelled scrape therefore never waits for a slow site.
 pub(crate) fn send_cancellable(
     transport: &Arc<dyn Transport>,
     request: Request,
@@ -182,7 +185,8 @@ pub(crate) fn send_cancellable(
     let (sender, receiver) = mpsc::channel();
     let transport = Arc::clone(transport);
     std::thread::spawn(move || {
-        // The receiver is gone if the scrape was cancelled; nothing to do then.
+        // The receiver is gone only if the scrape was cancelled, and then there
+        // is nothing left to do.
         let _ = sender.send(transport.send(&request));
     });
     loop {
