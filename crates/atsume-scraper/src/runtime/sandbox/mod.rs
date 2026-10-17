@@ -1,18 +1,19 @@
-//! The Lua runtime a website module runs in.
+//! The Lua runtime that a website module runs in.
 //!
-//! Modules are fetched from upstream at run time, so they are untrusted code.
-//! The runtime holds only the parts of the standard library they use:
+//! Modules are fetched from upstream when atsume runs, so they are untrusted
+//! code. The runtime keeps only the parts of the standard library that modules
+//! use:
 //!
-//! - No `debug`, `dofile` or `loadfile`. `load` compiles source text only,
-//!   because Lua does not verify bytecode and a crafted chunk can corrupt
-//!   memory.
+//! - `debug`, `dofile` and `loadfile` are removed. `load` compiles source text
+//!   only, because Lua does not verify bytecode, and a crafted chunk can
+//!   corrupt memory.
 //! - `package` keeps `loaded` and `preload`. Everything that loads native code
 //!   or searches the disk is removed, and `require` reads only from the
 //!   checkout's `lua` directory.
 //! - `os` keeps its clock functions. `os.remove` and `os.rename` exist but
-//!   always fail, because `utils/nodejs.lua` uses `rename` as an existence
-//!   check.
-//! - `io` has only `open` and `lines`; see [`io`].
+//!   always fail, because `utils/nodejs.lua` uses `rename` to check whether a
+//!   file exists.
+//! - `io` has only `open` and `lines`, as [`io`] explains.
 //! - Allocation is capped at [`MEMORY_LIMIT`].
 
 mod io;
@@ -22,24 +23,27 @@ use std::path::{Component, Path, PathBuf};
 use mlua::chunk::ChunkMode;
 use mlua::{Function, Lua, LuaOptions, LuaString, MultiValue, StdLib, Table, Value, Variadic};
 
-/// The most one module's runtime may allocate.
+/// The most memory that one module's runtime may allocate.
 pub(crate) const MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 
-/// The one file a module may write, if any, kept in the runtime.
+/// The one file that a module may write, if any, kept in the runtime.
 ///
-/// The session sets it to the page `OnAfterImageSaved` is editing, which
-/// upstream lets that hook rewrite in place, and clears it afterwards.
+/// The session sets it to the page that `OnAfterImageSaved` is editing,
+/// because upstream lets that hook rewrite the page in place. The session
+/// clears it afterwards.
 #[derive(Debug, Default)]
 pub(crate) struct WritableFile(pub(crate) Option<PathBuf>);
 
 /// Builds the sandboxed runtime for a module from the checkout at `lua_dir`.
 ///
-/// `lua_dir` is the checkout's `lua` directory, where `require` looks. Relative
-/// file paths resolve against its parent, which is FMD2's working directory.
+/// `lua_dir` is the checkout's `lua` directory, where `require` looks for
+/// files. Relative file paths resolve against its parent, which is FMD2's
+/// working directory.
 ///
 /// # Errors
 ///
-/// Fails if `lua_dir` cannot be made absolute or the runtime cannot be built.
+/// Fails if `lua_dir` cannot be made absolute, or if the runtime cannot be
+/// built.
 pub(crate) fn new_sandboxed_lua(lua_dir: &Path) -> mlua::Result<Lua> {
     let lua_dir = std::path::absolute(lua_dir).map_err(mlua::Error::external)?;
     let root = lua_dir.parent().unwrap_or(&lua_dir).to_path_buf();
@@ -75,12 +79,13 @@ pub(crate) fn new_sandboxed_lua(lua_dir: &Path) -> mlua::Result<Lua> {
     Ok(lua)
 }
 
-/// Wraps the base library's `load` so it compiles source text only.
+/// Wraps the base library's `load` so that it compiles source text only.
 fn text_only_load(lua: &Lua, load: Function) -> mlua::Result<Function> {
     lua.create_function(move |lua, args: Variadic<Value>| {
         let mut args = args.to_vec();
-        // Pad to the mode argument without adding an environment: `load`
-        // treats a passed `nil` environment differently from none.
+        // Pad the arguments up to the mode argument without adding an
+        // environment, because `load` treats a `nil` environment differently
+        // from a missing one.
         if args.len() < 3 {
             args.resize(3, Value::Nil);
         }
@@ -89,10 +94,11 @@ fn text_only_load(lua: &Lua, load: Function) -> mlua::Result<Function> {
     })
 }
 
-/// The `require` modules call, confined to the checkout.
+/// The `require` function that modules call, confined to the checkout.
 ///
-/// It looks in `package.loaded`, then `package.preload`, then for `name.lua`
-/// or `name/init.lua` under `lua_dir`, with dots as directory separators.
+/// It looks in `package.loaded` first, then in `package.preload`, and then for
+/// `name.lua` or `name/init.lua` under `lua_dir`, reading the dots in `name` as
+/// directory separators.
 struct Require {
     package: Table,
     lua_dir: PathBuf,
@@ -110,7 +116,7 @@ impl Require {
         let (load_module, extra) = self.find_loader(lua, &name)?;
         let mut module: Value = load_module.call((name.as_str(), extra.clone()))?;
         // As in Lua, a loader that returns nothing may have set
-        // package.loaded itself, and otherwise the module is recorded as true.
+        // `package.loaded` itself. Otherwise the module is recorded as `true`.
         if module.is_nil() {
             module = loaded.get(name.as_str())?;
         }
@@ -121,8 +127,8 @@ impl Require {
         Ok((module, extra))
     }
 
-    /// Returns the loader for `name` and the value Lua passes it second: the
-    /// file's path, or `:preload:`.
+    /// Returns the loader for `name`, together with the second value that Lua
+    /// passes to it, which is the file's path or `:preload:`.
     fn find_loader(&self, lua: &Lua, name: &str) -> mlua::Result<(Function, Value)> {
         let preload: Table = self.package.get("preload")?;
         match preload.get::<Value>(name)? {
@@ -167,7 +173,7 @@ impl Require {
 pub(crate) fn load_text(lua: &Lua, path: &Path, src: &[u8]) -> mlua::Result<Function> {
     let mut src = src.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(src);
     if src.first() == Some(&b'#') {
-        // Keep the newline, so line numbers in errors stay right.
+        // The newline is kept so that line numbers in errors stay right.
         let line_end = src.iter().position(|&b| b == b'\n').unwrap_or(src.len());
         src = &src[line_end..];
     }
@@ -179,8 +185,8 @@ pub(crate) fn load_text(lua: &Lua, path: &Path, src: &[u8]) -> mlua::Result<Func
 
 /// Removes the `os` functions that reach the process or the filesystem.
 ///
-/// `remove` and `rename` stay, but return `nil` and a message, as a failed
-/// file operation does in Lua.
+/// `remove` and `rename` stay, but they return `nil` and a message, as a
+/// failed file operation does in Lua.
 fn narrow_os(lua: &Lua, os: &Table) -> mlua::Result<()> {
     for name in ["execute", "exit", "getenv", "setlocale", "tmpname"] {
         os.set(name, Value::Nil)?;
@@ -194,13 +200,13 @@ fn narrow_os(lua: &Lua, os: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Reads `name`, resolved against `root` when relative, refusing any path
-/// that leads outside `root`.
+/// Reads the file `name`, resolved against `root` when it is relative, and
+/// refuses any path that leads outside `root`.
 ///
 /// The path is checked lexically before the filesystem is touched, so a module
 /// cannot probe which files exist outside the checkout. It is checked again
-/// once resolved, which refuses a symlink that leads out. Errors read the way
-/// Lua's `io` reports them.
+/// once resolved, which refuses a symbolic link that leads outside. Errors
+/// read the way Lua's `io` reports them.
 pub(crate) fn read_in_root(root: &Path, name: &str) -> Result<Vec<u8>, String> {
     let denied = || format!("{name}: permission denied");
     let candidate = normalize(&root.join(name));
