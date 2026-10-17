@@ -1,5 +1,5 @@
-//! A page of a site's directory, which `OnGetNameAndLink` writes into `LINKS`
-//! and `NAMES`, reporting progress through `UPDATELIST`.
+//! A page of a site's directory. `OnGetNameAndLink` writes it into `LINKS`
+//! and `NAMES`, and reports its progress through `UPDATELIST`.
 
 use mlua::{Lua, UserData, UserDataFields, UserDataMethods, Value};
 
@@ -10,22 +10,22 @@ use crate::runtime::convert::text_arg;
 use crate::string_list::StringList;
 use crate::upstream::string_list::ListObject;
 
-/// What `LINKS`, `NAMES` and `UPDATELIST` hold while a directory page is
-/// read, kept in the runtime.
+/// What `LINKS`, `NAMES` and `UPDATELIST` hold while a directory page is read.
+/// The record is kept in the runtime.
 #[derive(Debug, Default)]
 pub(crate) struct DirectoryPageRecord {
     links: StringList,
     names: StringList,
-    /// How many pages the directory has, if the module reported it. Modules
-    /// see it as `UPDATELIST.CurrentDirectoryPageNumber`.
+    /// How many pages the directory has, if the module reported it through
+    /// `UPDATELIST.CurrentDirectoryPageNumber`.
     reported_page_count: i64,
 }
 
 impl DirectoryPageRecord {
     /// Reads what the module listed into a [`DirectoryPage`].
     ///
-    /// Each link is paired with the name at the same position, put in the
-    /// shape the module expects back, and dropped if empty.
+    /// Each link is paired with the name at the same position and put into the
+    /// shape that the module expects to get back. Empty links are dropped.
     pub(crate) fn into_page(self) -> DirectoryPage {
         let names = self.names.items();
         let entries = self
@@ -53,14 +53,15 @@ impl DirectoryPageRecord {
     }
 }
 
-/// Receives a progress message a module reports.
+/// A callback that receives each progress message a module reports.
 pub(crate) type StatusReport = Box<dyn FnMut(&str)>;
 
-/// Where `UPDATELIST.UpdateStatusText` messages go, kept in the runtime.
+/// Where `UPDATELIST.UpdateStatusText` sends its messages. It is kept in the
+/// runtime.
 #[derive(Default)]
 pub(crate) struct StatusSink(pub(crate) Option<StatusReport>);
 
-/// `UPDATELIST`. It holds nothing itself; every access reaches [`DirectoryPageRecord`].
+/// The `UPDATELIST` global, which reads and writes [`DirectoryPageRecord`].
 struct UpdateListObject;
 
 impl UserData for UpdateListObject {
