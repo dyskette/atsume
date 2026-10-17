@@ -22,15 +22,15 @@ use crate::upstream::globals;
 use crate::upstream::module::{AccountRecord, ModuleObject, SiteRecord};
 use crate::upstream::series::SeriesRecord;
 
-/// How the sessions a [`Site`](crate::Site) opens reach the network and how
-/// long their calls may run.
+/// How the sessions that a [`Site`](crate::Site) opens reach the network, and
+/// how long their calls may run.
 #[derive(Clone)]
 pub struct SessionConfig {
     /// How requests reach the network.
     pub http: HttpConfig,
     /// How many Lua instructions one call into the module may run before it
-    /// is stopped, so a runaway loop cannot hold a worker. Time spent waiting
-    /// on the network does not count.
+    /// is stopped. The limit keeps a runaway loop from holding a worker. Time
+    /// spent waiting on the network does not count.
     pub cpu_limit: u64,
 }
 
@@ -44,8 +44,8 @@ impl Default for SessionConfig {
 }
 
 impl SessionConfig {
-    /// Returns a configuration that refuses every request, for loading the
-    /// catalog: declaring a website needs no network access.
+    /// Returns a configuration that refuses every request. Loading the catalog
+    /// uses it, because declaring a website needs no network access.
     pub(crate) fn offline() -> Self {
         Self {
             http: HttpConfig::offline(),
@@ -56,26 +56,29 @@ impl SessionConfig {
 
 /// A website's module loaded into its own Lua runtime, for one scrape.
 ///
-/// Open one with [`Site::open`](crate::Site::open). A session keeps its
-/// cookies and settings across calls, as modules expect. It is not `Send`:
-/// open it on the thread that runs the scrape and keep it there, a thread
-/// that may block, since requests wait on the network.
+/// Open a session with [`Site::open`](crate::Site::open). A session keeps its
+/// cookies and settings across calls, as modules expect. It is not `Send`, so
+/// open it on the thread that runs the scrape and keep it there. That thread
+/// may block, because requests wait on the network.
 pub struct Session {
     runtime: Runtime,
 }
 
 impl Session {
     pub(crate) fn new(runtime: Runtime, declaration: SiteDeclaration) -> Result<Self> {
-        // The one value `upstream::install` leaves out: it needs the declaration.
+        // `upstream::install` stores every other value. This one needs the
+        // declaration, which only the session knows.
         runtime.lua.set_app_data(SiteRecord::new(declaration));
         runtime.lua.globals().set("MODULE", ModuleObject)?;
         Ok(Self { runtime })
     }
 
-    /// Borrows state the runtime keeps, between calls into the module.
+    /// Borrows a state value that the runtime keeps, between calls into the
+    /// module.
     ///
-    /// Every state value is set when the session is built, and only a binding
-    /// running inside a call holds one, so no borrow can be outstanding here.
+    /// Every state value is set when the session is built. Only a binding that
+    /// is running inside a call ever holds one, so no borrow can be
+    /// outstanding here.
     #[expect(
         clippy::expect_used,
         reason = "the session sets every state value before handing itself out, and calls into it never overlap a binding"
@@ -84,8 +87,8 @@ impl Session {
         borrow_state::<S>(&self.runtime.lua).expect("session state is set and not in use")
     }
 
-    /// Returns the website as its declaration stands now. A module may change
-    /// some of it while it runs, such as its address.
+    /// Returns the website's declaration as it stands now. A module may change
+    /// parts of it while it runs, such as its address.
     #[must_use]
     pub fn declaration(&self) -> SiteDeclaration {
         self.borrow_state::<SiteRecord>().declaration.clone()
@@ -96,7 +99,7 @@ impl Session {
         self.borrow_state::<SiteRecord>().declaration.name.clone()
     }
 
-    /// Returns the address the website is reached at now.
+    /// Returns the address at which the website is reached now.
     fn root_url(&self) -> String {
         self.borrow_state::<SiteRecord>()
             .declaration
@@ -113,13 +116,14 @@ impl Session {
             .is_some()
     }
 
-    /// Changes a setting the module declares.
+    /// Changes a setting that the module declares.
     ///
     /// # Errors
     ///
-    /// Fails if the module declares no such setting, or the value does not
-    /// suit it: a toggle takes a flag, a number a whole number, a choice
-    /// the index of one of its items, and a text setting text.
+    /// Fails if the module declares no such setting, or if the value does not
+    /// suit the setting. A toggle takes a flag, a number takes a whole number,
+    /// a choice takes the index of one of its choices, and a text setting takes
+    /// text.
     pub fn set_option(&mut self, name: &str, value: OptionValue) -> Result<()> {
         let mut site = self.borrow_state::<SiteRecord>();
         let declaration = &site.declaration;
@@ -159,7 +163,7 @@ impl Session {
     }
 
     /// Points `MODULE.CurrentDirectoryIndex` at directory listing `index`,
-    /// counting from 0, which the module reads to know which listing to walk.
+    /// counting from 0. The module reads it to know which listing to walk.
     fn select_listing(&mut self, index: u32) -> Result<()> {
         let mut site = self.borrow_state::<SiteRecord>();
         if index >= site.declaration.listing_count {
@@ -175,21 +179,21 @@ impl Session {
         Ok(())
     }
 
-    /// Returns what the last request the module made got back.
+    /// Returns what the module's last request got back.
     #[must_use]
     pub fn last_request(&self) -> LastRequest {
         self.borrow_state::<HttpSession>().last_request.clone()
     }
 
-    /// Runs `OnGetNameAndLink` for one page of directory listing `listing`,
-    /// both counting from 0.
+    /// Runs `OnGetNameAndLink` for page `page` of directory listing `listing`.
+    /// Both count from 0.
     ///
     /// # Errors
     ///
     /// Fails if the site has no such listing
-    /// ([`Unsupported`](ErrorKind::Unsupported)), the module has no
-    /// `OnGetNameAndLink` handler, the handler fails, or a request it needed
-    /// failed ([`Network`](ErrorKind::Network)).
+    /// ([`Unsupported`](ErrorKind::Unsupported)), if the module has no
+    /// `OnGetNameAndLink` handler, if the handler fails, or if a request it
+    /// needed failed ([`Network`](ErrorKind::Network)).
     pub fn directory_page(&mut self, listing: u32, page: u32) -> Result<DirectoryPage> {
         self.select_listing(listing)?;
         *self.borrow_state::<DirectoryPageRecord>() = DirectoryPageRecord::default();
@@ -209,20 +213,20 @@ impl Session {
         Ok(std::mem::take(&mut *self.borrow_state::<DirectoryPageRecord>()).into_page())
     }
 
-    /// Sends the progress messages a module reports while it runs, through
-    /// `UPDATELIST.UpdateStatusText`, to `report`.
+    /// Sends each progress message that the module reports through
+    /// `UPDATELIST.UpdateStatusText` to `report`.
     pub fn set_status_reporter(&mut self, report: impl FnMut(&str) + 'static) {
         self.borrow_state::<StatusSink>().0 = Some(Box::new(report));
     }
 
-    /// Runs `OnGetDirectoryPageNumber`, returning how many pages directory
-    /// listing `listing`, counting from 0, has. A module without the
-    /// handler has one.
+    /// Runs `OnGetDirectoryPageNumber` and returns how many pages directory
+    /// listing `listing` has, counting listings from 0. A module without that
+    /// handler has one page.
     ///
     /// # Errors
     ///
     /// Fails if the site has no such listing
-    /// ([`Unsupported`](ErrorKind::Unsupported)) or the handler fails.
+    /// ([`Unsupported`](ErrorKind::Unsupported)) or if the handler fails.
     pub fn directory_page_count(&mut self, listing: u32) -> Result<u32> {
         self.select_listing(listing)?;
         if !self.has_handler(Event::CountDirectoryPages) {
@@ -234,14 +238,14 @@ impl Session {
         Ok(u32::try_from(pages.max(1)).unwrap_or(u32::MAX))
     }
 
-    /// Runs `OnGetInfo` for the series at `series_url`, returning its details
-    /// and chapters.
+    /// Runs `OnGetInfo` for the series at `series_url`, and returns the
+    /// series' details and chapters.
     ///
     /// # Errors
     ///
-    /// Fails if the module has no `OnGetInfo` handler, the handler fails, a
-    /// request it needed failed ([`Network`](ErrorKind::Network)), or the page
-    /// holds no series ([`NotFound`](ErrorKind::NotFound)).
+    /// Fails if the module has no `OnGetInfo` handler, if the handler fails,
+    /// if a request it needed failed ([`Network`](ErrorKind::Network)), or if
+    /// the page holds no series ([`NotFound`](ErrorKind::NotFound)).
     pub fn series_info(&mut self, series_url: &str) -> Result<SeriesInfo> {
         *self.borrow_state::<SeriesRecord>() = SeriesRecord::for_url(series_url);
         globals::set_url(&self.runtime.lua, series_url)?;
@@ -263,18 +267,19 @@ impl Session {
         Ok(std::mem::take(&mut *self.borrow_state::<SeriesRecord>()).into_series())
     }
 
-    /// Runs `OnGetPageNumber` for the chapter at `chapter_url`, returning its
-    /// pages in reading order.
+    /// Runs `OnGetPageNumber` for the chapter at `chapter_url`, and returns
+    /// the chapter's pages in reading order.
     ///
     /// Image addresses are made absolute against the site's address. A page
-    /// the module finds only when asked is [`ChapterPage::Unresolved`]; resolve it
-    /// with [`resolve_page`](Self::resolve_page).
+    /// whose address the module finds only when asked is
+    /// [`ChapterPage::Unresolved`], and [`resolve_page`](Self::resolve_page)
+    /// resolves it.
     ///
     /// # Errors
     ///
-    /// Fails if the module has no `OnGetPageNumber` handler, the handler fails
-    /// or declines, a request it needed failed
-    /// ([`Network`](ErrorKind::Network)), or it lists no pages
+    /// Fails if the module has no `OnGetPageNumber` handler, if the handler
+    /// fails or declines, if a request it needed failed
+    /// ([`Network`](ErrorKind::Network)), or if the handler lists no pages
     /// ([`NotFound`](ErrorKind::NotFound)).
     pub fn pages(&mut self, chapter_url: &str) -> Result<Vec<ChapterPage>> {
         *self.borrow_state::<ChapterPagesRecord>() = ChapterPagesRecord::for_chapter(chapter_url);
@@ -293,19 +298,21 @@ impl Session {
         Ok(pages)
     }
 
-    /// Runs `OnGetImageURL` for the page at `index`, counting from 0, of the
-    /// chapter whose pages were last listed, and returns its image address.
+    /// Runs `OnGetImageURL` for the page at `index` of the chapter whose pages
+    /// were last listed, and returns the page's image address. `index` counts
+    /// from 0.
     ///
-    /// A page the module already resolved, as some do for every page on the
-    /// first call, is returned without running the handler again.
+    /// Some modules resolve every page on the first call. A page that the
+    /// module has already resolved is returned without running the handler
+    /// again.
     ///
     /// # Errors
     ///
     /// Fails if `chapter_url` is not the chapter last listed with
-    /// [`pages`](Self::pages), the module has no `OnGetImageURL` handler, the
-    /// handler fails or declines, a request it needed failed
-    /// ([`Network`](ErrorKind::Network)), or it leaves the page without an
-    /// address.
+    /// [`pages`](Self::pages), if the module has no `OnGetImageURL` handler, if
+    /// the handler fails or declines, if a request it needed failed
+    /// ([`Network`](ErrorKind::Network)), or if the handler leaves the page
+    /// without an address.
     pub fn resolve_page(&mut self, chapter_url: &str, index: usize) -> Result<String> {
         let root_url = self.root_url();
         if !self
@@ -338,11 +345,12 @@ impl Session {
         }
     }
 
-    /// Turns a page handler's result into an error if it reports one.
+    /// Turns a page handler's result into an error, if the result reports one.
     ///
-    /// Page handlers signal success either way upstream allows: `true` or
-    /// `no_error`. `false` or `nil` is a refusal, and `net_problem` is a
-    /// failed request, though Lua reads both codes as true.
+    /// Upstream lets a page handler signal success in two ways, by returning
+    /// `true` or `no_error`. Returning `false` or `nil` is a refusal, and
+    /// returning `net_problem` reports a failed request, even though Lua reads
+    /// both codes as true.
     fn check_page_handler_result(&self, result: &Value, action: &str) -> Result<()> {
         let site_name = self.site_name();
         let net_problem = globals::RETURN_NETWORK_FAILURE;
@@ -359,13 +367,13 @@ impl Session {
         }
     }
 
-    /// Runs `OnLogin`, reporting whether the site accepted the credentials.
+    /// Runs `OnLogin` and reports whether the site accepted the credentials.
     ///
     /// # Errors
     ///
-    /// Fails if the module has no login handler, no credentials were set, the
-    /// handler fails, or the module recorded the credentials as invalid even
-    /// though the handler succeeded.
+    /// Fails if the module has no login handler, if no credentials were set,
+    /// if the handler fails, or if the module recorded the credentials as
+    /// invalid even though the handler succeeded.
     pub fn login(&mut self) -> Result<bool> {
         let site_name = self.site_name();
         if !self.has_handler(Event::Login) {
@@ -383,8 +391,9 @@ impl Session {
         Ok(accepted)
     }
 
-    /// Runs `OnBeforeDownloadImage` and returns the request headers the module
-    /// set, usually a `Referer` the image host demands.
+    /// Runs `OnBeforeDownloadImage` and returns the request headers that the
+    /// module set. Usually that is a `Referer` header, which the image host
+    /// demands.
     ///
     /// # Errors
     ///
@@ -405,11 +414,13 @@ impl Session {
     }
 
     /// Runs `OnDownloadImage`, in which the module fetches the image itself and
-    /// may transform it, and returns the bytes it left in `HTTP.Document`.
+    /// may transform it. Returns the bytes that the module left in
+    /// `HTTP.Document`.
     ///
     /// # Errors
     ///
-    /// Fails if the handler fails, returns false, or leaves no data.
+    /// Fails if the handler fails, if it returns false, or if it leaves no
+    /// data.
     pub fn download_image(&mut self, image_url: &str) -> Result<Vec<u8>> {
         self.borrow_state::<HttpSession>().response_body.clear();
         globals::set_url(&self.runtime.lua, image_url)?;
@@ -426,8 +437,8 @@ impl Session {
         Ok(data)
     }
 
-    /// Runs `OnAfterImageSaved` on a downloaded page, which the module may
-    /// rewrite in place, for instance to remove a watermark.
+    /// Runs `OnAfterImageSaved` on a downloaded page. The module may rewrite
+    /// the file in place, for example to remove a watermark.
     ///
     /// # Errors
     ///
@@ -466,8 +477,8 @@ impl Session {
             .map_err(|e| e.with_context(context, ErrorKind::Module))
     }
 
-    /// Returns the most instructions any one call has used so far, for
-    /// calibrating the CPU limit.
+    /// Returns the most instructions that any one call has used so far. Tests
+    /// use it to calibrate the CPU limit.
     #[cfg(test)]
     pub(crate) fn peak_instructions(&self) -> u64 {
         self.runtime.budget.peak()
@@ -486,8 +497,8 @@ impl Session {
         self.runtime.lua.load(statements).exec().unwrap();
     }
 
-    /// Evaluates a Lua expression in the session's globals and returns it as
-    /// text, for tests to look inside a session.
+    /// Evaluates a Lua expression in the session's globals and returns its
+    /// value as text. Tests use it to look inside a session.
     #[cfg(test)]
     pub(crate) fn eval(&self, expression: &str) -> String {
         let lua = &self.runtime.lua;
@@ -496,14 +507,15 @@ impl Session {
         text.map(|s| s.to_string_lossy()).unwrap_or_default()
     }
 
-    /// Returns the session's Lua runtime, for tests to define helpers in.
+    /// Returns the session's Lua runtime, so that tests can define helpers in
+    /// it.
     #[cfg(test)]
     pub(crate) fn lua(&self) -> &mlua::Lua {
         &self.runtime.lua
     }
 }
 
-/// The error for an event the module does not handle.
+/// Builds the error for an event that the module does not handle.
 fn no_handler(site_name: &str, event: Event) -> Error {
     Error::new(
         ErrorKind::Unsupported,
