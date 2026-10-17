@@ -11,14 +11,22 @@ license = "GPL-3.0-only"
 repository = "https://github.com/dyskette/atsume"
 
 [workspace.dependencies]
+aes = "0.9.3"
+base64 = "0.22.1"
 cookie = "0.18.2"
 cookie_store = "0.22.1"
+ctr = "0.10.1"
+hmac = "0.13.0"
 html5ever = "0.40.1"
 # The IRI type xee takes a collation as.
 iri-string = "0.7.14"
+# The HTML entity table, which must match the one html5ever uses.
+markup5ever = "=0.40.0"
 mlua = { version = "0.12.2", features = ["lua54", "vendored"] }
+percent-encoding = "2.3.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.11.1"
 tempfile = "3"
 thiserror = "2"
 tiny_http = "0.12.0"
