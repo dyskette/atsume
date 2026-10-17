@@ -1,15 +1,16 @@
 //! `HTTP.Document`, the body of the last response.
 //!
-//! Upstream's is a memory stream. Modules pass it straight to `CreateTXQuery`,
-//! read it with `HTTP.Document.ToString()`, and rewrite it in place, for
-//! instance to descramble an image. So Lua sees an object over a buffer kept
-//! in the runtime's state, which also converts to a string.
+//! Upstream's document is a memory stream. Modules pass it straight to
+//! `CreateTXQuery`, read it with `HTTP.Document.ToString()`, and rewrite it in
+//! place, for example to descramble an image. Lua therefore sees an object
+//! over a buffer that is kept in the runtime's state, and the object also
+//! converts to a string.
 
 use mlua::{Lua, MetaMethod, UserData, UserDataMethods, Value};
 
 use crate::runtime::bind::{Place, borrow_state};
 
-/// The Lua face of a body kept in the runtime's state `S`.
+/// The Lua object over a body that is kept in the runtime's state `S`.
 pub(crate) struct DocumentObject<S> {
     place: Place<S, Vec<u8>>,
 }
