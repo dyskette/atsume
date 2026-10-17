@@ -1,6 +1,7 @@
 //! The `fmd.*` libraries that modules load with `require`.
 
 mod crypto;
+mod logging;
 
 use std::path::Path;
 
@@ -20,6 +21,10 @@ pub(crate) fn preload(lua: &Lua, lua_dir: &Path) -> mlua::Result<()> {
     preload.set(
         "fmd.crypto",
         lua.create_function(|lua, ()| crypto::build(lua))?,
+    )?;
+    preload.set(
+        "fmd.logger",
+        lua.create_function(|lua, ()| logging::build(lua))?,
     )
 }
 
