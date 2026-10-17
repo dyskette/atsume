@@ -79,10 +79,8 @@ impl UserData for UpdateListObject {
     }
 }
 
-/// Sets up `LINKS`, `NAMES` and `UPDATELIST` in a runtime.
+/// Sets the globals `LINKS`, `NAMES` and `UPDATELIST`.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
-    lua.set_app_data(Directory::default());
-    lua.set_app_data(StatusSink::default());
     let globals = lua.globals();
     globals.set("LINKS", ListObject::<Directory>::new(|d| &mut d.links))?;
     globals.set("NAMES", ListObject::<Directory>::new(|d| &mut d.names))?;

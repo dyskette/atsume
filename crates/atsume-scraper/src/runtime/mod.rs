@@ -15,10 +15,7 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::http::HttpSession;
 use crate::model::Module;
 use crate::session::SessionConfig;
-use crate::upstream::declaration::{self, Storage};
-use crate::upstream::http::HttpObject;
-use crate::upstream::module::Account;
-use crate::upstream::{directory, globals, libs, mangainfo, task, txquery};
+use crate::upstream::{self, declaration};
 use budget::{Budget, Termination};
 
 /// A sandboxed runtime holding the state a scrape keeps, with every call
@@ -38,18 +35,8 @@ impl Runtime {
         let lua = sandbox::new_runtime(lua_dir)?;
         let budget = Budget::new(cancel.clone(), config.cpu_limit);
         budget.install(&lua)?;
-        globals::set_constants(&lua)?;
         let lua_dir = std::path::absolute(lua_dir).map_err(mlua::Error::external)?;
-        libs::preload(&lua, &lua_dir)?;
-        lua.set_app_data(Storage::default());
-        lua.set_app_data(Account::default());
-        lua.set_app_data(HttpSession::new(&config.http, cancel));
-        lua.globals().set("HTTP", HttpObject)?;
-        txquery::register(&lua)?;
-        mangainfo::register(&lua)?;
-        task::register(&lua)?;
-        directory::register(&lua)?;
-        declaration::register_declarations(&lua)?;
+        upstream::install(&lua, &lua_dir, HttpSession::new(&config.http, cancel))?;
         Ok(Self { lua, budget })
     }
 

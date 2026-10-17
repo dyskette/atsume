@@ -65,6 +65,7 @@ pub struct Session {
 
 impl Session {
     pub(crate) fn new(runtime: Runtime, module: Module) -> Result<Self> {
+        // The one value `upstream::install` leaves out: it needs the declaration.
         runtime.lua.set_app_data(SiteState::new(module));
         runtime.lua.globals().set("MODULE", ModuleObject)?;
         Ok(Self { runtime })

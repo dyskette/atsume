@@ -146,9 +146,8 @@ impl UserData for MangaInfoObject {
     }
 }
 
-/// Sets up `MANGAINFO` and `MangaInfoStatusIfPos` in a runtime.
+/// Sets the globals `MANGAINFO` and `MangaInfoStatusIfPos`.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
-    lua.set_app_data(MangaInfo::default());
     lua.globals().set("MANGAINFO", MangaInfoObject)?;
     let status_if_pos = lua.create_function(status_if_pos)?;
     lua.globals().set("MangaInfoStatusIfPos", status_if_pos)

@@ -60,9 +60,9 @@ struct Declaration {
     options: Vec<ModuleOption>,
 }
 
-/// Defines `NewWebsiteModule`, which records each declaration it returns.
-pub(crate) fn register_declarations(lua: &Lua) -> mlua::Result<()> {
-    lua.set_app_data(Declarations::default());
+/// Sets the global `NewWebsiteModule`, which records each declaration it
+/// returns.
+pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     let new_website_module = lua.create_function(|lua, ()| {
         let index = state::<Declarations>(lua)?.0.len();
         let table = declaration_table(lua, index)?;

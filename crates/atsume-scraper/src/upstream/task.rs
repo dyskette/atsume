@@ -97,9 +97,8 @@ impl UserData for TaskObject {
     }
 }
 
-/// Sets up `TASK` in a runtime.
+/// Sets the global `TASK`.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
-    lua.set_app_data(Task::default());
     lua.globals().set("TASK", TaskObject)
 }
 
