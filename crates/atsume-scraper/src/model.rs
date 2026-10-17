@@ -238,8 +238,8 @@ pub struct DirectoryPage {
     pub entries: Vec<DirectoryEntry>,
     /// How many pages the directory has, if the module said while reading
     /// this one. Some modules say so here rather than in
-    /// [`Session::directory_pages`](crate::Session::directory_pages).
-    pub reported_pages: Option<u32>,
+    /// [`Session::directory_page_count`](crate::Session::directory_page_count).
+    pub reported_page_count: Option<u32>,
 }
 
 /// One series in a site's directory.

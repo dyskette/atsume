@@ -94,9 +94,9 @@ fn module_exposes_the_selected_site() {
     assert_eq!(session.eval(storage), "from init|");
     assert_eq!(session.eval("MODULE.GetOption('n') + 1"), "6");
 
-    session.directory_pages(1).unwrap();
+    session.directory_page_count(1).unwrap();
     assert_eq!(session.eval("MODULE.CurrentDirectoryIndex"), "1");
-    let beyond = session.directory_pages(2).unwrap_err();
+    let beyond = session.directory_page_count(2).unwrap_err();
     assert_eq!(beyond.kind(), ErrorKind::Unsupported);
 }
 
@@ -154,15 +154,15 @@ fn login_reports_what_the_module_recorded() {
 }
 
 #[test]
-fn directory_pages_reads_pagenumber() {
+fn directory_page_count_reads_pagenumber() {
     let init = "local m = NewWebsiteModule(); m.Name = 'D'; m.OnGetDirectoryPageNumber = 'Pages'";
     let mut session = open_module(
         init,
         "function Pages() PAGENUMBER = 12.0; return no_error end",
     );
-    assert_eq!(session.directory_pages(0).unwrap(), 12);
+    assert_eq!(session.directory_page_count(0).unwrap(), 12);
     let mut without_handler = open_module("NewWebsiteModule()", "");
-    assert_eq!(without_handler.directory_pages(0).unwrap(), 1);
+    assert_eq!(without_handler.directory_page_count(0).unwrap(), 1);
 }
 
 #[test]
@@ -528,11 +528,11 @@ fn list_reads_one_directory_page() {
         entries,
         [("/manga/0", "Series 0"), ("/manga/extra", "/manga/extra")]
     );
-    assert_eq!(first.reported_pages, Some(3));
+    assert_eq!(first.reported_page_count, Some(3));
 
     // Each page starts from empty lists and no reported count.
     let second = session.list(0, 1).unwrap();
     assert_eq!(second.entries.len(), 1);
-    assert_eq!(second.reported_pages, None);
+    assert_eq!(second.reported_page_count, None);
     assert_eq!(*messages.borrow(), ["reading page 1", "reading page 2"]);
 }

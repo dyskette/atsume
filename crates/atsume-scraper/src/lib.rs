@@ -11,7 +11,7 @@
 //! let catalog = Catalog::load("/data/modules/lua")?;
 //! let site = catalog.site("MangaDex", None).expect("declared by the checkout");
 //! let mut session = site.open(&SessionConfig::default(), CancelToken::new())?;
-//! println!("{} has {} directory pages", site.declaration().name, session.directory_pages(0)?);
+//! println!("{} has {} directory pages", site.declaration().name, session.directory_page_count(0)?);
 //! # Ok(())
 //! # }
 //! ```

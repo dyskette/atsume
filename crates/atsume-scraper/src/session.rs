@@ -190,7 +190,7 @@ impl Session {
     pub fn list(&mut self, directory: u32, page: u32) -> Result<DirectoryPage> {
         self.select_directory(directory)?;
         *self.state::<Directory>() = Directory::default();
-        globals::set_page_index(&self.runtime.lua, page)?;
+        globals::set_url_to_directory_page(&self.runtime.lua, page)?;
         let code = to_int(&self.runtime.lua, &self.call(Event::GetNameAndLink)?);
         if code == globals::NET_PROBLEM {
             let what = format!("listing page {}", u64::from(page) + 1);
@@ -217,14 +217,14 @@ impl Session {
     ///
     /// Fails if the site has no such listing
     /// ([`Unsupported`](ErrorKind::Unsupported)) or the handler fails.
-    pub fn directory_pages(&mut self, directory: u32) -> Result<u32> {
+    pub fn directory_page_count(&mut self, directory: u32) -> Result<u32> {
         self.select_directory(directory)?;
         if !self.has_handler(Event::GetDirectoryPageNumber) {
             return Ok(1);
         }
-        globals::set_page_count(&self.runtime.lua, 1)?;
+        globals::set_directory_page_count(&self.runtime.lua, 1)?;
         self.call(Event::GetDirectoryPageNumber)?;
-        let pages = globals::page_count(&self.runtime.lua)?;
+        let pages = globals::directory_page_count(&self.runtime.lua)?;
         Ok(u32::try_from(pages.max(1)).unwrap_or(u32::MAX))
     }
 
@@ -308,7 +308,7 @@ impl Session {
             return Ok(url);
         }
         globals::set_url(&self.runtime.lua, chapter_url)?;
-        globals::set_work_id(&self.runtime.lua, index)?;
+        globals::set_page_to_resolve(&self.runtime.lua, index)?;
         let what = format!("resolving page {} of {chapter_url}", index + 1);
         let result = self.call(Event::GetImageUrl)?;
         self.check_outcome(&result, &what)?;

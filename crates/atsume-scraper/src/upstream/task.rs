@@ -15,8 +15,8 @@ pub(crate) struct Task {
     /// The chapter the pages belong to.
     link: String,
     /// How many pages the chapter has, when the module counts them rather
-    /// than listing them.
-    page_number: i64,
+    /// than listing them. Modules see it as `TASK.PageNumber`.
+    page_count: i64,
     current_download_chapter_ptr: i64,
     /// Each page's image address, by position. An entry may be missing or
     /// empty until `OnGetImageURL` fills it.
@@ -51,7 +51,7 @@ impl Task {
     pub(crate) fn pages(&self, root_url: &str, resolvable: bool) -> Vec<ChapterPage> {
         let mut count = self.page_links.items().len();
         if resolvable {
-            let counted = usize::try_from(self.page_number).unwrap_or(0);
+            let counted = usize::try_from(self.page_count).unwrap_or(0);
             count = count
                 .max(counted)
                 .max(self.page_container_links.items().len());
@@ -74,7 +74,7 @@ pub(crate) struct TaskObject;
 impl UserData for TaskObject {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         text_field(fields, "Link", |t: &mut Task| &mut t.link);
-        int_field(fields, "PageNumber", |t: &mut Task| &mut t.page_number);
+        int_field(fields, "PageNumber", |t: &mut Task| &mut t.page_count);
         int_field(fields, "CurrentDownloadChapterPtr", |t: &mut Task| {
             &mut t.current_download_chapter_ptr
         });
@@ -106,7 +106,7 @@ pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::*;
 
-    fn task(links: &[&str], containers: usize, page_number: i64) -> Task {
+    fn task(links: &[&str], containers: usize, page_count: i64) -> Task {
         let mut task = Task::for_chapter("/c/1");
         for link in links {
             task.page_links.add(*link);
@@ -114,7 +114,7 @@ mod tests {
         for i in 0..containers {
             task.page_container_links.add(format!("/c/1/{i}"));
         }
-        task.page_number = page_number;
+        task.page_count = page_count;
         task
     }
 

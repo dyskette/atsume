@@ -31,7 +31,7 @@ pub(crate) fn set_constants(lua: &Lua) -> mlua::Result<()> {
     for status in AccountStatus::ALL {
         globals.set(format!("as{status:?}"), status.code())?;
     }
-    set_page_count(lua, 1)
+    set_directory_page_count(lua, 1)
 }
 
 /// Sets `URL`, the address a handler works on.
@@ -41,12 +41,12 @@ pub(crate) fn set_url(lua: &Lua, url: &str) -> mlua::Result<()> {
 
 /// Sets `URL` to a 0-based directory page, which `OnGetNameAndLink` reads as
 /// a number.
-pub(crate) fn set_page_index(lua: &Lua, page: u32) -> mlua::Result<()> {
+pub(crate) fn set_url_to_directory_page(lua: &Lua, page: u32) -> mlua::Result<()> {
     lua.globals().set("URL", page)
 }
 
 /// Sets `WORKID`, the 0-based page `OnGetImageURL` resolves.
-pub(crate) fn set_work_id(lua: &Lua, page: usize) -> mlua::Result<()> {
+pub(crate) fn set_page_to_resolve(lua: &Lua, page: usize) -> mlua::Result<()> {
     lua.globals().set("WORKID", page)
 }
 
@@ -60,11 +60,11 @@ pub(crate) fn set_filename(lua: &Lua, path: &std::path::Path) -> mlua::Result<()
 
 /// Sets `PAGENUMBER`, which `OnGetDirectoryPageNumber` overwrites with the
 /// directory's page count.
-pub(crate) fn set_page_count(lua: &Lua, pages: i64) -> mlua::Result<()> {
+pub(crate) fn set_directory_page_count(lua: &Lua, pages: i64) -> mlua::Result<()> {
     lua.globals().set("PAGENUMBER", pages)
 }
 
 /// Reads `PAGENUMBER` back as a whole number.
-pub(crate) fn page_count(lua: &Lua) -> mlua::Result<i64> {
+pub(crate) fn directory_page_count(lua: &Lua) -> mlua::Result<i64> {
     Ok(to_int(lua, &lua.globals().get::<Value>("PAGENUMBER")?))
 }

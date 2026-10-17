@@ -16,8 +16,9 @@ use crate::upstream::string_list::ListObject;
 pub(crate) struct Directory {
     links: StringList,
     names: StringList,
-    /// `UPDATELIST.CurrentDirectoryPageNumber`: the page count, if reported.
-    reported_pages: i64,
+    /// How many pages the directory has, if the module reported it. Modules
+    /// see it as `UPDATELIST.CurrentDirectoryPageNumber`.
+    reported_page_count: i64,
 }
 
 impl Directory {
@@ -42,10 +43,12 @@ impl Directory {
             })
             .filter(|entry| !entry.url.is_empty())
             .collect();
-        let reported_pages = u32::try_from(self.reported_pages).ok().filter(|&n| n > 0);
+        let reported_page_count = u32::try_from(self.reported_page_count)
+            .ok()
+            .filter(|&n| n > 0);
         DirectoryPage {
             entries,
-            reported_pages,
+            reported_page_count,
         }
     }
 }
@@ -63,7 +66,7 @@ struct UpdateListObject;
 impl UserData for UpdateListObject {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         int_field(fields, "CurrentDirectoryPageNumber", |d: &mut Directory| {
-            &mut d.reported_pages
+            &mut d.reported_page_count
         });
     }
 
@@ -98,7 +101,7 @@ mod tests {
             directory.links.add(link);
         }
         directory.names.add("A");
-        directory.reported_pages = 12;
+        directory.reported_page_count = 12;
         let page = directory.into_page();
         let entries: Vec<_> = page
             .entries
@@ -106,7 +109,7 @@ mod tests {
             .map(|e| (e.url.as_str(), e.display_name()))
             .collect();
         assert_eq!(entries, [("/manga/a", "A"), ("/manga/c", "/manga/c")]);
-        assert_eq!(page.reported_pages, Some(12));
-        assert_eq!(Directory::default().into_page().reported_pages, None);
+        assert_eq!(page.reported_page_count, Some(12));
+        assert_eq!(Directory::default().into_page().reported_page_count, None);
     }
 }
