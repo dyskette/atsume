@@ -7,9 +7,9 @@ use crate::page::Node;
 pub enum Item {
     /// A node of the page.
     Node(Node),
-    /// An atomic value, such as a string, number or boolean, as the text
-    /// internettools gives it. A map or array reads as `""`, as upstream's
-    /// JSON objects do.
+    /// A string, number or boolean, held as the text internettools gives for
+    /// it. A map or an array reads as `""`, because upstream reads a JSON
+    /// object that way.
     Atomic(String),
 }
 
@@ -26,7 +26,7 @@ impl Sequence {
         &self.items
     }
 
-    /// Returns the values, giving up the sequence.
+    /// Returns the values, consuming the sequence.
     #[must_use]
     pub fn into_items(self) -> Vec<Item> {
         self.items
@@ -38,7 +38,7 @@ impl Sequence {
         self.items.len()
     }
 
-    /// Reports whether there are none.
+    /// Reports whether the sequence holds no values.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()

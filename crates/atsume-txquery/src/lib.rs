@@ -1,13 +1,15 @@
-//! Evaluates the XPath dialect FMD2's website modules are written in.
+//! Evaluates expressions written in the XPath dialect that FMD2's website
+//! modules use.
 //!
-//! Upstream evaluates module expressions with internettools in its XPath 4.0
-//! mode. This crate evaluates them with [xee](https://github.com/Paligo/xee),
-//! an XPath 3.1 engine, over pages parsed by html5ever, and converts results
-//! the way internettools does.
+//! FMD2 evaluates these expressions with internettools, a Pascal library, in
+//! its XPath 4.0 mode. This crate evaluates them with
+//! [xee](https://github.com/Paligo/xee), an XPath 3.1 engine, on pages that
+//! html5ever has parsed. It converts the results the way internettools does,
+//! so modules get the values they expect.
 //!
-//! The crate is named after `TXQuery`, the query object FMD2 modules create
-//! with `CreateTXQuery`. In its comments, "upstream" means FMD2 together with
-//! the internettools engine FMD2 runs expressions on.
+//! The crate is named after `TXQuery`, the query object that FMD2 modules
+//! create with `CreateTXQuery`. Its comments use "upstream" for FMD2 together
+//! with the internettools engine that FMD2 runs expressions on.
 //!
 //! ```
 //! use atsume_txquery::{Engine, Page};
@@ -18,12 +20,13 @@
 //! assert_eq!(page.sequence_text(&status), "Ongoing");
 //! ```
 //!
-//! An expression goes through two halves. The [`Engine`] prepares it once:
-//! `rewrite` translates internettools' syntax into standard XPath and lists the
-//! `json()` arguments, and xee compiles the result. The [`Page`] runs it:
-//! each `json()` argument is evaluated and its text read by `json` into a
-//! tree, then the compiled query runs over the page with those trees bound.
-//! `docs/MODULES.md` explains the choices upstream forced.
+//! Evaluating an expression takes two steps. First, the [`Engine`] prepares
+//! it, once per expression: `rewrite` translates internettools' syntax into
+//! standard XPath and lists the arguments of any `json()` calls, and xee
+//! compiles the result. Then the [`Page`] runs it. Each `json()` argument is
+//! evaluated, `json` parses the argument's text into a tree, and the compiled
+//! query runs over the page with those trees bound to variables.
+//! `docs/MODULES.md` explains where and why the crate follows upstream.
 
 mod css;
 mod engine;
