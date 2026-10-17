@@ -28,8 +28,8 @@ fn write(path: &Path, contents: &str) {
     std::fs::write(path, contents).unwrap();
 }
 
-/// Links `link` to the directory `target`, or returns false where the
-/// platform refuses, as Windows does without developer mode.
+/// Links `link` to the directory `target`. Returns false where the platform
+/// refuses, as Windows does without developer mode.
 fn symlink_dir(target: &Path, link: &Path) -> bool {
     #[cfg(unix)]
     let linked = std::os::unix::fs::symlink(target, link);
@@ -232,7 +232,8 @@ fn only_the_writable_file_may_be_written() {
         "local f = io.open({}, 'a'); f:write('+'); f:close()",
         quote(&page)
     ));
-    // Nothing is saved without close, so an abandoned edit leaves the page.
+    // Nothing is saved without `close`, so an abandoned edit leaves the page
+    // unchanged.
     run(format!(
         "local f = io.open({}, 'w'); f:write('LOST')",
         quote(&page)
