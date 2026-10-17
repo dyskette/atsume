@@ -1,10 +1,10 @@
-//! `CreateTXQuery`, and the query objects modules read pages through.
+//! `CreateTXQuery`, and the query objects through which modules read pages.
 //!
 //! A query object holds a parsed page. Its methods evaluate expressions with
 //! [`atsume_txquery`] and convert the results as upstream's
 //! `TXQueryEngineHTML` does. Upstream swallows every evaluation error, so an
-//! expression that fails reads as nothing here too, and is logged at debug
-//! level for whoever is fixing the module. See `docs/MODULES.md`.
+//! expression that fails reads as nothing here too. The failure is logged at
+//! debug level for whoever is fixing the module. See `docs/MODULES.md`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -22,15 +22,16 @@ mod xpath_result;
 
 use xpath_result::XPathResultObject;
 
-/// What `XPathStringAll` joins values with when the module names nothing.
+/// What `XPathStringAll` puts between values when the module names no
+/// separator.
 const DEFAULT_SEPARATOR: &str = ", ";
 
-/// A parsed page, shared by the query that parsed it and every value read
+/// A parsed page, shared by the query that parsed it and by every value read
 /// from it.
 type SharedPage = Rc<RefCell<Page>>;
 
-/// Sets the global `CreateTXQuery`. Every query of the runtime shares one
-/// engine, so an expression a module runs in a loop compiles once.
+/// Sets the global `CreateTXQuery`. Every query in the runtime shares one
+/// engine, so an expression that a module runs in a loop is compiled only once.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     let engine = Rc::new(Engine::new());
     let create = lua.create_function(move |lua, arguments: MultiValue| {
@@ -39,9 +40,9 @@ pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set("CreateTXQuery", create)
 }
 
-/// Builds a query over the page given, or over an empty page when there is
-/// no argument. Anything but text or `HTTP.Document` gives `nil`, as
-/// upstream's does.
+/// Builds a query over the page given, or over an empty page when there is no
+/// argument. Any argument other than text or `HTTP.Document` gives `nil`, as it
+/// does upstream.
 fn create_query(
     lua: &Lua,
     engine: &Rc<Engine>,
@@ -61,7 +62,8 @@ fn create_query(
     }))
 }
 
-/// Reads the page a module passes: a string, a number, or `HTTP.Document`.
+/// Reads the page that a module passes, which may be a string, a number or
+/// `HTTP.Document`.
 fn page_bytes(lua: &Lua, source: &Value) -> mlua::Result<Option<Vec<u8>>> {
     match source {
         Value::String(text) => Ok(Some(text.as_bytes().to_vec())),
@@ -73,7 +75,7 @@ fn page_bytes(lua: &Lua, source: &Value) -> mlua::Result<Option<Vec<u8>>> {
     }
 }
 
-/// The object `CreateTXQuery` returns.
+/// The object that `CreateTXQuery` returns.
 #[derive(Clone)]
 struct QueryObject {
     engine: Rc<Engine>,
@@ -93,8 +95,8 @@ impl UserData for QueryObject {
 }
 
 impl QueryObject {
-    /// Builds the method named `name`. Modules call them with a dot, so the
-    /// arguments start with the first real one.
+    /// Builds the method named `name`. Modules call these methods with a dot,
+    /// so the first argument is a real one rather than the query.
     fn method(&self, lua: &Lua, name: &str) -> mlua::Result<Option<Function>> {
         let query = self.clone();
         let function = match name {
@@ -130,12 +132,13 @@ impl QueryObject {
         function.map(Some)
     }
 
-    /// Evaluates an expression against the page, or against the value a
+    /// Evaluates an expression against the page, or against the value that a
     /// module passes as the context.
     ///
-    /// A context value stands for its first node, read on the page it came
-    /// from. With no node in it there is nothing to start from, and the
-    /// result is empty, as upstream's evaluation error would make it.
+    /// A context value stands for its first node, read on the page that the
+    /// node came from. When the context holds no node, there is nothing to
+    /// start from, so the result is empty, as upstream's evaluation error would
+    /// make it.
     fn evaluate(
         &self,
         lua: &Lua,
@@ -154,8 +157,8 @@ impl QueryObject {
         Ok(XPathResultObject::new(context.shared_page(), items))
     }
 
-    /// Runs an expression on `page`, logging a failure and returning no
-    /// items for it.
+    /// Runs an expression on `page`. A failure is logged, and the expression
+    /// then returns no items.
     fn evaluate_or_nothing(
         &self,
         page: &SharedPage,
@@ -174,11 +177,13 @@ impl QueryObject {
         }
     }
 
-    /// Runs `XPathStringAll`, which upstream overloads on its second
-    /// argument: a separator, a list to fill, or, in atsume, the context.
+    /// Runs `XPathStringAll`, which upstream overloads on its second argument.
+    /// That argument may be a separator, a list to fill, or, in atsume only,
+    /// the context.
     ///
     /// The string forms join the trimmed values that are not empty. The list
-    /// form adds every trimmed value, empty ones too, and returns nothing.
+    /// form adds every trimmed value to the list, including empty ones, and
+    /// returns nothing.
     fn string_all(
         &self,
         lua: &Lua,
@@ -202,8 +207,8 @@ impl QueryObject {
         joined(lua, &result, &separator).map(Some)
     }
 
-    /// Runs `XPathHREFAll` or `XPathHREFTitleAll`: each selected node's
-    /// `href` goes to the first list, and its name to the second.
+    /// Runs `XPathHREFAll` or `XPathHREFTitleAll`. Each selected node's `href`
+    /// goes to the first list, and its name goes to the second.
     fn links_and_names(
         &self,
         lua: &Lua,
@@ -221,8 +226,8 @@ impl QueryObject {
         add_all(&names, labels)
     }
 
-    /// Replaces the page, unless the text given is empty, as upstream's
-    /// `ParseHTML` does.
+    /// Replaces the page, as upstream's `ParseHTML` does. An empty text leaves
+    /// the page unchanged.
     fn parse_html(&self, lua: &Lua, source: &Value) -> mlua::Result<()> {
         let Some(html) = page_bytes(lua, source)?.filter(|html| !html.is_empty()) else {
             return Ok(());
@@ -236,7 +241,7 @@ impl QueryObject {
     }
 }
 
-/// Where `XPathHREFAll` and `XPathHREFTitleAll` read a link's name.
+/// Where `XPathHREFAll` and `XPathHREFTitleAll` find a link's name.
 #[derive(Clone, Copy)]
 enum LinkNameSource {
     /// The link's text.
@@ -248,9 +253,10 @@ enum LinkNameSource {
 impl LinkNameSource {
     /// Reads the name of a selected link.
     ///
-    /// Upstream gives a link with no text, such as one wrapping only a cover
-    /// image, an empty name. atsume falls back to its `title`, which is where
-    /// those sites put the name; this only ever replaces nothing.
+    /// Upstream gives an empty name to a link with no text, such as one that
+    /// wraps only a cover image. atsume falls back to the link's `title`, which
+    /// is where those sites put the name. The fallback only ever replaces an
+    /// empty name.
     fn read(self, result: &XPathResultObject, item: &Item) -> mlua::Result<String> {
         let text = pascal_trim(&result.item_text(item)?).to_owned();
         let title = result.attribute_of(item, "title")?;
@@ -281,9 +287,9 @@ fn joined(lua: &Lua, result: &XPathResultObject, separator: &str) -> mlua::Resul
     lua.create_string(values.join(separator))
 }
 
-/// Adds each value to a list a module passed, through the list's own `Add`,
-/// so any of the host's lists can be filled. A missing list is skipped,
-/// because modules pass only the lists they need.
+/// Adds each value to a list that a module passed, through the list's own
+/// `Add` method, so that any of the host's lists can be filled. A missing list
+/// is skipped, because modules pass only the lists they need.
 fn add_all(list: &Value, values: impl IntoIterator<Item = String>) -> mlua::Result<()> {
     let add: Function = match list {
         Value::Nil => return Ok(()),
