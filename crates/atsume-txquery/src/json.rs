@@ -198,28 +198,46 @@ impl Reader<'_> {
         Ok(())
     }
 
-    /// Reads `\uXXXX`, joining a surrogate pair into one character.
+    /// Reads the four hex digits after `\u` and adds the character they
+    /// encode.
+    ///
+    /// JSON writes a character beyond the Basic Multilingual Plane as two
+    /// escapes, a high surrogate then a low one, and they are joined here. A
+    /// surrogate without its partner becomes U+FFFD, and whatever follows it
+    /// is read as usual.
     fn unicode_escape(&mut self, out: &mut String) -> Result<(), String> {
-        let high = self.hex4()?;
-        if !(0xD800..0xDC00).contains(&high) {
-            out.push(char::from_u32(high).unwrap_or('\u{fffd}'));
+        let unit = self.hex_digits()?;
+        if !HIGH_SURROGATES.contains(&unit) {
+            out.push(char::from_u32(unit).unwrap_or(char::REPLACEMENT_CHARACTER));
             return Ok(());
         }
-        let rest: String = self.chars.clone().take(6).map(|(_, c)| c).collect();
-        if !rest.starts_with("\\u") {
-            out.push('\u{fffd}');
-            return Ok(());
+        match self.low_surrogate_next() {
+            Some(low) => out.push(join_surrogates(unit, low)),
+            None => out.push(char::REPLACEMENT_CHARACTER),
         }
-        self.chars.next();
-        self.chars.next();
-        let low = self.hex4()?;
-        let joined = 0x10000 + ((high - 0xD800) << 10) + (low.wrapping_sub(0xDC00) & 0x3FF);
-        out.push(char::from_u32(joined).unwrap_or('\u{fffd}'));
         Ok(())
     }
 
-    fn hex4(&mut self) -> Result<u32, String> {
-        let digits: String = (0..4)
+    /// Reads a `\uXXXX` escape holding a low surrogate if one comes next,
+    /// and otherwise reads nothing.
+    fn low_surrogate_next(&mut self) -> Option<u32> {
+        let mut ahead = self.chars.clone();
+        let starts_escape =
+            ahead.next().map(|(_, c)| c) == Some('\\') && ahead.next().map(|(_, c)| c) == Some('u');
+        if !starts_escape {
+            return None;
+        }
+        let digits: String = ahead.take(ESCAPE_DIGITS).map(|(_, c)| c).collect();
+        let unit = u32::from_str_radix(&digits, 16)
+            .ok()
+            .filter(|u| LOW_SURROGATES.contains(u))?;
+        self.chars.nth(ESCAPE_DIGITS + 1);
+        Some(unit)
+    }
+
+    /// Reads the hex digits of a `\u` escape.
+    fn hex_digits(&mut self) -> Result<u32, String> {
+        let digits: String = (0..ESCAPE_DIGITS)
             .filter_map(|_| self.chars.next().map(|(_, c)| c))
             .collect();
         u32::from_str_radix(&digits, 16).map_err(|_| format!("invalid \\u escape {digits:?}"))
@@ -263,6 +281,30 @@ impl Reader<'_> {
         }
         word
     }
+}
+
+/// How many hex digits a `\u` escape has.
+const ESCAPE_DIGITS: usize = 4;
+
+/// The UTF-16 code units that start a surrogate pair.
+const HIGH_SURROGATES: Range<u32> = 0xD800..0xDC00;
+
+/// The UTF-16 code units that end a surrogate pair.
+const LOW_SURROGATES: Range<u32> = 0xDC00..0xE000;
+
+/// The first character beyond the Basic Multilingual Plane. A surrogate pair
+/// encodes a character as its distance from this one.
+const FIRST_SUPPLEMENTARY: u32 = 0x10000;
+
+/// How many bits of that distance each surrogate carries: the high one the
+/// top ten, the low one the bottom ten.
+const SURROGATE_BITS: u32 = 10;
+
+/// Joins a high and a low surrogate into the character they encode.
+fn join_surrogates(high: u32, low: u32) -> char {
+    let top = (high - HIGH_SURROGATES.start) << SURROGATE_BITS;
+    let bottom = low - LOW_SURROGATES.start;
+    char::from_u32(FIRST_SUPPLEMENTARY + (top | bottom)).unwrap_or(char::REPLACEMENT_CHARACTER)
 }
 
 /// Renders a number as internettools prints it: an integer as its digits, and

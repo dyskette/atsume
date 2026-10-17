@@ -115,3 +115,11 @@ fn a_call_inside_a_path_step_is_refused() {
     assert!(calls("//script/json(.)").is_err());
     assert!(calls("json(").is_err());
 }
+
+#[test]
+fn an_unpaired_surrogate_becomes_the_replacement_character() {
+    // A high surrogate followed by an ordinary escape keeps that escape.
+    assert_eq!(one(r#""\ud83d\u0041""#), Json::String("\u{fffd}A".into()));
+    assert_eq!(one(r#""\ud83dx""#), Json::String("\u{fffd}x".into()));
+    assert_eq!(one(r#""\ude00""#), Json::String("\u{fffd}".into()));
+}
