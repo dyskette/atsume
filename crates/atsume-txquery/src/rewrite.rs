@@ -162,7 +162,7 @@ fn number_length(text: &str) -> usize {
 /// Measures a string literal; a doubled quote inside is an escaped quote.
 fn string_length(text: &str, quote: char) -> Result<usize, String> {
     let mut chars = text.char_indices().skip(1).peekable();
-    while let Some((at, c)) = chars.next() {
+    while let Some((pos, c)) = chars.next() {
         if c != quote {
             continue;
         }
@@ -170,7 +170,7 @@ fn string_length(text: &str, quote: char) -> Result<usize, String> {
             chars.next();
             continue;
         }
-        return Ok(at + c.len_utf8());
+        return Ok(pos + c.len_utf8());
     }
     Err("unterminated string literal".to_owned())
 }
@@ -178,19 +178,19 @@ fn string_length(text: &str, quote: char) -> Result<usize, String> {
 /// Measures an XPath comment, `(: … :)`, which may nest.
 fn comment_length(text: &str) -> Result<usize, String> {
     let mut depth = 0;
-    let mut at = 0;
-    while at < text.len() {
-        if text[at..].starts_with("(:") {
+    let mut pos = 0;
+    while pos < text.len() {
+        if text[pos..].starts_with("(:") {
             depth += 1;
-            at += 2;
-        } else if text[at..].starts_with(":)") {
+            pos += 2;
+        } else if text[pos..].starts_with(":)") {
             depth -= 1;
-            at += 2;
+            pos += 2;
             if depth == 0 {
-                return Ok(at);
+                return Ok(pos);
             }
         } else {
-            at += text[at..].chars().next().map_or(1, char::len_utf8);
+            pos += text[pos..].chars().next().map_or(1, char::len_utf8);
         }
     }
     Err("unterminated comment".to_owned())
@@ -206,7 +206,7 @@ fn symbol_length(text: &str, first: char) -> usize {
 /// Rewrites a run of tokens, writing standard XPath to `out`.
 struct Rewriter<'t, 'e> {
     tokens: &'t [Token<'e>],
-    at: usize,
+    pos: usize,
     out: String,
     previous: PreviousToken,
     /// The `json()` arguments found so far, shared with nested rewrites so the
@@ -218,7 +218,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
     fn new(tokens: &'t [Token<'e>], json_arguments: Vec<String>) -> Self {
         Self {
             tokens,
-            at: 0,
+            pos: 0,
             out: String::new(),
             previous: PreviousToken::Operator,
             json_arguments,
@@ -226,7 +226,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
     }
 
     fn rewrite_all(mut self) -> Result<RewrittenExpression, String> {
-        while self.at < self.tokens.len() {
+        while self.pos < self.tokens.len() {
             self.rewrite_next_construct()?;
         }
         Ok(RewrittenExpression {
@@ -246,7 +246,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
 
     /// Rewrites the construct at the current token and moves past it.
     fn rewrite_next_construct(&mut self) -> Result<(), String> {
-        let token = self.tokens[self.at];
+        let token = self.tokens[self.pos];
         let handled = match (token.kind, token.text) {
             (TokenKind::Symbol, ".") => self.property_chain(),
             (TokenKind::Symbol, "?") => self.lookup(),
@@ -269,7 +269,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
 
     fn copy(&mut self, token: Token<'_>) {
         self.out.push_str(token.text);
-        self.at += 1;
+        self.pos += 1;
         if token.kind != TokenKind::Trivia {
             self.previous = self.classify(token);
         }
@@ -292,7 +292,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
 
     /// Returns the token `offset` places after the current one, if any.
     fn peek(&self, offset: usize) -> Option<Token<'e>> {
-        self.tokens.get(self.at + offset).copied()
+        self.tokens.get(self.pos + offset).copied()
     }
 
     /// Returns the next token that is not whitespace, and how far ahead it is.
@@ -322,7 +322,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             self.out.push('/');
             self.out.push_str(&step);
         }
-        self.at += 2;
+        self.pos += 2;
         self.previous = PreviousToken::Value;
         true
     }
@@ -346,7 +346,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             self.out.push('/');
         }
         self.out.push_str(&step);
-        self.at += 2;
+        self.pos += 2;
         self.previous = PreviousToken::Value;
         true
     }
@@ -359,14 +359,14 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             return Ok(false);
         }
         let close = self.closing_parenthesis()?;
-        let inner = without_trivia(&self.tokens[self.at + 1..close]);
+        let inner = without_trivia(&self.tokens[self.pos + 1..close]);
         let selection = match inner.as_slice() {
             [] => "/*".to_owned(),
             [key] if key.kind == TokenKind::String => format!("/{}", child_named(key.text)),
             [index] if index.kind == TokenKind::Number => format!("/*[{}]", index.text),
             _ => {
                 let tokens = self.tokens;
-                let key = self.rewrite_nested(&tokens[self.at + 1..close])?;
+                let key = self.rewrite_nested(&tokens[self.pos + 1..close])?;
                 format!(
                     "/*[let $atsume_key := ({key}) return if ($atsume_key instance of xs:numeric) \
                      then position() = $atsume_key else codepoint-equal(name(), string($atsume_key))]"
@@ -374,7 +374,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             }
         };
         self.out.push_str(&selection);
-        self.at = close + 1;
+        self.pos = close + 1;
         self.previous = PreviousToken::Value;
         Ok(true)
     }
@@ -387,17 +387,17 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         if open.text != "(" {
             return Ok(false);
         }
-        self.at += offset;
+        self.pos += offset;
         let close = self.closing_parenthesis()?;
         let tokens = self.tokens;
-        let argument = &tokens[self.at + 1..close];
+        let argument = &tokens[self.pos + 1..close];
         let rewritten = match name {
             "jn:keys" => format!("(({})/*/name())", self.rewrite_nested(argument)?),
             "jn:members" => format!("(({})/*)", self.rewrite_nested(argument)?),
             _ => format!("({})", css_argument(argument)?),
         };
         self.out.push_str(&rewritten);
-        self.at = close + 1;
+        self.pos = close + 1;
         self.previous = PreviousToken::Value;
         Ok(true)
     }
@@ -414,9 +414,9 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         if self.out.trim_end().ends_with(STEP_MARKERS) {
             return Err("json() inside a path step is not supported".to_owned());
         }
-        self.at += offset;
+        self.pos += offset;
         let close = self.closing_parenthesis()?;
-        let argument = self.tokens[self.at + 1..close]
+        let argument = self.tokens[self.pos + 1..close]
             .iter()
             .map(|t| t.text)
             .collect();
@@ -427,7 +427,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         self.out.push_str("($");
         self.out.push_str(&variable);
         self.out.push(')');
-        self.at = close + 1;
+        self.pos = close + 1;
         self.previous = PreviousToken::Value;
         Ok(true)
     }
@@ -448,7 +448,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             "false" => "false()",
             _ => "\"null\"",
         });
-        self.at += 1;
+        self.pos += 1;
         self.previous = PreviousToken::Value;
         true
     }
@@ -468,7 +468,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             name.to_lowercase()
         );
         self.out.push_str(&test);
-        self.at += 1;
+        self.pos += 1;
         self.previous = PreviousToken::Step;
         true
     }
@@ -476,7 +476,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
     /// Returns the index of the `)` closing the `(` at the current token.
     fn closing_parenthesis(&self) -> Result<usize, String> {
         let mut depth = 0;
-        for (index, token) in self.tokens.iter().enumerate().skip(self.at) {
+        for (index, token) in self.tokens.iter().enumerate().skip(self.pos) {
             let change = match (token.kind, token.text) {
                 (TokenKind::Symbol, "(") => 1,
                 (TokenKind::Symbol, ")") => -1,

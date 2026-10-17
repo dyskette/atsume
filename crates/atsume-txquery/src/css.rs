@@ -75,7 +75,7 @@ fn complex_to_xpath(complex: &str) -> Result<String, String> {
 fn split_compound(selector: &str) -> (&str, &str) {
     let mut depth = 0;
     let mut quote = None;
-    for (at, c) in selector.char_indices() {
+    for (pos, c) in selector.char_indices() {
         match (quote, c) {
             (Some(q), _) if c == q => quote = None,
             (None, '"' | '\'') => quote = Some(c),
@@ -84,7 +84,7 @@ fn split_compound(selector: &str) -> (&str, &str) {
             (None, c)
                 if depth == 0 && (c.is_whitespace() || Combinator::from_char(c).is_some()) =>
             {
-                return (&selector[..at], &selector[at..]);
+                return (&selector[..pos], &selector[pos..]);
             }
             _ => {}
         }
@@ -223,15 +223,15 @@ fn split_top_level(text: &str, separator: char) -> Vec<&str> {
     let mut depth = 0;
     let mut quote = None;
     let mut start = 0;
-    for (at, c) in text.char_indices() {
+    for (pos, c) in text.char_indices() {
         match (quote, c) {
             (Some(q), _) if c == q => quote = None,
             (None, '"' | '\'') => quote = Some(c),
             (None, '[' | '(') => depth += 1,
             (None, ']' | ')') => depth -= 1,
             (None, c) if c == separator && depth == 0 => {
-                parts.push(&text[start..at]);
-                start = at + c.len_utf8();
+                parts.push(&text[start..pos]);
+                start = pos + c.len_utf8();
             }
             _ => {}
         }

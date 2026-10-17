@@ -82,7 +82,7 @@ impl Reader<'_> {
         self.skip_whitespace();
         match self.chars.next() {
             Some((_, c)) if c == wanted => Ok(()),
-            Some((at, c)) => Err(format!("expected {wanted:?} at {at}, found {c:?}")),
+            Some((pos, c)) => Err(format!("expected {wanted:?} at {pos}, found {c:?}")),
             None => Err(format!("expected {wanted:?}, found the end")),
         }
     }
@@ -244,13 +244,13 @@ impl Reader<'_> {
     }
 
     fn number(&mut self) -> Result<Json, String> {
-        let start = self.chars.peek().map_or(self.text.len(), |&(at, _)| at);
+        let start = self.chars.peek().map_or(self.text.len(), |&(pos, _)| pos);
         let mut end = start;
-        while let Some(&(at, c)) = self.chars.peek() {
+        while let Some(&(pos, c)) = self.chars.peek() {
             if !(c.is_ascii_digit() || matches!(c, '-' | '+' | '.' | 'e' | 'E')) {
                 break;
             }
-            end = at + c.len_utf8();
+            end = pos + c.len_utf8();
             self.chars.next();
         }
         number_text(&self.text[start..end]).map(Json::Number)

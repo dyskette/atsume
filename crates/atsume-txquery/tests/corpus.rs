@@ -64,10 +64,10 @@ fn lua_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
 /// variable, carries nothing to check and is skipped.
 fn expressions_in(source: &str) -> Vec<String> {
     let mut found = Vec::new();
-    let mut at = 0;
-    while let Some(offset) = source[at..].find('.') {
-        let start = at + offset + 1;
-        at = start;
+    let mut pos = 0;
+    while let Some(offset) = source[pos..].find('.') {
+        let start = pos + offset + 1;
+        pos = start;
         let Some(method) = METHODS.iter().find(|m| source[start..].starts_with(**m)) else {
             continue;
         };
@@ -90,12 +90,12 @@ fn expressions_in(source: &str) -> Vec<String> {
 fn first_argument(after_open: &str) -> &str {
     let mut depth = 0;
     let mut chars = after_open.char_indices().peekable();
-    while let Some((at, c)) = chars.next() {
+    while let Some((pos, c)) = chars.next() {
         match c {
             '\'' | '"' => skip_lua_string(&mut chars, c),
-            '[' if after_open[at..].starts_with("[[") => skip_long_string(&mut chars),
+            '[' if after_open[pos..].starts_with("[[") => skip_long_string(&mut chars),
             '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' | ',' if depth == 0 => return &after_open[..at],
+            ')' | ']' | '}' | ',' if depth == 0 => return &after_open[..pos],
             ')' | ']' | '}' => depth -= 1,
             _ => {}
         }
@@ -151,19 +151,19 @@ fn split_concatenation(expression: &str) -> Vec<&str> {
     let mut depth = 0;
     let mut start = 0;
     let mut chars = expression.char_indices().peekable();
-    while let Some((at, c)) = chars.next() {
+    while let Some((pos, c)) = chars.next() {
         match c {
             '\'' | '"' => skip_lua_string(&mut chars, c),
-            '[' if expression[at..].starts_with("[[") => skip_long_string(&mut chars),
+            '[' if expression[pos..].starts_with("[[") => skip_long_string(&mut chars),
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth -= 1,
             '.' if depth == 0
-                && expression[at..].starts_with("..")
-                && !expression[at..].starts_with("...") =>
+                && expression[pos..].starts_with("..")
+                && !expression[pos..].starts_with("...") =>
             {
-                terms.push(&expression[start..at]);
+                terms.push(&expression[start..pos]);
                 chars.next();
-                start = at + 2;
+                start = pos + 2;
             }
             _ => {}
         }
