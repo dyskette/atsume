@@ -190,8 +190,8 @@ fn read_declaration(
         category: text("Category")?,
         handlers,
         options,
-        account_support: truthy(&table.get("AccountSupport")?),
-        sorted_list: truthy(&table.get("SortedList")?),
+        takes_login: truthy(&table.get("AccountSupport")?),
+        lists_in_stable_order: truthy(&table.get("SortedList")?),
         listing_count: parse_listing_count(declared_listings),
         file: file.to_path_buf(),
     })

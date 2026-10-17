@@ -83,7 +83,7 @@ impl UserData for ModuleObject {
             &mut s.declaration.category
         });
         bool_field(fields, "AccountSupport", |s: &mut SiteRecord| {
-            &mut s.declaration.account_support
+            &mut s.declaration.takes_login
         });
         int_field(fields, "CurrentDirectoryIndex", |s: &mut SiteRecord| {
             &mut s.listing_index

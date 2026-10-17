@@ -97,8 +97,8 @@ fn a_file_declares_its_websites() {
             combo("svr", "Server", &["Main", "Secondary", "Compress"], 0),
             option(OptionKind::EditBox, "token", "Token", None),
         ],
-        account_support: true,
-        sorted_list: false,
+        takes_login: true,
+        lists_in_stable_order: false,
         listing_count: 3,
         file: checkout.file("modules/Example.lua"),
     };

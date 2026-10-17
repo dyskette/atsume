@@ -35,10 +35,12 @@ pub struct SiteDeclaration {
     pub handlers: HashMap<Event, String>,
     /// The settings the site offers.
     pub options: Vec<SiteOption>,
-    /// Whether the site takes a login.
-    pub account_support: bool,
-    /// Whether the site lists its directory in a stable order.
-    pub sorted_list: bool,
+    /// Whether the site takes a login. Modules declare it as
+    /// `AccountSupport`.
+    pub takes_login: bool,
+    /// Whether the site lists its directory in a stable order. Modules
+    /// declare it as `SortedList`.
+    pub lists_in_stable_order: bool,
     /// How many separate listings the directory is split into; at least one.
     /// Modules declare it as `TotalDirectory`.
     pub listing_count: u32,
