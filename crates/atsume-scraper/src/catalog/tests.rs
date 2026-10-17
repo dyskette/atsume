@@ -28,8 +28,8 @@ function Init()
 end
 GetInfo = shared.GetInfo";
 
-/// A checkout with one module, which starts with a byte-order mark as some
-/// upstream modules do, and the template it requires.
+/// A checkout with one module and the template that the module requires. The
+/// module starts with a byte-order mark, as some upstream modules do.
 fn example() -> Checkout {
     let template = "local _M = {}\nfunction _M.GetInfo() return 'template' end\nreturn _M";
     let module = format!("{BOM}{EXAMPLE}");
@@ -134,7 +134,8 @@ fn a_catalog_loads_every_module_and_records_failures() {
 
 #[test]
 fn loading_the_catalog_reaches_no_network() {
-    // Loading fails if the request gets through, and passes if it is refused.
+    // Loading fails if the request gets through, and passes if the request is
+    // refused.
     let source = "function Init() NewWebsiteModule().Name = 'Quiet'
         if HTTP.GET('https://example.com/') then error('reached the network') end end";
     let checkout = Checkout::new(&[("modules/Quiet.lua", source)]);
@@ -195,7 +196,8 @@ end";
     };
     assert_eq!(root(None), "https://one.example");
     assert_eq!(root(Some("https://two.example")), "https://two.example");
-    // An address no mirror declares is one the reader typed for a moved site.
+    // An address that no mirror declares is one the reader typed for a site
+    // that has moved.
     assert_eq!(root(Some("https://moved.example")), "https://moved.example");
 }
 

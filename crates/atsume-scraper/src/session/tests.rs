@@ -68,14 +68,14 @@ fn fmd_env_points_into_the_checkout() {
     let session = checkout.open("modules/Env.lua", None, None).unwrap();
     let dir = session.eval("require('fmd.env').LuaDirectory");
     assert!(dir.ends_with(std::path::MAIN_SEPARATOR), "{dir}");
-    // What modules do with it: concatenate a path onto it.
+    // Modules concatenate a path onto it, so the test does the same.
     assert!(Path::new(&format!("{dir}modules")).is_dir(), "{dir}");
     assert_eq!(session.eval("require('fmd.env').SelectedLanguage"), "en");
 }
 
 #[test]
 fn lua_5_4_allows_assigning_to_a_for_loop_variable() {
-    // Lua 5.5 rejects this; several upstream modules do it.
+    // Lua 5.5 rejects this, but several upstream modules do it.
     let session = open_module("NewWebsiteModule()", "");
     let source = "(function() local s = 0 for i = 1, 3 do i = i * 2; s = s + i end return s end)()";
     assert_eq!(session.eval(source), "12");
@@ -196,8 +196,8 @@ const LOOPING: &str = "
     function Swallow() cancel(); pcall(function() while true do end end); return 'looks fine' end
     function Stubborn() cancel(); while true do pcall(function() for i = 1, 50 do end end) end end";
 
-/// Opens a module whose handlers loop, with `cancel()` cancelling its own
-/// scrape, letting each call run `cpu_limit` instructions.
+/// Opens a module whose handlers loop, where `cancel()` cancels the module's
+/// own scrape, and lets each call run `cpu_limit` instructions.
 fn looping_session(cpu_limit: u64) -> (Session, Checkout, CancelToken) {
     let checkout = Checkout::new(&[("modules/Loop.lua", &module_source(LOOPING_INIT, LOOPING))]);
     let cancel = CancelToken::new();
@@ -246,7 +246,8 @@ fn cancelling_stops_the_running_call_and_every_later_one() {
     assert_eq!(running.kind(), ErrorKind::Cancelled, "{running}");
     let later = session.call_handler(Event::CheckSite).unwrap_err();
     assert_eq!(later.kind(), ErrorKind::Cancelled, "{later}");
-    // Read from Rust: a cancelled session runs no more Lua, not even this.
+    // This is checked from Rust, because a cancelled session runs no more Lua,
+    // not even this check.
     assert!(
         session
             .lua()
@@ -275,8 +276,8 @@ fn a_loop_that_keeps_catching_the_termination_still_stops() {
     assert_eq!(err.kind(), ErrorKind::Cancelled, "{err}");
 }
 
-/// How many times a decode of about 1 MB of JSON the CPU limit must allow.
-/// Below it, a slow but legitimate handler could be stopped.
+/// How many decodes of about 1 MB of JSON the CPU limit must allow. With less
+/// headroom, a slow but legitimate handler could be stopped.
 const JSON_HEADROOM: u64 = 10;
 
 /// About 1 MB of JSON shaped like a chapter list API response.
@@ -421,8 +422,8 @@ fn pages_lists_images_against_the_site() {
 
 #[test]
 fn pages_found_only_when_asked_are_resolved_one_at_a_time() {
-    // Shaped like Taadd: the chapter lists each page's web page, and the
-    // image is read from it.
+    // This module is shaped like Taadd. The chapter lists each page's web
+    // page, and the image is read from that page.
     let rest = "function Pages()
         for i = 1, 3 do TASK.PageContainerLinks.Add('/c/1/' .. i) end
         TASK.PageNumber = TASK.PageContainerLinks.Count
@@ -450,7 +451,8 @@ fn pages_found_only_when_asked_are_resolved_one_at_a_time() {
 
 #[test]
 fn a_module_may_resolve_every_page_on_the_first_call() {
-    // Shaped like MangaTown, which reads all images from the first page.
+    // This module is shaped like MangaTown, which reads all images from the
+    // first page.
     let rest = "function Pages() TASK.PageNumber = 2; return true end
         function Image()
         CALLS = (CALLS or 0) + 1

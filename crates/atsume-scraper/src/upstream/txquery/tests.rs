@@ -27,8 +27,9 @@ struct Lists {
     names: StringList,
 }
 
-/// Runs `source` with `CreateTXQuery`, the page in `HTTP.Document` as `DOC`,
-/// and the lists `LINKS` and `NAMES`, and returns what it returns.
+/// Runs `source` with `CreateTXQuery`, with the page in `HTTP.Document`
+/// available as `DOC`, and with the lists `LINKS` and `NAMES`. Returns what
+/// `source` returns.
 fn run(source: &str) -> mlua::Result<String> {
     let lua = Lua::new();
     let mut http = HttpSession::new(&HttpConfig::default(), CancelToken::new());
@@ -65,7 +66,7 @@ fn a_query_reads_text_numbers_and_the_document() {
         ("return CreateTXQuery(5).XPathString('.')", "5"),
         ("return x.XPathString('//title')", " The  Title "),
         ("return CreateTXQuery().XPathCount('//p')", "0"),
-        // Upstream builds nothing from anything else.
+        // Upstream builds no query from any other kind of value.
         ("return tostring(CreateTXQuery({}))", "nil"),
         ("return tostring(x.Nope)", "nil"),
     ]);
@@ -258,7 +259,7 @@ fn a_value_is_iterated_or_read_by_position() {
             "00",
         ),
         ("return x.XPath('//li/a').Get(1).ToString()", "Chapter 2"),
-        // Out of range is an empty value, not nil.
+        // A position out of range gives an empty value instead of `nil`.
         (
             "local v = x.XPath('//li').Get(9); return v.Count .. '[' .. v.ToString() .. ']'",
             "0[]",

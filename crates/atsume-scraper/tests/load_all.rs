@@ -1,8 +1,10 @@
-//! Loads the catalog of every upstream module, which runs each one's `Init()`.
+//! Loads the catalog of every upstream module, which runs each module's
+//! `Init()`.
 //!
-//! This exercises the whole surface a module touches at declaration time. The
-//! modules cannot be committed here, so the test is ignored by default: run it
-//! with `make rust-corpus`, which needs an FMD2 checkout in `ATSUME_FMD2_DIR`.
+//! This exercises the whole surface that a module touches when it declares its
+//! websites. The modules cannot be committed here, so the test is ignored by
+//! default. Run it with `make rust-corpus`, which needs an FMD2 checkout in
+//! `ATSUME_FMD2_DIR`.
 
 use std::path::PathBuf;
 
