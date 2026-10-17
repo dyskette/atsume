@@ -59,7 +59,7 @@ impl Page {
         }
     }
 
-    /// Replaces the page with another, as upstream's `ParseHTML` does.
+    /// Replaces the page with another, as FMD2's `ParseHTML` does.
     ///
     /// The new page is parsed beside the old one, so nodes already read from
     /// the old page stay valid and keep reading from it.
@@ -235,7 +235,7 @@ impl Page {
     }
 
     /// Returns an element's attribute, if it has one by that name. Case is
-    /// ignored, as upstream's `GetAttribute` ignores it.
+    /// ignored, as FMD2's `GetAttribute` ignores it.
     #[must_use]
     pub fn attribute(&self, node: Node, name: &str) -> Option<String> {
         let xot_node = self.xot_node_of(node)?;

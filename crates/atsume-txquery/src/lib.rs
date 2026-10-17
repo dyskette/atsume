@@ -5,6 +5,10 @@
 //! an XPath 3.1 engine, over pages parsed by html5ever, and converts results
 //! the way internettools does.
 //!
+//! The crate is named after `TXQuery`, the query object FMD2 modules create
+//! with `CreateTXQuery`. In its comments, "upstream" means FMD2 together with
+//! the internettools engine FMD2 runs expressions on.
+//!
 //! ```
 //! use atsume_txquery::{Engine, Page};
 //!

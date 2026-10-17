@@ -152,7 +152,7 @@ enum Outcome {
 
 /// Evaluates `expression` on `page` with xidel, parsing the page as HTML as
 /// FMD2 does. The options need a prolog, so the expression runs as XQuery.
-fn xidel(program: &str, page: &str, expression: &str) -> std::io::Result<Outcome> {
+fn run_xidel(program: &str, page: &str, expression: &str) -> std::io::Result<Outcome> {
     let mut child = Command::new(program)
         .args(["-", "--input-format=html", "--output-format=json-wrapped"])
         .arg(format!("--xquery={FMD2_ENGINE_OPTIONS}{expression}"))
@@ -192,7 +192,7 @@ fn json_text(item: Value) -> String {
 }
 
 /// Evaluates `expression` on `page` with atsume.
-fn atsume(engine: &Engine, page: &str, expression: &str) -> Outcome {
+fn run_atsume(engine: &Engine, page: &str, expression: &str) -> Outcome {
     let mut document = Page::parse_html(page.as_bytes());
     match document.evaluate(engine, expression, None) {
         Ok(result) => Outcome::Items(
@@ -217,11 +217,11 @@ fn atsume_agrees_with_xidel() {
         (JSON_PAGE, JSON_EXPRESSIONS),
     ] {
         for expression in expressions {
-            let upstream = xidel(&program, page, expression).unwrap();
-            let ours = atsume(&engine, page, expression);
-            if ours != upstream {
+            let xidel_outcome = run_xidel(&program, page, expression).unwrap();
+            let atsume_outcome = run_atsume(&engine, page, expression);
+            if atsume_outcome != xidel_outcome {
                 disagreements.push(format!(
-                    "{expression}\n  xidel:  {upstream:?}\n  atsume: {ours:?}"
+                    "{expression}\n  xidel:  {xidel_outcome:?}\n  atsume: {atsume_outcome:?}"
                 ));
             }
         }
@@ -235,10 +235,10 @@ fn known_divergences_from_xidel_still_diverge() {
     let program = std::env::var("ATSUME_XIDEL").expect("set ATSUME_XIDEL to a xidel binary");
     let engine = Engine::new();
     for &(page, expression) in DIVERGENCES {
-        let upstream = xidel(&program, page, expression).unwrap();
-        let ours = atsume(&engine, page, expression);
+        let xidel_outcome = run_xidel(&program, page, expression).unwrap();
+        let atsume_outcome = run_atsume(&engine, page, expression);
         assert_ne!(
-            ours, upstream,
+            atsume_outcome, xidel_outcome,
             "{expression} now agrees; move it to its page's list"
         );
     }
