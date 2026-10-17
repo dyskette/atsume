@@ -1,0 +1,113 @@
+use super::*;
+
+const PAGE: &str = r#"<!DOCTYPE html><html><head><title>Solo Leveling</title></head><body>
+<!-- a comment upstream leaves out -->
+<div class="post-title"><h1>Solo Leveling </h1></div>
+<ul class="main"><li class="wp-manga-chapter"><a href="/manga/solo/2/">Chapter 2</a>
+<li class="wp-manga-chapter"><a href="/manga/solo/1/">Chapter 1</a></ul>
+<p>Status: Ongoing<p>Second paragraph
+<P CLASS="Upper">case</P>
+<img data-src=" https://cdn.example/1.jpg ">
+<table><tr><td>implied tbody</td></tr></table>
+<script>var pages = [1, 2];</script>
+</body></html>"#;
+
+fn page() -> Document {
+    Document::parse_html(PAGE.as_bytes())
+}
+
+/// Evaluates `expression` on the test page and returns each item's text.
+fn texts(expression: &str) -> Vec<String> {
+    let engine = Engine::new();
+    let mut page = page();
+    let result = page.evaluate(&engine, expression, None).unwrap();
+    result.items().iter().map(|item| page.text(item)).collect()
+}
+
+#[test]
+fn paths_select_from_the_repaired_page() {
+    assert_eq!(texts("//div[@class='post-title']/h1"), ["Solo Leveling "]);
+    assert_eq!(
+        texts("//li[@class='wp-manga-chapter']/a/@href"),
+        ["/manga/solo/2/", "/manga/solo/1/"]
+    );
+    // Unclosed <li> and <p> are closed, as a browser would.
+    assert_eq!(texts("count(//li)"), ["2"]);
+    assert_eq!(texts("//p[2]"), ["Second paragraph\n"]);
+    assert_eq!(texts("//table/tbody/tr/td"), ["implied tbody"]);
+}
+
+#[test]
+fn names_are_lowercase_and_whitespace_is_kept() {
+    assert_eq!(texts("//p[@class='Upper']"), ["case"]);
+    assert_eq!(texts("//img/@data-src"), [" https://cdn.example/1.jpg "]);
+    assert_eq!(texts("count(//comment())"), ["0"]);
+    assert_eq!(texts("//script"), ["var pages = [1, 2];"]);
+}
+
+#[test]
+fn functions_may_sit_in_a_path_step() {
+    // The expression shape XPath 1.0 engines compile and silently get wrong.
+    assert_eq!(texts("//li/a/substring-after(., ' ')"), ["2", "1"]);
+    assert_eq!(
+        texts("string-join((//title, //h1), '|')"),
+        ["Solo Leveling|Solo Leveling "]
+    );
+    assert_eq!(texts("replace(//h1, '\\s+$', '')"), ["Solo Leveling"]);
+}
+
+#[test]
+fn a_sequence_reads_as_its_items_joined_with_nothing_between() {
+    let engine = Engine::new();
+    let mut page = page();
+    let links = page.evaluate(&engine, "//li/a", None).unwrap();
+    assert_eq!(page.text_of(&links), "Chapter 2Chapter 1");
+    let none = page.evaluate(&engine, "//nothing", None).unwrap();
+    assert!(none.is_empty());
+    assert_eq!(page.text_of(&none), "");
+}
+
+#[test]
+fn an_expression_may_start_from_a_node() {
+    let engine = Engine::new();
+    let mut page = page();
+    let items = page.evaluate(&engine, "//li", None).unwrap();
+    let Item::Node(second) = items.items()[1] else {
+        panic!("a list item should be a node");
+    };
+    let link = page.evaluate(&engine, "a/@href", Some(second)).unwrap();
+    assert_eq!(page.text_of(&link), "/manga/solo/1/");
+    assert_eq!(
+        page.attribute(second, "class").as_deref(),
+        Some("wp-manga-chapter")
+    );
+    assert_eq!(page.attribute(second, "missing"), None);
+}
+
+#[test]
+fn failures_say_which_kind_they_are() {
+    let engine = Engine::new();
+    let mut page = page();
+    let invalid = page.evaluate(&engine, "//a[", None).unwrap_err();
+    assert!(matches!(invalid, Error::Compile { .. }), "{invalid}");
+    let failed = page.evaluate(&engine, "1 + 'a'", None).unwrap_err();
+    assert!(matches!(failed, Error::Evaluate { .. }), "{failed}");
+}
+
+#[test]
+fn an_expression_is_compiled_once() {
+    let engine = Engine::new();
+    let mut page = page();
+    for _ in 0..3 {
+        page.evaluate(&engine, "//h1", None).unwrap();
+    }
+    assert_eq!(engine.compiled_count(), 1);
+}
+
+#[test]
+fn invalid_utf8_is_replaced() {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(b"<p>caf\xe9</p>");
+    let text = page.evaluate(&engine, "//p", None).unwrap();
+    assert_eq!(page.text_of(&text), "caf\u{fffd}");
+}

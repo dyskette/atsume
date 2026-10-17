@@ -1,0 +1,19 @@
+[package]
+name = "atsume-txquery"
+description = "Evaluates the XPath dialect FMD2's website modules are written in"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+html5ever.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+xee-xpath.workspace = true
+xot.workspace = true
+
+[lints]
+workspace = true
