@@ -1,10 +1,10 @@
-//! Exposing scrape state to modules as objects.
+//! Exposes the state of a scrape to modules as Lua objects.
 //!
-//! Each piece of state a scrape keeps, such as the selected site or the HTTP
-//! session, is a plain Rust value stored in the Lua runtime. The objects
-//! modules see (`MODULE`, `HTTP`) hold no state of their own: every field
-//! access borrows the value from the runtime, so Rust and Lua always see the
-//! same data.
+//! Each piece of state that a scrape keeps, such as the selected site or the
+//! HTTP session, is a plain Rust value stored in the Lua runtime. The objects
+//! that modules see, such as `MODULE` and `HTTP`, hold no state of their own.
+//! Every field access borrows the value from the runtime, so Rust and Lua
+//! always see the same data.
 
 use mlua::{
     AnyUserData, AppDataRefMut, Lua, MetaMethod, UserData, UserDataFields, UserDataMethods, Value,
@@ -12,13 +12,15 @@ use mlua::{
 
 use crate::runtime::convert::{lua_int, lua_text, truthy};
 
-/// Returns the place in a state value that a field reads and writes.
+/// A function that returns the place in a state value that a field reads and
+/// writes.
 pub(crate) type Place<S, V> = fn(&mut S) -> &mut V;
 
-/// Borrows the runtime's state of type `S`.
+/// Borrows the runtime's state value of type `S`.
 ///
-/// A conflicting borrow, which only a binding calling back into another
-/// binding could cause, is reported as a Lua error rather than a panic.
+/// Only a binding that calls back into another binding can cause a
+/// conflicting borrow. Such a borrow is reported as a Lua error instead of a
+/// panic.
 pub(crate) fn borrow_state<S: 'static>(lua: &Lua) -> mlua::Result<AppDataRefMut<'_, S>> {
     let name = std::any::type_name::<S>()
         .rsplit("::")
@@ -33,8 +35,8 @@ pub(crate) fn borrow_state<S: 'static>(lua: &Lua) -> mlua::Result<AppDataRefMut<
     }
 }
 
-/// Adds a string field. Writing a number stores its text, and anything else
-/// stores `""`.
+/// Adds a string field. Writing a number to it stores the number's text, and
+/// writing anything else stores `""`.
 pub(crate) fn text_field<U: UserData, S: 'static, F: UserDataFields<U>>(
     fields: &mut F,
     name: &'static str,
@@ -49,8 +51,8 @@ pub(crate) fn text_field<U: UserData, S: 'static, F: UserDataFields<U>>(
     });
 }
 
-/// Adds an integer field. Writing truncates a float, and anything but a
-/// number stores 0.
+/// Adds an integer field. Writing a float to it stores the float truncated,
+/// and writing anything other than a number stores 0.
 pub(crate) fn int_field<U: UserData, S: 'static, F: UserDataFields<U>>(
     fields: &mut F,
     name: &'static str,
@@ -65,7 +67,8 @@ pub(crate) fn int_field<U: UserData, S: 'static, F: UserDataFields<U>>(
     });
 }
 
-/// Adds a flag field. Writing stores the value's Lua truthiness.
+/// Adds a flag field. Writing a value to it stores that value's Lua
+/// truthiness.
 pub(crate) fn bool_field<U: UserData, S: 'static, F: UserDataFields<U>>(
     fields: &mut F,
     name: &'static str,
@@ -81,8 +84,8 @@ pub(crate) fn bool_field<U: UserData, S: 'static, F: UserDataFields<U>>(
 }
 
 /// Makes unknown fields read as `nil` and ignores writes to them, as
-/// upstream's objects do. mlua consults these only for keys that are not
-/// declared fields or methods.
+/// upstream's objects do. mlua consults these handlers only for keys that are
+/// not declared fields or methods.
 pub(crate) fn ignore_unknown_fields<U: UserData, M: UserDataMethods<U>>(methods: &mut M) {
     methods.add_meta_function(MetaMethod::Index, |_, _: (AnyUserData, Value)| {
         Ok(Value::Nil)
