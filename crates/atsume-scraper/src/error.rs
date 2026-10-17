@@ -52,7 +52,7 @@ impl Error {
 
     /// Reports a network problem the module ran into while doing `what`,
     /// with what its last request got back.
-    pub(crate) fn network(module: &str, what: &str, last: LastRequest) -> Self {
+    pub(crate) fn network(site_name: &str, what: &str, last: LastRequest) -> Self {
         let from = if last.requested.is_empty() {
             String::new()
         } else {
@@ -64,7 +64,7 @@ impl Error {
             .map(|c| format!(": {c}"))
             .unwrap_or_default();
         let message = format!(
-            "{module}: network problem {what} (last status {}{from}){cause}",
+            "{site_name}: network problem {what} (last status {}{from}){cause}",
             last.status
         );
         Self {

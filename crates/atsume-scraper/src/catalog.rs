@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cancel::CancelToken;
 use crate::error::{Error, ErrorKind, Result};
-use crate::model::Module;
+use crate::model::SiteDeclaration;
 use crate::runtime::Runtime;
 use crate::session::{Session, SessionConfig};
 
@@ -31,9 +31,9 @@ pub struct LoadFailure {
 /// One website a module file declares, ready to open for a scrape.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Site {
-    module: Module,
+    declaration: SiteDeclaration,
     /// The position of this declaration among those its file makes.
-    declaration: usize,
+    declaration_index: usize,
     lua_dir: PathBuf,
 }
 
@@ -70,13 +70,13 @@ impl Catalog {
     /// nothing.
     pub fn load_file(lua_dir: &Path, file: &Path) -> Result<Vec<Site>> {
         let runtime = Runtime::new(lua_dir, &SessionConfig::offline(), CancelToken::new())?;
-        let modules = runtime.load(file)?;
-        let sites = modules
+        let declarations = runtime.load(file)?;
+        let sites = declarations
             .into_iter()
             .enumerate()
-            .map(|(declaration, module)| Site {
-                module,
+            .map(|(declaration_index, declaration)| Site {
                 declaration,
+                declaration_index,
                 lua_dir: lua_dir.to_path_buf(),
             });
         Ok(sites.collect())
@@ -108,14 +108,14 @@ impl Catalog {
 impl Site {
     /// Returns the website as its module declared it.
     #[must_use]
-    pub fn module(&self) -> &Module {
-        &self.module
+    pub fn declaration(&self) -> &SiteDeclaration {
+        &self.declaration
     }
 
     /// Returns this website pointed at `root_url`, for a site that moved.
     #[must_use]
     pub fn at(mut self, root_url: &str) -> Self {
-        root_url.clone_into(&mut self.module.root_url);
+        root_url.clone_into(&mut self.declaration.root_url);
         self
     }
 
@@ -128,25 +128,28 @@ impl Site {
     /// or `cancel` is already cancelled.
     pub fn open(&self, config: &SessionConfig, cancel: CancelToken) -> Result<Session> {
         let runtime = Runtime::new(&self.lua_dir, config, cancel)?;
-        let declared = runtime.load(&self.module.file)?;
-        let Some(module) = declared.into_iter().nth(self.declaration) else {
+        let declared = runtime.load(&self.declaration.file)?;
+        let Some(declaration) = declared.into_iter().nth(self.declaration_index) else {
             return Err(self.changed());
         };
-        if !module.name.eq_ignore_ascii_case(&self.module.name) {
+        if !declaration
+            .name
+            .eq_ignore_ascii_case(&self.declaration.name)
+        {
             return Err(self.changed());
         }
-        let module = Module {
-            root_url: self.module.root_url.clone(),
-            ..module
+        let declaration = SiteDeclaration {
+            root_url: self.declaration.root_url.clone(),
+            ..declaration
         };
-        Session::new(runtime, module)
+        Session::new(runtime, declaration)
     }
 
     fn changed(&self) -> Error {
         let message = format!(
             "{} no longer declares {}; reload the catalog",
-            self.module.file.display(),
-            self.module.name
+            self.declaration.file.display(),
+            self.declaration.name
         );
         Error::new(ErrorKind::Load, message)
     }
@@ -156,14 +159,14 @@ impl Site {
 pub(crate) fn select(sites: &[Site], name: &str, root_url: Option<&str>) -> Option<Site> {
     let mut matching = sites
         .iter()
-        .filter(|s| s.module.name.eq_ignore_ascii_case(name));
+        .filter(|s| s.declaration.name.eq_ignore_ascii_case(name));
     let first = matching.next()?;
     let Some(root_url) = root_url else {
         return Some(first.clone());
     };
     let mirror = std::iter::once(first)
         .chain(matching)
-        .find(|s| s.module.root_url.eq_ignore_ascii_case(root_url));
+        .find(|s| s.declaration.root_url.eq_ignore_ascii_case(root_url));
     Some(mirror.map_or_else(|| first.clone().at(root_url), Clone::clone))
 }
 

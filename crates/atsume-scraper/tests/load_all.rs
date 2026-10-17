@@ -22,7 +22,7 @@ fn upstream_modules_load() {
     let loaded_files = catalog
         .sites()
         .iter()
-        .map(|site| &site.module().file)
+        .map(|site| &site.declaration().file)
         .collect::<std::collections::BTreeSet<_>>()
         .len();
     let files = loaded_files + failed;

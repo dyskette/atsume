@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods, Value};
 
-use crate::model::{AccountStatus, Module, OptionValue};
+use crate::model::{AccountStatus, OptionValue, SiteDeclaration};
 use crate::runtime::bind::{bool_field, int_field, lenient, state, text_field};
 use crate::runtime::convert::to_int;
 use crate::upstream::declaration::StorageObject;
@@ -12,7 +12,7 @@ use crate::upstream::http::{add_server_cookies, clear_cookies};
 
 /// The website a runner scrapes, kept in the runtime as `MODULE` exposes it.
 pub(crate) struct SiteState {
-    pub(crate) module: Module,
+    pub(crate) declaration: SiteDeclaration,
     /// The value of each setting: the declared default until a caller sets it.
     pub(crate) options: HashMap<String, OptionValue>,
     /// Which listing a site with several walks next.
@@ -20,14 +20,14 @@ pub(crate) struct SiteState {
 }
 
 impl SiteState {
-    pub(crate) fn new(module: Module) -> Self {
-        let options = module
+    pub(crate) fn new(declaration: SiteDeclaration) -> Self {
+        let options = declaration
             .options
             .iter()
             .filter_map(|o| Some((o.name.clone(), o.default.clone()?)))
             .collect();
         Self {
-            module,
+            declaration,
             options,
             directory_index: 0,
         }
@@ -73,26 +73,26 @@ pub(crate) struct ModuleObject;
 
 impl UserData for ModuleObject {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
-        text_field(fields, "ID", |s: &mut SiteState| &mut s.module.id);
-        text_field(fields, "Name", |s: &mut SiteState| &mut s.module.name);
+        text_field(fields, "ID", |s: &mut SiteState| &mut s.declaration.id);
+        text_field(fields, "Name", |s: &mut SiteState| &mut s.declaration.name);
         text_field(fields, "RootURL", |s: &mut SiteState| {
-            &mut s.module.root_url
+            &mut s.declaration.root_url
         });
         text_field(fields, "Category", |s: &mut SiteState| {
-            &mut s.module.category
+            &mut s.declaration.category
         });
         bool_field(fields, "AccountSupport", |s: &mut SiteState| {
-            &mut s.module.account_support
+            &mut s.declaration.account_support
         });
         int_field(fields, "CurrentDirectoryIndex", |s: &mut SiteState| {
             &mut s.directory_index
         });
         fields.add_field_function_get("TotalDirectory", |lua, _: AnyUserData| {
-            Ok(i64::from(state::<SiteState>(lua)?.module.directories))
+            Ok(i64::from(state::<SiteState>(lua)?.declaration.directories))
         });
         fields.add_field_function_set("TotalDirectory", |lua, _: AnyUserData, value: Value| {
             let count = to_int(lua, &value).clamp(1, i64::from(u32::MAX));
-            state::<SiteState>(lua)?.module.directories = u32::try_from(count).unwrap_or(1);
+            state::<SiteState>(lua)?.declaration.directories = u32::try_from(count).unwrap_or(1);
             Ok(())
         });
         fields.add_field_function_get("Storage", |_, _: AnyUserData| Ok(StorageObject));

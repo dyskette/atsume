@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 /// One setting a module declares. The settings page is generated from these.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ModuleOption {
+pub struct SiteOption {
     /// The widget to show.
     pub kind: OptionKind,
     /// The key the module reads it back by, through `MODULE.GetOption`.
@@ -22,7 +22,7 @@ pub struct ModuleOption {
 
 /// A website as a module declared it in `Init()`.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Module {
+pub struct SiteDeclaration {
     /// The upstream identifier.
     pub id: String,
     /// The name shown to readers. Mirrors of one site share it.
@@ -34,7 +34,7 @@ pub struct Module {
     /// Maps each event the module handles to the Lua function handling it.
     pub handlers: HashMap<Event, String>,
     /// The settings the site offers.
-    pub options: Vec<ModuleOption>,
+    pub options: Vec<SiteOption>,
     /// Whether the site takes a login.
     pub account_support: bool,
     /// Whether the site lists its directory in a stable order.
@@ -45,7 +45,7 @@ pub struct Module {
     pub file: PathBuf,
 }
 
-impl Module {
+impl SiteDeclaration {
     /// Returns the Lua function name handling `event`, if the module set one.
     #[must_use]
     pub fn handler(&self, event: Event) -> Option<&str> {

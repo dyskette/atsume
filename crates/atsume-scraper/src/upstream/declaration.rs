@@ -2,7 +2,7 @@
 //!
 //! `Init()` calls `NewWebsiteModule()` once per website and fills in the
 //! table it returns: the site's name and address, the Lua functions handling
-//! each event, and the settings it offers. [`Module`] is that declaration,
+//! each event, and the settings it offers. [`SiteDeclaration`] is that declaration,
 //! read back into Rust.
 
 use std::collections::HashMap;
@@ -10,7 +10,7 @@ use std::path::Path;
 
 use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataMethods, Value, Variadic};
 
-use crate::model::{Event, Module, ModuleOption, OptionKind, OptionValue};
+use crate::model::{Event, OptionKind, OptionValue, SiteDeclaration, SiteOption};
 use crate::runtime::bind::state;
 use crate::runtime::convert::{string_arg, text_of, truthy};
 use crate::string_list::split_lines;
@@ -57,7 +57,7 @@ struct Declaration {
     table: Table,
     /// Each declaration collects its own options, so two sites in one file do
     /// not show each other's settings.
-    options: Vec<ModuleOption>,
+    options: Vec<SiteOption>,
 }
 
 /// Sets the global `NewWebsiteModule`, which records each declaration it
@@ -76,7 +76,7 @@ pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set("NewWebsiteModule", new_website_module)
 }
 
-/// Reads every declaration the file made into a [`Module`], in order, or
+/// Reads every declaration the file made into a [`SiteDeclaration`], in order, or
 /// `None` if it made none.
 ///
 /// Most modules fill the table and fall off the end of `Init()`; a few return
@@ -85,7 +85,7 @@ pub(crate) fn take_declarations(
     lua: &Lua,
     init_result: Value,
     file: &Path,
-) -> mlua::Result<Option<Vec<Module>>> {
+) -> mlua::Result<Option<Vec<SiteDeclaration>>> {
     let mut declarations = lua.remove_app_data::<Declarations>().unwrap_or_default().0;
     if let (Value::Table(table), true) = (init_result, declarations.is_empty()) {
         declarations.push(Declaration {
@@ -96,11 +96,11 @@ pub(crate) fn take_declarations(
     if declarations.is_empty() {
         return Ok(None);
     }
-    let modules = declarations
+    let site_declarations = declarations
         .into_iter()
         .map(|d| read_declaration(lua, &d.table, d.options, file))
         .collect::<mlua::Result<_>>()?;
-    Ok(Some(modules))
+    Ok(Some(site_declarations))
 }
 
 /// Builds the table `NewWebsiteModule()` returns for declaration `index`.
@@ -129,14 +129,14 @@ fn declaration_table(lua: &Lua, index: usize) -> mlua::Result<Table> {
 
 /// Reads a setter's arguments: name, caption, then the default, with a combo
 /// box's items between the caption and the default.
-fn parse_option(lua: &Lua, kind: OptionKind, args: &[Value]) -> mlua::Result<ModuleOption> {
+fn parse_option(lua: &Lua, kind: OptionKind, args: &[Value]) -> mlua::Result<SiteOption> {
     let arg = |i: usize| args.get(i).unwrap_or(&Value::Nil);
     let name = string_arg(lua, arg(0), 1)?;
     let (items, default) = match kind {
         OptionKind::ComboBox => (combo_items(lua, arg(2)), arg(3)),
         _ => (Vec::new(), arg(2)),
     };
-    Ok(ModuleOption {
+    Ok(SiteOption {
         kind,
         name,
         caption: text_of(lua, arg(1)).unwrap_or_default(),
@@ -158,15 +158,15 @@ fn combo_items(lua: &Lua, value: &Value) -> Vec<String> {
     }
 }
 
-/// Reads a declaration table back into a [`Module`].
+/// Reads a declaration table back into a [`SiteDeclaration`].
 ///
 /// Text fields accept a number, as Lua would; flags take Lua truthiness.
 fn read_declaration(
     lua: &Lua,
     table: &Table,
-    options: Vec<ModuleOption>,
+    options: Vec<SiteOption>,
     file: &Path,
-) -> mlua::Result<Module> {
+) -> mlua::Result<SiteDeclaration> {
     let text = |key: &str| -> mlua::Result<String> {
         Ok(text_of(lua, &table.get::<Value>(key)?).unwrap_or_default())
     };
@@ -178,7 +178,7 @@ fn read_declaration(
         }
     }
     let directories = lua.coerce_number(table.get("TotalDirectory")?)?;
-    Ok(Module {
+    Ok(SiteDeclaration {
         id: text("ID")?,
         name: text("Name")?,
         root_url: text("RootURL")?,

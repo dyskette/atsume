@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::*;
-use crate::model::{Event, ModuleOption, OptionKind, OptionValue};
+use crate::model::{Event, OptionKind, OptionValue, SiteOption};
 use crate::testing::Checkout;
 
 const BOM: &str = "\u{FEFF}";
@@ -39,13 +39,8 @@ fn example() -> Checkout {
     ])
 }
 
-fn option(
-    kind: OptionKind,
-    name: &str,
-    caption: &str,
-    default: Option<OptionValue>,
-) -> ModuleOption {
-    ModuleOption {
+fn option(kind: OptionKind, name: &str, caption: &str, default: Option<OptionValue>) -> SiteOption {
+    SiteOption {
         kind,
         name: name.into(),
         caption: caption.into(),
@@ -54,8 +49,8 @@ fn option(
     }
 }
 
-fn combo(name: &str, caption: &str, items: &[&str], default: i64) -> ModuleOption {
-    ModuleOption {
+fn combo(name: &str, caption: &str, items: &[&str], default: i64) -> SiteOption {
+    SiteOption {
         items: items.iter().map(|&i| i.to_owned()).collect(),
         ..option(
             OptionKind::ComboBox,
@@ -70,10 +65,13 @@ fn combo(name: &str, caption: &str, items: &[&str], default: i64) -> ModuleOptio
 fn a_file_declares_its_websites() {
     let checkout = example();
     let sites = checkout.sites("modules/Example.lua").unwrap();
-    let roots: Vec<_> = sites.iter().map(|s| s.module().root_url.as_str()).collect();
+    let roots: Vec<_> = sites
+        .iter()
+        .map(|s| s.declaration().root_url.as_str())
+        .collect();
     assert_eq!(roots, ["https://one.example", "https://two.example"]);
 
-    let want = Module {
+    let want = SiteDeclaration {
         id: "e1".into(),
         name: "Example".into(),
         root_url: "https://two.example".into(),
@@ -104,7 +102,7 @@ fn a_file_declares_its_websites() {
         directories: 3,
         file: checkout.file("modules/Example.lua"),
     };
-    assert_eq!(sites[1].module(), &want);
+    assert_eq!(sites[1].declaration(), &want);
 }
 
 #[test]
@@ -121,7 +119,7 @@ fn a_catalog_loads_every_module_and_records_failures() {
     let names: Vec<_> = catalog
         .sites()
         .iter()
-        .map(|s| s.module().name.as_str())
+        .map(|s| s.declaration().name.as_str())
         .collect();
     assert_eq!(names, ["A"]);
     assert_eq!(catalog.failures().len(), 1);
@@ -141,7 +139,7 @@ fn loading_the_catalog_reaches_no_network() {
         if HTTP.GET('https://example.com/') then error('reached the network') end end";
     let checkout = Checkout::new(&[("modules/Quiet.lua", source)]);
     let sites = checkout.sites("modules/Quiet.lua").unwrap();
-    assert_eq!(sites[0].module().name, "Quiet");
+    assert_eq!(sites[0].declaration().name, "Quiet");
 }
 
 const TWO_SITES: &str = r"
@@ -162,16 +160,19 @@ function Login() return true end";
 fn each_site_in_a_file_keeps_its_own_declaration() {
     let checkout = Checkout::new(&[("modules/Two.lua", TWO_SITES)]);
     let sites = checkout.sites("modules/Two.lua").unwrap();
-    let names: Vec<_> = sites.iter().map(|s| s.module().name.as_str()).collect();
+    let names: Vec<_> = sites
+        .iter()
+        .map(|s| s.declaration().name.as_str())
+        .collect();
     assert_eq!(names, ["Open Site", "Gated Site"]);
-    assert_eq!(sites[0].module().options.len(), 1);
-    assert!(sites[0].module().handler(Event::Login).is_none());
+    assert_eq!(sites[0].declaration().options.len(), 1);
+    assert!(sites[0].declaration().handler(Event::Login).is_none());
 
     let gated = checkout
         .open("modules/Two.lua", Some("Gated Site"), None)
         .unwrap();
-    assert_eq!(gated.module().root_url, "https://gated.example");
-    assert_eq!(gated.module().options[0].name, "b");
+    assert_eq!(gated.declaration().root_url, "https://gated.example");
+    assert_eq!(gated.declaration().options[0].name, "b");
     assert!(gated.has_handler(Event::Login));
 }
 
@@ -190,7 +191,7 @@ end";
         let session = checkout
             .open("modules/Doors.lua", Some("Many Doors"), url)
             .unwrap();
-        session.module().root_url
+        session.declaration().root_url
     };
     assert_eq!(root(None), "https://one.example");
     assert_eq!(root(Some("https://two.example")), "https://two.example");
@@ -209,12 +210,14 @@ fn init_may_return_its_declaration_instead() {
     ]);
     assert_eq!(
         checkout.sites("modules/Returned.lua").unwrap()[0]
-            .module()
+            .declaration()
             .name,
         "Returned"
     );
     assert_eq!(
-        checkout.sites("modules/Bare.lua").unwrap()[0].module().name,
+        checkout.sites("modules/Bare.lua").unwrap()[0]
+            .declaration()
+            .name,
         "Bare"
     );
 }

@@ -11,7 +11,7 @@
 //! let catalog = Catalog::load("/data/modules/lua")?;
 //! let site = catalog.site("MangaDex", None).expect("declared by the checkout");
 //! let mut session = site.open(&SessionConfig::default(), CancelToken::new())?;
-//! println!("{} has {} directory pages", site.module().name, session.directory_pages(0)?);
+//! println!("{} has {} directory pages", site.declaration().name, session.directory_pages(0)?);
 //! # Ok(())
 //! # }
 //! ```
@@ -37,7 +37,7 @@ pub use cancel::{CancelToken, Cancelled};
 pub use catalog::{Catalog, LoadFailure, Site};
 pub use error::{Error, ErrorKind, Result};
 pub use model::{
-    AccountStatus, Chapter, ChapterPage, DirectoryEntry, DirectoryPage, Event, Module,
-    ModuleOption, OptionKind, OptionValue, SeriesInfo, SeriesStatus,
+    AccountStatus, Chapter, ChapterPage, DirectoryEntry, DirectoryPage, Event, OptionKind,
+    OptionValue, SeriesInfo, SeriesStatus, SiteDeclaration, SiteOption,
 };
 pub use session::{Session, SessionConfig};

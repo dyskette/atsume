@@ -13,7 +13,7 @@ use mlua::{Function, Lua, Value};
 use crate::cancel::CancelToken;
 use crate::error::{Error, ErrorKind, Result};
 use crate::http::HttpSession;
-use crate::model::Module;
+use crate::model::SiteDeclaration;
 use crate::session::SessionConfig;
 use crate::upstream::{self, declaration};
 use budget::{Budget, Termination};
@@ -41,7 +41,7 @@ impl Runtime {
     }
 
     /// Runs a module file and its `Init()`, and returns what it declared.
-    pub(crate) fn load(&self, file: &Path) -> Result<Vec<Module>> {
+    pub(crate) fn load(&self, file: &Path) -> Result<Vec<SiteDeclaration>> {
         self.run_file(file)?;
         let init_result = self
             .protect(|lua| lua.globals().get::<Function>("Init")?.call::<Value>(()))
