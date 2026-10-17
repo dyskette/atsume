@@ -3,6 +3,14 @@
 [advisories]
 # Fail on any known vulnerability or unmaintained crate.
 yanked = "deny"
+# Unmaintained, not vulnerable, and reached only through xee and xot, which
+# have no release without them. Revisit when xee updates.
+ignore = [
+    # json: xee's parse-json() parses with it; json() in modules does not.
+    { id = "RUSTSEC-2022-0081", reason = "used by xee-interpreter; no maintained replacement upstream yet" },
+    # proc-macro-error: runs at build time only, through xot's genawaiter.
+    { id = "RUSTSEC-2024-0370", reason = "build-time proc macro through xot; no upgrade available" },
+]
 
 [licenses]
 # Licences that may be combined into a GPL-3.0-only work. GPL-2.0-only is
@@ -40,3 +48,4 @@ unknown-git = "deny"
 [[licenses.exceptions]]
 crate = "webpki-roots"
 allow = ["CDLA-Permissive-2.0"]
+
