@@ -1,4 +1,5 @@
-//! The `HTTP` object modules see, over the runtime's [`HttpSession`].
+//! The `HTTP` object that modules see, which works on the runtime's
+//! [`HttpSession`].
 
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods, Value};
 
@@ -10,7 +11,7 @@ use crate::runtime::convert::{bad_argument, lua_text, text_arg};
 use crate::upstream::document::DocumentObject;
 use crate::upstream::string_list::ListObject;
 
-/// `HTTP`. It holds nothing itself; every access reaches the session.
+/// The `HTTP` global, which reads and writes the runtime's [`HttpSession`].
 pub(crate) struct HttpObject;
 
 impl UserData for HttpObject {
@@ -66,13 +67,15 @@ impl UserData for HttpObject {
             Ok(borrow_state::<HttpSession>(lua)?.cookies.items().join("; "))
         });
         methods.add_function("AddServerCookies", add_server_cookies);
-        // Proxying is the host's policy, not the module's.
+        // Whether to use a proxy is the host's decision, so the module's
+        // request is ignored.
         methods.add_function("SetProxy", |_, _: mlua::MultiValue| Ok(()));
         ignore_unknown_fields(methods);
     }
 }
 
-/// Sends a request from Lua: the URL first, then a body for `POST`.
+/// Sends a request from Lua. The URL comes first, followed by a body for
+/// `POST`.
 fn send(
     lua: &Lua,
     method: Method,
@@ -89,26 +92,28 @@ fn send(
     http.send(method, &url, &body).map_err(mlua::Error::runtime)
 }
 
-/// Sends a `POST` body as a form unless the module chose a type.
+/// Sends a `POST` body as a form, unless the module chose a content type.
 fn default_to_form_body(http: &mut HttpSession) {
     if http.request_content_type.is_empty() {
         "application/x-www-form-urlencoded".clone_into(&mut http.request_content_type);
     }
 }
 
-/// Marks an `XHR` as an in-page request, which some servers answer
+/// Marks an `XHR` call as an in-page request, which some servers answer
 /// differently.
 fn announce_in_page_request(http: &mut HttpSession) {
     http.headers.set_value("X-Requested-With", "XMLHttpRequest");
 }
 
-/// `ClearCookies()`, which modules call through `HTTP` or `MODULE`.
+/// Implements `ClearCookies()`, which modules call through either `HTTP` or
+/// `MODULE`.
 pub(crate) fn clear_cookies(lua: &Lua, (): ()) -> mlua::Result<()> {
     borrow_state::<HttpSession>(lua)?.clear_cookies();
     Ok(())
 }
 
-/// `AddServerCookies(url, cookie)`. Upstream takes the cookie second.
+/// Implements `AddServerCookies(url, cookie)`. Upstream takes the cookie as the
+/// second argument.
 pub(crate) fn add_server_cookies(lua: &Lua, (_, cookie): (Value, Value)) -> mlua::Result<()> {
     let cookie = text_arg(lua, &cookie, 2)?;
     borrow_state::<HttpSession>(lua)?.cookies.add(cookie);
