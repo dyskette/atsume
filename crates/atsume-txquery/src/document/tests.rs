@@ -163,11 +163,28 @@ fn null_is_the_string_null_and_a_missing_key_is_nothing() {
 }
 
 #[test]
-fn markup_inside_json_strings_survives() {
+fn markup_inside_json_strings_reads_as_upstream_reads_it() {
     assert_eq!(
         json_texts("json(*)/data/items/*[2]/summary"),
-        ["<p>first &amp; best</p>"]
+        ["first & best"]
     );
+}
+
+#[test]
+fn an_html_encoded_response_is_still_json() {
+    let engine = Engine::new();
+    let encoded = "{&quot;summary&quot;: &quot;&lt;b&gt;bold&lt;/b&gt;&quot;}";
+    let mut page = Document::parse_html(encoded.as_bytes());
+    let summary = page.evaluate(&engine, "json(*).summary", None).unwrap();
+    assert_eq!(page.text_of(&summary), "<b>bold</b>");
+}
+
+#[test]
+fn a_response_html_parsing_breaks_is_read_as_received() {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(br#"{"note": "<!-- hidden", "id": 7}"#);
+    let id = page.evaluate(&engine, "json(*).id", None).unwrap();
+    assert_eq!(page.text_of(&id), "7");
 }
 
 #[test]

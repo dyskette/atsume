@@ -21,9 +21,8 @@ pub struct Node(xot::Node);
 pub struct Document {
     documents: Documents,
     root: xot::Node,
-    /// The page as received. `json(*)` reads the JSON from it, because
-    /// parsing a JSON response as HTML would eat any markup inside its
-    /// strings and decode its entities.
+    /// The page as received, which `json(*)` falls back to when the parsed
+    /// page's text is not JSON.
     raw: String,
     /// The tree `json()` built for each text, so a module calling it in a
     /// loop parses the text once.
@@ -103,30 +102,50 @@ impl Document {
 
     /// Evaluates a `json()` argument and returns the tree of the JSON its text
     /// holds.
+    ///
+    /// The text is the parsed page's, as upstream reads it, so markup inside
+    /// a JSON string is dropped and entities are decoded. When the argument is
+    /// the whole page and that text is not JSON, the page as received is
+    /// tried too: parsing it as HTML can swallow part of a JSON response, as a
+    /// `<!--` inside one of its strings does.
     fn json_tree(
         &mut self,
         engine: &Engine,
         argument: &str,
         context: Option<Node>,
     ) -> Result<Vec<xot::Node>, Error> {
-        let whole_page = matches!(argument.trim(), "*" | "." | "/" | "/*")
-            && context.is_none_or(|node| node.0 == self.root);
-        let text = if whole_page {
-            self.raw.clone()
-        } else {
-            let value = self.evaluate(engine, argument, context)?;
-            self.text_of(&value)
+        let value = self.evaluate(engine, argument, context)?;
+        let text = self.text_of(&value);
+        let parsed = match self.tree_of(&text) {
+            Err(_) if self.is_whole_page(argument, context) => {
+                let raw = std::mem::take(&mut self.raw);
+                let tree = self.tree_of(&raw);
+                self.raw = raw;
+                tree
+            }
+            parsed => parsed,
         };
-        if let Some(tree) = self.json_trees.get(&text) {
+        parsed.map_err(|message| evaluate_error(argument, format!("invalid JSON: {message}")))
+    }
+
+    /// Reports whether a `json()` argument reads the whole page.
+    fn is_whole_page(&self, argument: &str, context: Option<Node>) -> bool {
+        matches!(argument.trim(), "*" | "." | "/" | "/*")
+            && context.is_none_or(|node| node.0 == self.root)
+    }
+
+    /// Parses `text` as JSON into a tree, reusing the tree of an earlier call
+    /// with the same text.
+    fn tree_of(&mut self, text: &str) -> Result<Vec<xot::Node>, String> {
+        if let Some(tree) = self.json_trees.get(text) {
             return Ok(tree.clone());
         }
-        let values = json::parse(&text)
-            .map_err(|message| evaluate_error(argument, format!("invalid JSON: {message}")))?;
+        let values = json::parse(text)?;
         let tree = json::build(self.documents.xot_mut(), &values);
         for &document in &tree {
             register(&self.documents, document);
         }
-        self.json_trees.insert(text, tree.clone());
+        self.json_trees.insert(text.to_owned(), tree.clone());
         Ok(tree)
     }
 
