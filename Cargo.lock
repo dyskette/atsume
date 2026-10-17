@@ -2802,8 +2802,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 [[package]]
 name = "xee-interpreter"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d42db24485bca7dee2a1c0c363352e92c9b620314848d91dce50534d3724bb5b"
+source = "git+https://github.com/dyskette/xee?rev=5d183d6244c4a16a75cb3512bae27c114ea8c2d0#5d183d6244c4a16a75cb3512bae27c114ea8c2d0"
 dependencies = [
  "ahash",
  "arrayvec",
@@ -2842,8 +2841,7 @@ dependencies = [
 [[package]]
 name = "xee-ir"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a4d2a0fc3fdeb952341b2600d011463265afbfccee9c43b9bed8a505a37cb99"
+source = "git+https://github.com/dyskette/xee?rev=5d183d6244c4a16a75cb3512bae27c114ea8c2d0#5d183d6244c4a16a75cb3512bae27c114ea8c2d0"
 dependencies = [
  "ahash",
  "ibig",
@@ -2858,8 +2856,7 @@ dependencies = [
 [[package]]
 name = "xee-name"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99a9739f6600765c29c698e1e3b8b69778bdac735d469db1299e150b39324e9e"
+source = "git+https://github.com/dyskette/xee?rev=5d183d6244c4a16a75cb3512bae27c114ea8c2d0#5d183d6244c4a16a75cb3512bae27c114ea8c2d0"
 dependencies = [
  "ahash",
  "xot",
@@ -2868,8 +2865,7 @@ dependencies = [
 [[package]]
 name = "xee-schema-type"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6503a4befedfc20ebeae6605e66554bd1b3ac06515470c27c1e8d3754e261d1f"
+source = "git+https://github.com/dyskette/xee?rev=5d183d6244c4a16a75cb3512bae27c114ea8c2d0#5d183d6244c4a16a75cb3512bae27c114ea8c2d0"
 dependencies = [
  "ahash",
 ]
@@ -2877,8 +2873,7 @@ dependencies = [
 [[package]]
 name = "xee-xpath"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03ee058959446e3f4a91c65f09013a17472adb9967babaf61befebae2d455588"
+source = "git+https://github.com/dyskette/xee?rev=5d183d6244c4a16a75cb3512bae27c114ea8c2d0#5d183d6244c4a16a75cb3512bae27c114ea8c2d0"
 dependencies = [
  "ahash",
  "chrono",
@@ -2898,8 +2893,7 @@ dependencies = [
 [[package]]
 name = "xee-xpath-ast"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3e3724d10a83c0ef175c6ef599a98b58b3849ec9f8b558e81c9d6619f9dc00f"
+source = "git+https://github.com/dyskette/xee?rev=5d183d6244c4a16a75cb3512bae27c114ea8c2d0#5d183d6244c4a16a75cb3512bae27c114ea8c2d0"
 dependencies = [
  "ahash",
  "blanket",
@@ -2918,8 +2912,7 @@ dependencies = [
 [[package]]
 name = "xee-xpath-compiler"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c442bd1c230bd006e6c90a073bd121104fdc4ced6ae83e2f5a9d2396176612b"
+source = "git+https://github.com/dyskette/xee?rev=5d183d6244c4a16a75cb3512bae27c114ea8c2d0#5d183d6244c4a16a75cb3512bae27c114ea8c2d0"
 dependencies = [
  "ahash",
  "ibig",
@@ -2937,8 +2930,7 @@ dependencies = [
 [[package]]
 name = "xee-xpath-lexer"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e712fd799c98353d18ff18e5051336d3705c4f23cd8e9d95662eb884b898493d"
+source = "git+https://github.com/dyskette/xee?rev=5d183d6244c4a16a75cb3512bae27c114ea8c2d0#5d183d6244c4a16a75cb3512bae27c114ea8c2d0"
 dependencies = [
  "ibig",
  "itertools",
@@ -2949,8 +2941,7 @@ dependencies = [
 [[package]]
 name = "xee-xpath-macros"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30d233fc2ef8ab1a9f9bf7af9cc1c7f7e7d75eb9848f731a99d8f1d4c2259fe3"
+source = "git+https://github.com/dyskette/xee?rev=5d183d6244c4a16a75cb3512bae27c114ea8c2d0#5d183d6244c4a16a75cb3512bae27c114ea8c2d0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2963,8 +2954,7 @@ dependencies = [
 [[package]]
 name = "xee-xpath-type"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb9dd7a684a90374f681c057b2ef6884aed2aff0f033eba3c629ab4cf1365528"
+source = "git+https://github.com/dyskette/xee?rev=5d183d6244c4a16a75cb3512bae27c114ea8c2d0#5d183d6244c4a16a75cb3512bae27c114ea8c2d0"
 dependencies = [
  "xee-name",
  "xee-schema-type",

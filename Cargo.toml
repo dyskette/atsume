@@ -58,3 +58,19 @@ print_stderr = "warn"
 shadow_unrelated = "warn"
 if_then_some_else_none = "warn"
 semicolon_if_nothing_returned = "warn"
+
+# xee from a fork whose only change makes the default collation configurable,
+# so comparisons ignore case as upstream's do; see docs/MODULES.md. The fork
+# sits on the commit that released the versions pinned above, and every xee
+# crate comes from it so they share one set of types.
+[patch.crates-io]
+xee-interpreter = { git = "https://github.com/dyskette/xee", rev = "5d183d6244c4a16a75cb3512bae27c114ea8c2d0" }
+xee-ir = { git = "https://github.com/dyskette/xee", rev = "5d183d6244c4a16a75cb3512bae27c114ea8c2d0" }
+xee-name = { git = "https://github.com/dyskette/xee", rev = "5d183d6244c4a16a75cb3512bae27c114ea8c2d0" }
+xee-schema-type = { git = "https://github.com/dyskette/xee", rev = "5d183d6244c4a16a75cb3512bae27c114ea8c2d0" }
+xee-xpath = { git = "https://github.com/dyskette/xee", rev = "5d183d6244c4a16a75cb3512bae27c114ea8c2d0" }
+xee-xpath-ast = { git = "https://github.com/dyskette/xee", rev = "5d183d6244c4a16a75cb3512bae27c114ea8c2d0" }
+xee-xpath-compiler = { git = "https://github.com/dyskette/xee", rev = "5d183d6244c4a16a75cb3512bae27c114ea8c2d0" }
+xee-xpath-lexer = { git = "https://github.com/dyskette/xee", rev = "5d183d6244c4a16a75cb3512bae27c114ea8c2d0" }
+xee-xpath-macros = { git = "https://github.com/dyskette/xee", rev = "5d183d6244c4a16a75cb3512bae27c114ea8c2d0" }
+xee-xpath-type = { git = "https://github.com/dyskette/xee", rev = "5d183d6244c4a16a75cb3512bae27c114ea8c2d0" }

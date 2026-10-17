@@ -42,6 +42,8 @@ wildcards = "deny"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# The xee fork; see [patch.crates-io] in the root Cargo.toml.
+allow-git = ["https://github.com/dyskette/xee"]
 
 # Mozilla's CA root list, bundled for TLS. The licence is a permissive one
 # for data, allowed for this crate alone rather than for every dependency.
