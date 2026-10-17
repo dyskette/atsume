@@ -9,23 +9,25 @@ use crate::runtime::bind::{Place, ignore_unknown_fields, int_field, text_field};
 use crate::string_list::StringList;
 use crate::upstream::string_list::ListObject;
 
-/// What `TASK` holds for the chapter being read, kept in the runtime.
+/// What `TASK` holds for the chapter being read. The record is kept in the
+/// runtime.
 #[derive(Debug, Default)]
 pub(crate) struct ChapterPagesRecord {
-    /// The chapter the pages belong to. Modules see it as `TASK.Link`.
+    /// The chapter that the pages belong to, which modules read through
+    /// `TASK.Link`.
     chapter_url: String,
-    /// How many pages the chapter has, when the module counts them rather
-    /// than listing them. Modules see it as `TASK.PageNumber`.
+    /// How many pages the chapter has, when the module counts them instead of
+    /// listing them. Modules write it through `TASK.PageNumber`.
     page_count: i64,
-    /// Which chapter of the series is downloading. Modules see it as
+    /// Which chapter of the series is downloading, which modules read through
     /// `TASK.CurrentDownloadChapterPtr`.
     downloading_chapter_index: i64,
     /// Each page's image address, by position. An entry may be missing or
-    /// empty until `OnGetImageURL` fills it. Modules see it as
+    /// empty until `OnGetImageURL` fills it in. Modules fill the list through
     /// `TASK.PageLinks`.
     page_image_urls: StringList,
-    /// Each page's own web page, which some modules read the image from.
-    /// Modules see it as `TASK.PageContainerLinks`.
+    /// The address of each page's own web page, which some modules read the
+    /// image from. Modules fill the list through `TASK.PageContainerLinks`.
     page_html_urls: StringList,
     file_names: StringList,
     chapter_links: StringList,
@@ -49,9 +51,10 @@ impl ChapterPagesRecord {
     /// Lists the pages, with every known address resolved against
     /// `root_url`.
     ///
-    /// A module may count its pages or list their web pages instead of their
-    /// images. Those pages are unresolved, but only if the module can resolve
-    /// them; otherwise just the images it listed count.
+    /// A module may count its pages, or list their web pages, instead of
+    /// listing their images. Those pages are returned as unresolved, but only
+    /// when the module can resolve them later. Otherwise only the images that
+    /// it listed count.
     pub(crate) fn pages(&self, root_url: &str, resolvable: bool) -> Vec<ChapterPage> {
         let mut count = self.page_image_urls.items().len();
         if resolvable {
@@ -61,7 +64,8 @@ impl ChapterPagesRecord {
         (0..count).map(|index| self.page(root_url, index)).collect()
     }
 
-    /// Returns the page at `index`, resolved against `root_url` if known.
+    /// Returns the page at `index`. Its address is resolved against `root_url`
+    /// when the address is known.
     pub(crate) fn page(&self, root_url: &str, index: usize) -> ChapterPage {
         match self
             .page_image_urls
@@ -75,7 +79,7 @@ impl ChapterPagesRecord {
     }
 }
 
-/// `TASK`. It holds nothing itself; every access reaches [`ChapterPagesRecord`].
+/// The `TASK` global, which reads and writes [`ChapterPagesRecord`].
 pub(crate) struct ChapterPagesObject;
 
 impl UserData for ChapterPagesObject {
