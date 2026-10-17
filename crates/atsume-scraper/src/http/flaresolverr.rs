@@ -1,4 +1,4 @@
-//! Getting past anti-bot interstitials through a FlareSolverr instance.
+//! Gets past anti-bot interstitials through a FlareSolverr instance.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,8 +10,9 @@ use super::client::{FetchError, send_cancellable};
 use super::transport::{Method, Request, Transport, UreqTransport};
 use crate::cancel::CancelToken;
 
-/// Strings an interstitial serves. A refusal alone is not enough: most 403s
-/// are ordinary, and solving one would waste a browser run.
+/// Strings that an interstitial page contains. A refusal alone is not enough
+/// reason to try solving, because most 403 responses are ordinary, and solving
+/// one would waste a browser run.
 const CHALLENGE_MARKERS: [&str; 7] = [
     "Just a moment",
     "cf-browser-verification",
@@ -22,8 +23,8 @@ const CHALLENGE_MARKERS: [&str; 7] = [
     "__ddg",
 ];
 
-/// How much of a body is searched for markers. They appear early, and a
-/// chapter page can be a megabyte.
+/// How much of a body is searched for markers. The markers appear early, and a
+/// chapter page can be a megabyte long.
 const MARKER_WINDOW: usize = 8192;
 
 /// Reports whether a response is an anti-bot interstitial worth solving.
@@ -31,8 +32,8 @@ pub(crate) fn looks_like_challenge(status: i64, body: &[u8]) -> bool {
     matches!(status, 403 | 503) && has_challenge_markers(body)
 }
 
-/// Reports whether a body carries an interstitial's markers, whatever its
-/// status.
+/// Reports whether a body carries an interstitial's markers, whatever the
+/// response's status code.
 pub(crate) fn has_challenge_markers(body: &[u8]) -> bool {
     let head = &body[..body.len().min(MARKER_WINDOW)];
     CHALLENGE_MARKERS
@@ -40,7 +41,8 @@ pub(crate) fn has_challenge_markers(body: &[u8]) -> bool {
         .any(|marker| head.windows(marker.len()).any(|w| w == marker.as_bytes()))
 }
 
-/// A FlareSolverr instance, consulted only after a request was refused.
+/// A FlareSolverr instance. atsume consults it only after a request was
+/// refused.
 pub struct Flaresolverr {
     endpoint: Url,
     transport: Arc<dyn Transport>,
@@ -52,7 +54,7 @@ pub(crate) struct Solution {
     pub(crate) body: Vec<u8>,
     pub(crate) status: u16,
     pub(crate) user_agent: String,
-    /// The cookies that clear the challenge, as `(name, value)`.
+    /// The cookies that clear the challenge, each as `(name, value)`.
     pub(crate) cookies: Vec<(String, String)>,
 }
 
@@ -89,7 +91,8 @@ impl Flaresolverr {
     ///
     /// Fails if `base` is not a valid URL.
     pub fn new(base: &str) -> Result<Self, url::ParseError> {
-        // Solving runs a real browser, so it gets longer than a page fetch.
+        // Solving runs a real browser, so it gets a longer timeout than a page
+        // fetch.
         let transport = Arc::new(UreqTransport::new(Duration::from_secs(120)));
         Self::with_transport(base, transport)
     }
