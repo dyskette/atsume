@@ -45,7 +45,9 @@ impl Runtime {
         self.run_file(file)?;
         let init_result = self
             .call_bounded(|lua| lua.globals().get::<Function>("Init")?.call::<Value>(()))
-            .map_err(|e| e.within(format_args!("Init {}", file.display()), ErrorKind::Load))?;
+            .map_err(|e| {
+                e.with_context(format_args!("Init {}", file.display()), ErrorKind::Load)
+            })?;
         let declared = declaration::take_declarations(&self.lua, init_result, file)?;
         declared.ok_or_else(|| {
             let message = format!("{}: Init never called NewWebsiteModule", file.display());
@@ -59,7 +61,7 @@ impl Runtime {
         let src = std::fs::read(file)
             .map_err(|e| Error::new(ErrorKind::Load, format!("{context}: {e}")))?;
         self.call_bounded(|lua| sandbox::load_text(lua, file, &src)?.call::<()>(()))
-            .map_err(|e| e.within(context, ErrorKind::Load))
+            .map_err(|e| e.with_context(context, ErrorKind::Load))
     }
 
     /// Runs one call into the module under the CPU budget, and not at all once

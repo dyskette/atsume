@@ -196,10 +196,10 @@ impl Session {
             &self.call_handler(Event::ListDirectoryPage)?,
         );
         if code == globals::RETURN_NETWORK_FAILURE {
-            let what = format!("listing page {}", u64::from(page) + 1);
+            let action = format!("listing page {}", u64::from(page) + 1);
             return Err(Error::network(
                 &self.site_name(),
-                &what,
+                &action,
                 self.last_request(),
             ));
         }
@@ -246,8 +246,8 @@ impl Session {
         let site_name = self.site_name();
         match code {
             globals::RETURN_NETWORK_FAILURE => {
-                let what = format!("fetching {series_url}");
-                return Err(Error::network(&site_name, &what, self.last_request()));
+                let action = format!("fetching {series_url}");
+                return Err(Error::network(&site_name, &action, self.last_request()));
             }
             globals::RETURN_SERIES_NOT_FOUND => {
                 let message = format!(
@@ -314,13 +314,13 @@ impl Session {
         }
         globals::set_url(&self.runtime.lua, chapter_url)?;
         globals::set_page_to_resolve(&self.runtime.lua, index)?;
-        let what = format!("resolving page {} of {chapter_url}", index + 1);
+        let action = format!("resolving page {} of {chapter_url}", index + 1);
         let result = self.call_handler(Event::ResolvePageImage)?;
-        self.check_page_handler_result(&result, &what)?;
+        self.check_page_handler_result(&result, &action)?;
         match self.state::<ChapterPagesRecord>().page(&root_url, index) {
             ChapterPage::Image(url) => Ok(url),
             ChapterPage::Unresolved => {
-                let message = format!("{}: no image address after {what}", self.site_name());
+                let message = format!("{}: no image address after {action}", self.site_name());
                 Err(Error::new(ErrorKind::Module, message))
             }
         }
@@ -331,17 +331,17 @@ impl Session {
     /// Page handlers signal success either way upstream allows: `true` or
     /// `no_error`. `false` or `nil` is a refusal, and `net_problem` is a
     /// failed request, though Lua reads both codes as true.
-    fn check_page_handler_result(&self, result: &Value, what: &str) -> Result<()> {
+    fn check_page_handler_result(&self, result: &Value, action: &str) -> Result<()> {
         let site_name = self.site_name();
         let net_problem = globals::RETURN_NETWORK_FAILURE;
         match result {
             Value::Nil | Value::Boolean(false) => {
                 let status = self.last_request().status;
-                let message = format!("{site_name}: declined {what} (last status {status})");
+                let message = format!("{site_name}: declined {action} (last status {status})");
                 Err(Error::new(ErrorKind::Module, message))
             }
             Value::Integer(code) if *code == net_problem => {
-                Err(Error::network(&site_name, what, self.last_request()))
+                Err(Error::network(&site_name, action, self.last_request()))
             }
             _ => Ok(()),
         }
@@ -451,7 +451,7 @@ impl Session {
         let context = format!("{site_name}/{function}");
         self.runtime
             .call_bounded(|_| handler.call::<Value>(()))
-            .map_err(|e| e.within(context, ErrorKind::Module))
+            .map_err(|e| e.with_context(context, ErrorKind::Module))
     }
 
     /// Returns the most instructions any one call has used so far, for

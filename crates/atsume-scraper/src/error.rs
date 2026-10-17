@@ -16,7 +16,7 @@ pub enum ErrorKind {
     /// function it does not define, or produced nothing usable.
     Module,
     /// The module reported that a request it needed failed. The error's
-    /// [`request`](Error::request) says what the site sent back.
+    /// [`last_request`](Error::last_request) says what the site sent back.
     Network,
     /// The page the module was given holds nothing it recognises, which
     /// usually means the site moved it.
@@ -38,7 +38,7 @@ pub enum ErrorKind {
 pub struct Error {
     kind: ErrorKind,
     message: String,
-    request: Option<Box<LastRequest>>,
+    last_request: Option<Box<LastRequest>>,
 }
 
 impl Error {
@@ -46,13 +46,13 @@ impl Error {
         Self {
             kind,
             message: message.into(),
-            request: None,
+            last_request: None,
         }
     }
 
-    /// Reports a network problem the module ran into while doing `what`,
+    /// Reports a network problem the module ran into while doing `action`,
     /// with what its last request got back.
-    pub(crate) fn network(site_name: &str, what: &str, last: LastRequest) -> Self {
+    pub(crate) fn network(site_name: &str, action: &str, last: LastRequest) -> Self {
         let from = if last.requested.is_empty() {
             String::new()
         } else {
@@ -64,11 +64,11 @@ impl Error {
             .map(|c| format!(": {c}"))
             .unwrap_or_default();
         let message = format!(
-            "{site_name}: network problem {what} (last status {}{from}){cause}",
+            "{site_name}: network problem {action} (last status {}{from}){cause}",
             last.status
         );
         Self {
-            request: Some(Box::new(last)),
+            last_request: Some(Box::new(last)),
             ..Self::new(ErrorKind::Network, message)
         }
     }
@@ -86,7 +86,7 @@ impl Error {
 
     /// Prefixes where the failure happened, and classifies it as `kind`
     /// unless it is a cancellation or the CPU limit, which stay what they are.
-    pub(crate) fn within(self, context: impl std::fmt::Display, kind: ErrorKind) -> Self {
+    pub(crate) fn with_context(self, context: impl std::fmt::Display, kind: ErrorKind) -> Self {
         let kind = match self.kind {
             ErrorKind::Cancelled | ErrorKind::CpuLimit => self.kind,
             _ => kind,
@@ -94,7 +94,7 @@ impl Error {
         Self {
             kind,
             message: format!("{context}: {}", self.message),
-            request: self.request,
+            last_request: self.last_request,
         }
     }
 
@@ -107,8 +107,8 @@ impl Error {
     /// Returns what the module's last request got back, for a
     /// [`Network`](ErrorKind::Network) error.
     #[must_use]
-    pub fn request(&self) -> Option<&LastRequest> {
-        self.request.as_deref()
+    pub fn last_request(&self) -> Option<&LastRequest> {
+        self.last_request.as_deref()
     }
 }
 

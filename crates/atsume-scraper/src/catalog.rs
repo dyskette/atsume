@@ -101,7 +101,7 @@ impl Catalog {
     /// moved: the first mirror is returned, pointed at that address.
     #[must_use]
     pub fn site(&self, name: &str, root_url: Option<&str>) -> Option<Site> {
-        select(&self.sites, name, root_url)
+        select_site(&self.sites, name, root_url)
     }
 }
 
@@ -114,7 +114,7 @@ impl Site {
 
     /// Returns this website pointed at `root_url`, for a site that moved.
     #[must_use]
-    pub fn at(mut self, root_url: &str) -> Self {
+    pub fn with_root_url(mut self, root_url: &str) -> Self {
         root_url.clone_into(&mut self.declaration.root_url);
         self
     }
@@ -130,13 +130,13 @@ impl Site {
         let runtime = Runtime::new(&self.lua_dir, config, cancel)?;
         let declared = runtime.load_declarations(&self.declaration.file)?;
         let Some(declaration) = declared.into_iter().nth(self.declaration_index) else {
-            return Err(self.changed());
+            return Err(self.no_longer_declared());
         };
         if !declaration
             .name
             .eq_ignore_ascii_case(&self.declaration.name)
         {
-            return Err(self.changed());
+            return Err(self.no_longer_declared());
         }
         let declaration = SiteDeclaration {
             root_url: self.declaration.root_url.clone(),
@@ -145,7 +145,7 @@ impl Site {
         Session::new(runtime, declaration)
     }
 
-    fn changed(&self) -> Error {
+    fn no_longer_declared(&self) -> Error {
         let message = format!(
             "{} no longer declares {}; reload the catalog",
             self.declaration.file.display(),
@@ -156,7 +156,7 @@ impl Site {
 }
 
 /// Picks a website by name, then by address among mirrors.
-pub(crate) fn select(sites: &[Site], name: &str, root_url: Option<&str>) -> Option<Site> {
+pub(crate) fn select_site(sites: &[Site], name: &str, root_url: Option<&str>) -> Option<Site> {
     let mut matching = sites
         .iter()
         .filter(|s| s.declaration.name.eq_ignore_ascii_case(name));
@@ -167,7 +167,7 @@ pub(crate) fn select(sites: &[Site], name: &str, root_url: Option<&str>) -> Opti
     let mirror = std::iter::once(first)
         .chain(matching)
         .find(|s| s.declaration.root_url.eq_ignore_ascii_case(root_url));
-    Some(mirror.map_or_else(|| first.clone().at(root_url), Clone::clone))
+    Some(mirror.map_or_else(|| first.clone().with_root_url(root_url), Clone::clone))
 }
 
 /// Lists the `.lua` files in the checkout's `modules` directory, sorted.

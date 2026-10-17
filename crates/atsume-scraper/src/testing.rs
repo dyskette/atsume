@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use tempfile::TempDir;
 
-use crate::catalog::select;
+use crate::catalog::select_site;
 use crate::error::ErrorKind;
 use crate::http::HttpConfig;
 use crate::{CancelToken, Catalog, Error, Result, Session, SessionConfig, Site};
@@ -50,7 +50,7 @@ impl Checkout {
         let Some(site) = site else {
             return Ok(sites[0].clone());
         };
-        select(&sites, site, root_url)
+        select_site(&sites, site, root_url)
             .ok_or_else(|| Error::new(ErrorKind::Unsupported, format!("no website named {site:?}")))
     }
 

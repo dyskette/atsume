@@ -458,7 +458,7 @@ fn a_reported_network_problem_carries_the_last_request() {
     let mut session = open_module_with(&config(transport), CancelToken::new(), init, rest);
     let err = session.series_info("/series/x").unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Network);
-    let request = err.request().unwrap();
+    let request = err.last_request().unwrap();
     assert_eq!(
         (request.status, request.requested.as_str()),
         (404, "https://a.example/series/x")
@@ -477,7 +477,7 @@ fn a_page_handler_reporting_net_problem_is_a_network_error() {
     let mut session = open_module_with(&config(transport), CancelToken::new(), init, rest);
     let err = session.pages("/chapter/1").unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Network, "{err}");
-    assert_eq!(err.request().unwrap().status, 503);
+    assert_eq!(err.last_request().unwrap().status, 503);
 }
 
 #[test]
