@@ -182,7 +182,7 @@ fn read_declaration(
             handlers.insert(event, function);
         }
     }
-    let directories = lua.coerce_number(table.get("TotalDirectory")?)?;
+    let declared_listings = lua.coerce_number(table.get("TotalDirectory")?)?;
     Ok(SiteDeclaration {
         id: text("ID")?,
         name: text("Name")?,
@@ -192,13 +192,13 @@ fn read_declaration(
         options,
         account_support: truthy(&table.get("AccountSupport")?),
         sorted_list: truthy(&table.get("SortedList")?),
-        directories: directory_count(directories),
+        listing_count: parse_listing_count(declared_listings),
         file: file.to_path_buf(),
     })
 }
 
 /// Reads a declared `TotalDirectory`, where anything below one means one.
-fn directory_count(declared: Option<f64>) -> u32 {
+fn parse_listing_count(declared: Option<f64>) -> u32 {
     declared
         .and_then(|n| whole_number(n.trunc()))
         .and_then(|n| u32::try_from(n).ok())

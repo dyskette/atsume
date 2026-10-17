@@ -15,8 +15,9 @@ pub(crate) struct SiteState {
     pub(crate) declaration: SiteDeclaration,
     /// The value of each setting: the declared default until a caller sets it.
     pub(crate) options: HashMap<String, OptionValue>,
-    /// Which listing a site with several walks next.
-    pub(crate) directory_index: i64,
+    /// Which listing a site with several walks next. Modules see it as
+    /// `MODULE.CurrentDirectoryIndex`.
+    pub(crate) listing_index: i64,
 }
 
 impl SiteState {
@@ -29,7 +30,7 @@ impl SiteState {
         Self {
             declaration,
             options,
-            directory_index: 0,
+            listing_index: 0,
         }
     }
 }
@@ -85,14 +86,16 @@ impl UserData for ModuleObject {
             &mut s.declaration.account_support
         });
         int_field(fields, "CurrentDirectoryIndex", |s: &mut SiteState| {
-            &mut s.directory_index
+            &mut s.listing_index
         });
         fields.add_field_function_get("TotalDirectory", |lua, _: AnyUserData| {
-            Ok(i64::from(state::<SiteState>(lua)?.declaration.directories))
+            Ok(i64::from(
+                state::<SiteState>(lua)?.declaration.listing_count,
+            ))
         });
         fields.add_field_function_set("TotalDirectory", |lua, _: AnyUserData, value: Value| {
             let count = to_int(lua, &value).clamp(1, i64::from(u32::MAX));
-            state::<SiteState>(lua)?.declaration.directories = u32::try_from(count).unwrap_or(1);
+            state::<SiteState>(lua)?.declaration.listing_count = u32::try_from(count).unwrap_or(1);
             Ok(())
         });
         fields.add_field_function_get("Storage", |_, _: AnyUserData| Ok(StorageObject));

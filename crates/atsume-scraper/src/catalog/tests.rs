@@ -99,7 +99,7 @@ fn a_file_declares_its_websites() {
         ],
         account_support: true,
         sorted_list: false,
-        directories: 3,
+        listing_count: 3,
         file: checkout.file("modules/Example.lua"),
     };
     assert_eq!(sites[1].declaration(), &want);

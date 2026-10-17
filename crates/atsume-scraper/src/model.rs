@@ -40,7 +40,8 @@ pub struct SiteDeclaration {
     /// Whether the site lists its directory in a stable order.
     pub sorted_list: bool,
     /// How many separate listings the directory is split into; at least one.
-    pub directories: u32,
+    /// Modules declare it as `TotalDirectory`.
+    pub listing_count: u32,
     /// The file the module was loaded from.
     pub file: PathBuf,
 }

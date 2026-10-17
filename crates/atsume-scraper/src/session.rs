@@ -157,18 +157,18 @@ impl Session {
 
     /// Points `MODULE.CurrentDirectoryIndex` at directory listing `index`,
     /// counting from 0, which the module reads to know which listing to walk.
-    fn select_directory(&mut self, index: u32) -> Result<()> {
+    fn select_listing(&mut self, index: u32) -> Result<()> {
         let mut site = self.state::<SiteState>();
-        if index >= site.declaration.directories {
+        if index >= site.declaration.listing_count {
             let message = format!(
                 "module {} has {} directory listings, not {}",
                 site.declaration.name,
-                site.declaration.directories,
+                site.declaration.listing_count,
                 index + 1
             );
             return Err(Error::new(ErrorKind::Unsupported, message));
         }
-        site.directory_index = i64::from(index);
+        site.listing_index = i64::from(index);
         Ok(())
     }
 
@@ -178,7 +178,7 @@ impl Session {
         self.state::<HttpSession>().last.clone()
     }
 
-    /// Runs `OnGetNameAndLink` for one page of directory listing `directory`,
+    /// Runs `OnGetNameAndLink` for one page of directory listing `listing`,
     /// both counting from 0.
     ///
     /// # Errors
@@ -187,8 +187,8 @@ impl Session {
     /// ([`Unsupported`](ErrorKind::Unsupported)), the module has no
     /// `OnGetNameAndLink` handler, the handler fails, or a request it needed
     /// failed ([`Network`](ErrorKind::Network)).
-    pub fn list(&mut self, directory: u32, page: u32) -> Result<DirectoryPage> {
-        self.select_directory(directory)?;
+    pub fn list(&mut self, listing: u32, page: u32) -> Result<DirectoryPage> {
+        self.select_listing(listing)?;
         *self.state::<Directory>() = Directory::default();
         globals::set_url_to_directory_page(&self.runtime.lua, page)?;
         let code = to_int(&self.runtime.lua, &self.call(Event::GetNameAndLink)?);
@@ -210,15 +210,15 @@ impl Session {
     }
 
     /// Runs `OnGetDirectoryPageNumber`, returning how many pages directory
-    /// listing `directory`, counting from 0, has. A module without the
+    /// listing `listing`, counting from 0, has. A module without the
     /// handler has one.
     ///
     /// # Errors
     ///
     /// Fails if the site has no such listing
     /// ([`Unsupported`](ErrorKind::Unsupported)) or the handler fails.
-    pub fn directory_page_count(&mut self, directory: u32) -> Result<u32> {
-        self.select_directory(directory)?;
+    pub fn directory_page_count(&mut self, listing: u32) -> Result<u32> {
+        self.select_listing(listing)?;
         if !self.has_handler(Event::GetDirectoryPageNumber) {
             return Ok(1);
         }
