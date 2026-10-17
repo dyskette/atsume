@@ -16,6 +16,7 @@ base64 = "0.22.1"
 cookie = "0.18.2"
 cookie_store = "0.22.1"
 ctr = "0.10.1"
+flate2 = "1.1.10"
 hmac = "0.13.0"
 html5ever = "0.40.1"
 # The IRI type xee takes a collation as.

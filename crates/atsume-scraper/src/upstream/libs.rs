@@ -2,6 +2,7 @@
 
 mod crypto;
 mod file_names;
+mod gzip;
 mod logging;
 
 use std::path::Path;
@@ -30,7 +31,8 @@ pub(crate) fn preload(lua: &Lua, lua_dir: &Path) -> mlua::Result<()> {
     preload.set(
         "fmd.fileutil",
         lua.create_function(|lua, ()| file_names::build(lua))?,
-    )
+    )?;
+    preload.set("fmd.gzip", lua.create_function(|lua, ()| gzip::build(lua))?)
 }
 
 /// Builds `fmd.env`, which describes the installation that modules run in.
@@ -52,4 +54,27 @@ fn bytes_function(lua: &Lua, transform: BytesTransform) -> mlua::Result<Function
         let input = bytes_arg(lua, &value, 1)?;
         lua.create_string(transform(&input))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::open_module;
+
+    #[test]
+    fn modules_load_each_library_by_name() {
+        let session = open_module("NewWebsiteModule()", "");
+        for name in [
+            "fmd.env",
+            "fmd.crypto",
+            "fmd.logger",
+            "fmd.fileutil",
+            "fmd.gzip",
+        ] {
+            assert_eq!(
+                session.eval(&format!("type(require '{name}')")),
+                "table",
+                "{name}"
+            );
+        }
+    }
 }

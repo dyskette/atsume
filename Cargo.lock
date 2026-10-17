@@ -102,6 +102,7 @@ dependencies = [
  "cookie",
  "cookie_store",
  "ctr",
+ "flate2",
  "hmac",
  "markup5ever",
  "mlua",

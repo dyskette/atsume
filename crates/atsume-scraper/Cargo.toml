@@ -15,6 +15,7 @@ base64.workspace = true
 cookie.workspace = true
 cookie_store.workspace = true
 ctr.workspace = true
+flate2.workspace = true
 hmac.workspace = true
 markup5ever.workspace = true
 mlua.workspace = true
