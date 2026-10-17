@@ -21,6 +21,7 @@ pub(crate) mod libs;
 pub(crate) mod module;
 pub(crate) mod series;
 pub(crate) mod string_list;
+pub(crate) mod text_after_separator;
 pub(crate) mod text_before_separator;
 pub(crate) mod text_between;
 pub(crate) mod trim;
@@ -68,5 +69,6 @@ pub(crate) fn install(lua: &Lua, lua_dir: &Path, http: HttpSession) -> mlua::Res
     txquery::register(lua)?;
     trim::register(lua)?;
     text_between::register(lua)?;
-    text_before_separator::register(lua)
+    text_before_separator::register(lua)?;
+    text_after_separator::register(lua)
 }
