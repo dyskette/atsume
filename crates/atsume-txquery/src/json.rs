@@ -380,24 +380,58 @@ pub(crate) fn calls(expression: &str) -> Result<Vec<Call>, String> {
     Ok(found)
 }
 
-/// Reports whether a `json(` call starts at `i`, rather than a longer name.
+/// The function name a call to `json()` starts with.
+const CALL_NAME: &[u8] = b"json";
+
+/// What can come right before a path step. A `json(` after one of these runs
+/// once per node: after `/` or `!` it is a step itself, and after `[` it is
+/// inside a predicate.
+const STEP_MARKERS: [char; 3] = ['/', '!', '['];
+
+/// Reports whether a `json(` call starts at `i`, rather than a longer name
+/// ending in `json` such as `parse-json`.
 fn starts_call(bytes: &[u8], i: usize) -> bool {
     let is_name = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':');
-    let after = &bytes[i..];
     let preceded_by_name = i > 0 && is_name(bytes[i - 1]);
-    if preceded_by_name || !after.starts_with(b"json") {
+    let Some(after_name) = bytes[i..].strip_prefix(CALL_NAME) else {
         return false;
-    }
-    after[4..].iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'(')
+    };
+    !preceded_by_name && after_name.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'(')
 }
 
+/// Reads the `json(…)` call whose name starts at `start`, which
+/// [`starts_call`] has already recognised.
+///
+/// It refuses a call that sits in a path step, then finds the parenthesis
+/// that closes the one after the name, skipping string literals so a `)`
+/// inside quotes does not count. The call's span runs from the name to just
+/// past that parenthesis; its argument is everything between the two.
 fn call_at(expression: &str, start: usize) -> Result<Call, String> {
-    let bytes = expression.as_bytes();
-    let before = expression[..start].trim_end();
-    if before.ends_with(['/', '!', '[']) {
+    if expression[..start].trim_end().ends_with(STEP_MARKERS) {
         return Err("json() inside a path step is not supported".to_owned());
     }
-    let open = start + bytes[start..].iter().position(|&b| b == b'(').unwrap_or(0);
+    let bytes = expression.as_bytes();
+    let Some(open) = bytes[start..]
+        .iter()
+        .position(|&b| b == b'(')
+        .map(|at| start + at)
+    else {
+        return Err("json has no opening parenthesis".to_owned());
+    };
+    let Some(close) = matching_parenthesis(bytes, open) else {
+        return Err("json( has no closing parenthesis".to_owned());
+    };
+    let after_close = close + 1;
+    let after_open = open + 1;
+    Ok(Call {
+        span: start..after_close,
+        argument: after_open..close,
+    })
+}
+
+/// Returns the index of the `)` that closes the `(` at `open`, counting the
+/// parentheses nested between and ignoring any inside string literals.
+fn matching_parenthesis(bytes: &[u8], open: usize) -> Option<usize> {
     let mut depth = 0;
     let mut i = open;
     while i < bytes.len() {
@@ -410,17 +444,14 @@ fn call_at(expression: &str, start: usize) -> Result<Call, String> {
             b')' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Ok(Call {
-                        span: start..i + 1,
-                        argument: open + 1..i,
-                    });
+                    return Some(i);
                 }
             }
             _ => {}
         }
         i += 1;
     }
-    Err("json( has no closing parenthesis".to_owned())
+    None
 }
 
 /// Returns the index just past the string literal starting at `start`. A
