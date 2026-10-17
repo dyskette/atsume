@@ -6,8 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::engine::{Engine, json_variable};
-use crate::{dialect, json};
+use crate::engine::Engine;
 
 /// The TXQuery methods whose first argument is an expression. Longer names
 /// come first, so `XPathStringAll` is not read as `XPathString`.
@@ -198,26 +197,14 @@ fn lua_literal(term: &str) -> Option<String> {
     Some(text)
 }
 
-/// Compiles `expression` the way evaluation does: each `json()` argument on
-/// its own, then the rest with the calls bound to variables.
+/// Prepares `expression` the way evaluation does, and each `json()`
+/// argument in it, since those are evaluated as expressions of their own.
 fn compiles(engine: &Engine, expression: &str) -> Result<(), String> {
-    let calls = json::calls(expression)?;
-    let mut substituted = String::new();
-    let mut last = 0;
-    for (index, call) in calls.iter().enumerate() {
-        compiles(engine, &expression[call.argument.clone()])?;
-        substituted.push_str(&expression[last..call.span.start]);
-        substituted.push_str("($");
-        substituted.push_str(&json_variable(index));
-        substituted.push(')');
-        last = call.span.end;
-    }
-    substituted.push_str(&expression[last..]);
-    let standard = dialect::rewrite(&substituted)?;
-    engine
-        .compile(&standard, calls.len())
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let prepared = engine.prepare(expression).map_err(|e| e.to_string())?;
+    prepared
+        .json_arguments
+        .iter()
+        .try_for_each(|argument| compiles(engine, argument))
 }
 
 /// The share of upstream's expressions that must compile.

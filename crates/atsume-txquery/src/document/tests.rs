@@ -115,7 +115,7 @@ fn an_expression_is_compiled_once() {
     for _ in 0..3 {
         page.evaluate(&engine, "//h1", None).unwrap();
     }
-    assert_eq!(engine.compiled_count(), 1);
+    assert_eq!(engine.prepared_count(), 1);
 }
 
 #[test]

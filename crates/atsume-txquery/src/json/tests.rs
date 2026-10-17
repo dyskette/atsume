@@ -99,24 +99,6 @@ fn broken_or_hostile_input_is_refused() {
 }
 
 #[test]
-fn calls_are_found_outside_strings_and_other_names() {
-    let expression =
-        r#"json(*).a, parse-json('x'), 'json(no)', myjson(1), json( //script[@id="d"] )"#;
-    let found: Vec<&str> = calls(expression)
-        .unwrap()
-        .iter()
-        .map(|call| expression[call.argument.clone()].trim())
-        .collect();
-    assert_eq!(found, ["*", r#"//script[@id="d"]"#]);
-}
-
-#[test]
-fn a_call_inside_a_path_step_is_refused() {
-    assert!(calls("//script/json(.)").is_err());
-    assert!(calls("json(").is_err());
-}
-
-#[test]
 fn an_unpaired_surrogate_becomes_the_replacement_character() {
     // A high surrogate followed by an ordinary escape keeps that escape.
     assert_eq!(one(r#""\ud83d\u0041""#), Json::String("\u{fffd}A".into()));

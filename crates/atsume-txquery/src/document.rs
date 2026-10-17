@@ -4,13 +4,15 @@ use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
 
 use xee_xpath::context::Variables;
+use xee_xpath::query::SequenceQuery;
 use xee_xpath::{Documents, Item as XeeItem, Query};
 use xot::xmlname::OwnedName;
 
-use crate::engine::{Engine, json_variable};
+use crate::dialect::json_variable;
+use crate::engine::Engine;
 use crate::error::Error;
 use crate::value::{Item, Sequence};
-use crate::{dialect, html, json};
+use crate::{html, json};
 
 /// A node of a [`Document`]. It is only meaningful with the document it came
 /// from.
@@ -63,10 +65,9 @@ impl Document {
 
     /// Evaluates `expression`, starting from `context` or the document node.
     ///
-    /// Each `json(…)` call is evaluated first: its argument's text is parsed
-    /// as JSON, and the call is replaced by the resulting tree. The rest of
-    /// internettools' syntax is then rewritten into standard XPath; see
-    /// [`dialect`].
+    /// internettools' syntax is rewritten into standard XPath, and each
+    /// `json(…)` argument is evaluated first and its text parsed as JSON; the
+    /// expression then runs with the trees bound in place of the calls.
     ///
     /// # Errors
     ///
@@ -78,26 +79,13 @@ impl Document {
         expression: &str,
         context: Option<Node>,
     ) -> Result<Sequence, Error> {
-        let calls =
-            json::calls(expression).map_err(|message| compile_error(expression, message))?;
-        let mut rewritten = String::with_capacity(expression.len());
-        let mut trees = Vec::with_capacity(calls.len());
-        let mut last = 0;
-        for (index, call) in calls.iter().enumerate() {
-            rewritten.push_str(&expression[last..call.span.start]);
-            // Parenthesised, so a dot after the call reads as a property
-            // rather than as part of the variable's name.
-            rewritten.push_str("($");
-            rewritten.push_str(&json_variable(index));
-            rewritten.push(')');
-            trees.push(self.json_tree(engine, &expression[call.argument.clone()], context)?);
-            last = call.span.end;
-        }
-        rewritten.push_str(&expression[last..]);
-        let standard =
-            dialect::rewrite(&rewritten).map_err(|message| compile_error(expression, message))?;
-        self.run(engine, &standard, context, &trees)
-            .map_err(|e| e.for_expression(expression))
+        let prepared = engine.prepare(expression)?;
+        let trees = prepared
+            .json_arguments
+            .iter()
+            .map(|argument| self.json_tree(engine, argument, context))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.run(&prepared.query, expression, context, &trees)
     }
 
     /// Evaluates a `json()` argument and returns the tree of the JSON its text
@@ -149,15 +137,15 @@ impl Document {
         Ok(tree)
     }
 
-    /// Runs a compiled expression with each `$jsonN` bound to its tree.
+    /// Runs a prepared expression with each `$jsonN` bound to its tree.
+    /// `expression` is the text the module wrote, for error messages.
     fn run(
         &mut self,
-        engine: &Engine,
+        query: &SequenceQuery,
         expression: &str,
         context: Option<Node>,
         trees: &[Vec<xot::Node>],
     ) -> Result<Sequence, Error> {
-        let query = engine.compile(expression, trees.len())?;
         let mut variables = Variables::default();
         for (index, tree) in trees.iter().enumerate() {
             let name = OwnedName::name(&json_variable(index));
@@ -237,13 +225,6 @@ impl Document {
 fn register(documents: &Documents, root: xot::Node) {
     if let Err(error) = documents.documents().borrow_mut().add_root(None, root) {
         tracing::debug!(%error, "a parsed tree could not be registered");
-    }
-}
-
-fn compile_error(expression: &str, message: String) -> Error {
-    Error::Compile {
-        expression: expression.to_owned(),
-        message,
     }
 }
 

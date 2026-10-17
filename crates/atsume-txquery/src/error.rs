@@ -19,21 +19,3 @@ pub enum Error {
         message: String,
     },
 }
-
-impl Error {
-    /// Names `expression` as the one that failed, in place of the form it
-    /// was rewritten to.
-    pub(crate) fn for_expression(self, expression: &str) -> Self {
-        let expression = expression.to_owned();
-        match self {
-            Self::Compile { message, .. } => Self::Compile {
-                expression,
-                message,
-            },
-            Self::Evaluate { message, .. } => Self::Evaluate {
-                expression,
-                message,
-            },
-        }
-    }
-}

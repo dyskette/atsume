@@ -1,4 +1,4 @@
-//! Compiling expressions, once each.
+//! Preparing expressions to run, once each.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -9,6 +9,7 @@ use xee_xpath::context::StaticContextBuilder;
 use xee_xpath::query::SequenceQuery;
 use xot::xmlname::OwnedName;
 
+use crate::dialect::{self, json_variable};
 use crate::error::Error;
 
 /// How many compiled expressions an engine keeps. Modules use a few dozen
@@ -21,64 +22,75 @@ const CACHE_LIMIT: usize = 1024;
 const CASE_INSENSITIVE_COLLATION: &str =
     "http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive";
 
-/// Compiles expressions and keeps them for reuse.
+/// Prepares expressions to run, and keeps them for reuse.
 ///
 /// Modules pass expressions as strings, often the same one inside a loop, so
-/// each is compiled once. One engine serves every document of a scrape.
+/// each is rewritten and compiled once. One engine serves every page of a
+/// scrape.
 #[derive(Default)]
 pub struct Engine {
     queries: Queries<'static>,
-    compiled: RefCell<HashMap<String, Rc<SequenceQuery>>>,
+    prepared: RefCell<HashMap<String, Rc<Prepared>>>,
 }
 
-/// Returns the name of the variable bound to the `index`th `json()` call of
-/// an expression.
-pub(crate) fn json_variable(index: usize) -> String {
-    format!("json{index}")
+/// An expression ready to run: its standard XPath, compiled, and the
+/// `json()` arguments to evaluate first.
+pub(crate) struct Prepared {
+    pub(crate) query: SequenceQuery,
+    /// The arguments in the order of their variables; see
+    /// [`dialect::json_variable`].
+    pub(crate) json_arguments: Vec<String>,
 }
 
 impl Engine {
-    /// Returns an engine with nothing compiled yet.
+    /// Returns an engine with nothing prepared yet.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Returns the compiled form of `expression`, which may refer to the
-    /// variables `$json0` up to `$json{variables - 1}`.
-    pub(crate) fn compile(
-        &self,
-        expression: &str,
-        variables: usize,
-    ) -> Result<Rc<SequenceQuery>, Error> {
-        if let Some(query) = self.compiled.borrow().get(expression) {
-            return Ok(Rc::clone(query));
+    /// Rewrites `expression` into standard XPath and compiles it, or returns
+    /// the result of an earlier call with the same expression.
+    pub(crate) fn prepare(&self, expression: &str) -> Result<Rc<Prepared>, Error> {
+        if let Some(prepared) = self.prepared.borrow().get(expression) {
+            return Ok(Rc::clone(prepared));
         }
         let compile_error = |message: String| Error::Compile {
             expression: expression.to_owned(),
             message,
         };
+        let rewritten = dialect::rewrite(expression).map_err(compile_error)?;
+        let query = self
+            .compile(&rewritten.xpath, rewritten.json_arguments.len())
+            .map_err(compile_error)?;
+        let prepared = Rc::new(Prepared {
+            query,
+            json_arguments: rewritten.json_arguments,
+        });
+        let mut cache = self.prepared.borrow_mut();
+        if cache.len() >= CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert(expression.to_owned(), Rc::clone(&prepared));
+        Ok(prepared)
+    }
+
+    /// Compiles standard XPath that may refer to the variables `$json0` up to
+    /// `$json{variables - 1}`.
+    fn compile(&self, xpath: &str, variables: usize) -> Result<SequenceQuery, String> {
         let collation = CASE_INSENSITIVE_COLLATION
             .try_into()
-            .map_err(|e: iri_string::validate::Error| compile_error(e.to_string()))?;
+            .map_err(|e: iri_string::validate::Error| e.to_string())?;
         let mut context = StaticContextBuilder::default();
         context.variable_names((0..variables).map(|i| OwnedName::name(&json_variable(i))));
         context.default_collation(collation);
-        let query = self
-            .queries
-            .sequence_with_context(expression, context.build())
-            .map_err(|e| compile_error(e.to_string()))?;
-        let query = Rc::new(query);
-        let mut compiled = self.compiled.borrow_mut();
-        if compiled.len() >= CACHE_LIMIT {
-            compiled.clear();
-        }
-        compiled.insert(expression.to_owned(), Rc::clone(&query));
-        Ok(query)
+        self.queries
+            .sequence_with_context(xpath, context.build())
+            .map_err(|e| e.to_string())
     }
 
     #[cfg(test)]
-    pub(crate) fn compiled_count(&self) -> usize {
-        self.compiled.borrow().len()
+    pub(crate) fn prepared_count(&self) -> usize {
+        self.prepared.borrow().len()
     }
 }

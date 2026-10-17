@@ -13,6 +13,7 @@
 //! | `jn:keys(X)`, `jn:members(X)` | `((X)/*/name())`, `((X)/*)`       |
 //! | `css("sel")`                  | the selector as a path            |
 //! | `true`, `false`, `null`       | `true()`, `false()`, `"null"`     |
+//! | `json(X)`                     | `($json0)`, with `X` evaluated first |
 //! | `TotalPage`, a capital in a name test | `TotalPage` or `totalpage`, compared exactly |
 //!
 //! The last row exists because upstream matches HTML names ignoring case,
@@ -36,17 +37,32 @@ enum Before {
     Step,
 }
 
-/// Rewrites `expression`'s internettools extensions into standard XPath.
-pub(crate) fn rewrite(expression: &str) -> Result<String, String> {
-    let tokens = tokenize(expression)?;
-    Rewriter {
-        tokens: &tokens,
-        at: 0,
-        out: String::new(),
-        before: Before::Operator,
-    }
-    .run()
+/// An expression in standard XPath, with the `json()` arguments it needs.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Rewritten {
+    /// The expression, where the `n`th `json()` call is the variable named by
+    /// [`json_variable`]`(n)`.
+    pub(crate) xpath: String,
+    /// Each `json()` call's argument as written, to evaluate before the
+    /// expression runs.
+    pub(crate) json_arguments: Vec<String>,
 }
+
+/// Rewrites `expression`'s internettools extensions into standard XPath.
+pub(crate) fn rewrite(expression: &str) -> Result<Rewritten, String> {
+    let tokens = tokenize(expression)?;
+    Rewriter::new(&tokens, Vec::new()).run()
+}
+
+/// Returns the name of the variable that holds the tree of the `index`th
+/// `json()` call.
+pub(crate) fn json_variable(index: usize) -> String {
+    format!("json{index}")
+}
+
+/// What can come right before a path step. A `json(` after one of these would
+/// run once per node, so its argument cannot be evaluated beforehand.
+const STEP_MARKERS: [char; 3] = ['/', '!', '['];
 
 /// The kinds of token the rewrite tells apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,14 +206,39 @@ struct Rewriter<'t, 'e> {
     at: usize,
     out: String,
     before: Before,
+    /// The `json()` arguments found so far, shared with nested rewrites so the
+    /// variables are numbered across the whole expression.
+    json_arguments: Vec<String>,
 }
 
-impl<'e> Rewriter<'_, 'e> {
-    fn run(mut self) -> Result<String, String> {
+impl<'t, 'e> Rewriter<'t, 'e> {
+    fn new(tokens: &'t [Token<'e>], json_arguments: Vec<String>) -> Self {
+        Self {
+            tokens,
+            at: 0,
+            out: String::new(),
+            before: Before::Operator,
+            json_arguments,
+        }
+    }
+
+    fn run(mut self) -> Result<Rewritten, String> {
         while self.at < self.tokens.len() {
             self.step()?;
         }
-        Ok(self.out)
+        Ok(Rewritten {
+            xpath: self.out,
+            json_arguments: self.json_arguments,
+        })
+    }
+
+    /// Rewrites a run of tokens inside the current one, such as a function's
+    /// argument, keeping the `json()` arguments in one list.
+    fn rewrite_nested(&mut self, tokens: &[Token<'_>]) -> Result<String, String> {
+        let json_arguments = std::mem::take(&mut self.json_arguments);
+        let nested = Rewriter::new(tokens, json_arguments).run()?;
+        self.json_arguments = nested.json_arguments;
+        Ok(nested.xpath)
     }
 
     /// Rewrites the construct at the current token and moves past it.
@@ -207,6 +248,7 @@ impl<'e> Rewriter<'_, 'e> {
             (Kind::Symbol, ".") => self.property_chain(),
             (Kind::Symbol, "?") => self.lookup(),
             (Kind::Symbol, "(") => self.call_on_value()?,
+            (Kind::Name, "json") => self.json_call()?,
             (Kind::Name, "jn:keys" | "jn:members" | "css") => self.function(token.text)?,
             (Kind::Name, "true" | "false" | "null") => self.literal(token.text),
             (Kind::Name, name) if name.contains(char::is_uppercase) => self.capitalised_name(name),
@@ -312,7 +354,8 @@ impl<'e> Rewriter<'_, 'e> {
             [key] if key.kind == Kind::String => format!("/{}", named(key.text)),
             [index] if index.kind == Kind::Number => format!("/*[{}]", index.text),
             _ => {
-                let key = rewrite_tokens(&self.tokens[self.at + 1..close])?;
+                let tokens = self.tokens;
+                let key = self.rewrite_nested(&tokens[self.at + 1..close])?;
                 format!(
                     "/*[let $atsume_key := ({key}) return if ($atsume_key instance of xs:numeric) \
                      then position() = $atsume_key else codepoint-equal(name(), string($atsume_key))]"
@@ -335,13 +378,44 @@ impl<'e> Rewriter<'_, 'e> {
         }
         self.at += offset;
         let close = self.closing_parenthesis()?;
-        let argument = &self.tokens[self.at + 1..close];
+        let tokens = self.tokens;
+        let argument = &tokens[self.at + 1..close];
         let rewritten = match name {
-            "jn:keys" => format!("(({})/*/name())", rewrite_tokens(argument)?),
-            "jn:members" => format!("(({})/*)", rewrite_tokens(argument)?),
+            "jn:keys" => format!("(({})/*/name())", self.rewrite_nested(argument)?),
+            "jn:members" => format!("(({})/*)", self.rewrite_nested(argument)?),
             _ => format!("({})", css_argument(argument)?),
         };
         self.out.push_str(&rewritten);
+        self.at = close + 1;
+        self.before = Before::Value;
+        Ok(true)
+    }
+
+    /// `json(X)`: the argument is evaluated before the expression runs, and
+    /// the call becomes the variable holding the tree of the JSON it read.
+    fn json_call(&mut self) -> Result<bool, String> {
+        let Some((offset, open)) = self.next_significant() else {
+            return Ok(false);
+        };
+        if open.text != "(" {
+            return Ok(false);
+        }
+        if self.out.trim_end().ends_with(STEP_MARKERS) {
+            return Err("json() inside a path step is not supported".to_owned());
+        }
+        self.at += offset;
+        let close = self.closing_parenthesis()?;
+        let argument = self.tokens[self.at + 1..close]
+            .iter()
+            .map(|t| t.text)
+            .collect();
+        let variable = json_variable(self.json_arguments.len());
+        self.json_arguments.push(argument);
+        // Parenthesised, so a dot after the call reads as a property rather
+        // than as part of the variable's name.
+        self.out.push_str("($");
+        self.out.push_str(&variable);
+        self.out.push(')');
         self.at = close + 1;
         self.before = Before::Value;
         Ok(true)
@@ -421,16 +495,6 @@ fn property_step(name: &str) -> String {
 /// `quoted_name`.
 fn named(quoted_name: &str) -> String {
     format!("*[codepoint-equal(name(), {quoted_name})]")
-}
-
-fn rewrite_tokens(tokens: &[Token<'_>]) -> Result<String, String> {
-    Rewriter {
-        tokens,
-        at: 0,
-        out: String::new(),
-        before: Before::Operator,
-    }
-    .run()
 }
 
 fn significant<'e>(tokens: &[Token<'e>]) -> Vec<Token<'e>> {
