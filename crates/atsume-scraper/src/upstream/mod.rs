@@ -21,6 +21,7 @@ pub(crate) mod http;
 pub(crate) mod libs;
 pub(crate) mod module;
 pub(crate) mod series;
+pub(crate) mod sleep;
 pub(crate) mod string_list;
 pub(crate) mod text_after_separator;
 pub(crate) mod text_before_separator;
@@ -32,6 +33,7 @@ use std::path::Path;
 
 use mlua::Lua;
 
+use crate::cancel::CancelToken;
 use crate::http::HttpSession;
 
 /// Stores the state behind the globals, and then sets the globals, before a
@@ -41,8 +43,14 @@ use crate::http::HttpSession;
 /// once in the runtime. Two values are kept elsewhere. The sandbox keeps the
 /// file that `io` may write, and a session keeps the declared website behind
 /// `MODULE` once it knows that website. `lua_dir` is the checkout's `lua`
-/// directory, which `fmd.env` reports.
-pub(crate) fn install(lua: &Lua, lua_dir: &Path, http: HttpSession) -> mlua::Result<()> {
+/// directory, which `fmd.env` reports. Cancelling `cancel` ends a pause that a
+/// module asked for with `sleep`.
+pub(crate) fn install(
+    lua: &Lua,
+    lua_dir: &Path,
+    http: HttpSession,
+    cancel: CancelToken,
+) -> mlua::Result<()> {
     // `NewWebsiteModule` adds declarations here until the host reads them back.
     lua.set_app_data(declaration::PendingDeclarations::default());
     // The global `Storage` and `MODULE.Storage` both read this one.
@@ -72,5 +80,6 @@ pub(crate) fn install(lua: &Lua, lua_dir: &Path, http: HttpSession) -> mlua::Res
     text_between::register(lua)?;
     text_before_separator::register(lua)?;
     text_after_separator::register(lua)?;
-    absolute_link::register(lua)
+    absolute_link::register(lua)?;
+    sleep::register(lua, cancel)
 }

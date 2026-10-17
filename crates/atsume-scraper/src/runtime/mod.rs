@@ -37,7 +37,8 @@ impl Runtime {
         let budget = Budget::new(cancel.clone(), config.cpu_limit);
         budget.install(&lua)?;
         let lua_dir = std::path::absolute(lua_dir).map_err(mlua::Error::external)?;
-        upstream::install(&lua, &lua_dir, HttpSession::new(&config.http, cancel))?;
+        let http = HttpSession::new(&config.http, cancel.clone());
+        upstream::install(&lua, &lua_dir, http, cancel)?;
         Ok(Self { lua, budget })
     }
 
