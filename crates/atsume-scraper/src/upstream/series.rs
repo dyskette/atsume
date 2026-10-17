@@ -9,16 +9,17 @@ use crate::runtime::convert::{lua_text, text_arg};
 use crate::string_list::StringList;
 use crate::upstream::string_list::ListObject;
 
-/// The keywords upstream looks for when a module gives none, in the order it
-/// tries them. Modules call `MangaInfoStatusIfPos` with one argument and rely
-/// on these.
+/// The keywords that upstream looks for when a module gives none, in the order
+/// upstream tries them. Modules call `MangaInfoStatusIfPos` with a single
+/// argument and rely on these keywords.
 const DEFAULT_KEYWORDS: [&str; 4] = ["ongoing", "complete", "hiatus", "cancel"];
 
 impl SeriesStatus {
-    /// Every status, in the order upstream tries their keywords.
+    /// Every status, in the order in which upstream tries their keywords.
     const ALL: [Self; 4] = [Self::Ongoing, Self::Completed, Self::Hiatus, Self::Dropped];
 
-    /// Returns the word `MangaInfoStatusIfPos` gives modules for this status.
+    /// Returns the word that `MangaInfoStatusIfPos` gives modules for this
+    /// status.
     fn word(self) -> &'static str {
         match self {
             Self::Ongoing => "ongoing",
@@ -28,11 +29,11 @@ impl SeriesStatus {
         }
     }
 
-    /// Reads a status from the text a module left in `MANGAINFO.Status`.
+    /// Reads a status from the text that a module left in `MANGAINFO.Status`.
     ///
-    /// That is usually a word `MangaInfoStatusIfPos` returned, but some
-    /// modules store the site's own text, which is read with the default
-    /// keywords.
+    /// That text is usually a word that `MangaInfoStatusIfPos` returned. Some
+    /// modules store the site's own text instead, which is read with the
+    /// default keywords.
     fn from_text(text: &str) -> Option<Self> {
         let text = text.trim();
         Self::ALL
@@ -41,7 +42,7 @@ impl SeriesStatus {
             .or_else(|| Self::from_keywords(text, DEFAULT_KEYWORDS))
     }
 
-    /// Finds the first status, in upstream's order, any of whose
+    /// Finds the first status, in upstream's order, for which any of the
     /// `|`-separated keywords appears in `text`, ignoring case.
     fn from_keywords(text: &str, keywords: [&str; 4]) -> Option<Self> {
         let text = text.to_lowercase();
@@ -58,13 +59,15 @@ impl SeriesStatus {
     }
 }
 
-/// What `MANGAINFO` holds while `OnGetInfo` runs, kept in the runtime.
+/// What `MANGAINFO` holds while `OnGetInfo` runs. The record is kept in the
+/// runtime.
 #[derive(Debug, Default)]
 pub(crate) struct SeriesRecord {
     url: String,
     title: String,
     alt_titles: String,
-    /// Modules see it as `MANGAINFO.CoverLink`.
+    /// The cover image's address, which modules write through
+    /// `MANGAINFO.CoverLink`.
     cover_url: String,
     authors: String,
     artists: String,
@@ -87,8 +90,8 @@ impl SeriesRecord {
     /// Reads the record into a [`SeriesInfo`].
     ///
     /// Each link is paired with the name at the same position. Links are put
-    /// in the shape the module expects back, and an empty link is dropped,
-    /// since the module could not read a chapter from it.
+    /// into the shape that the module expects to get back, and an empty link
+    /// is dropped, because the module could not read a chapter from it.
     pub(crate) fn into_series(self) -> SeriesInfo {
         let names = self.chapter_names.items();
         let chapters = self
@@ -120,7 +123,7 @@ impl SeriesRecord {
     }
 }
 
-/// `MANGAINFO`. It holds nothing itself; every access reaches [`SeriesRecord`].
+/// The `MANGAINFO` global, which reads and writes [`SeriesRecord`].
 pub(crate) struct SeriesObject;
 
 impl UserData for SeriesObject {
@@ -157,12 +160,13 @@ pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
         .set("MangaInfoStatusIfPos", status_from_keywords)
 }
 
-/// `MangaInfoStatusIfPos(text, ongoing, completed, hiatus, dropped)`: the word
-/// for the first status whose keywords appear in `text`, or `""`.
+/// Implements `MangaInfoStatusIfPos(text, ongoing, completed, hiatus, dropped)`.
+/// It returns the word for the first status whose keywords appear in `text`,
+/// or `""` if none do.
 ///
-/// Each keyword list is `|`-separated, and a list left out or `nil` takes the
-/// default. Upstream returns numeric codes; these words are what
-/// `MANGAINFO.Status` is read back from.
+/// Each keyword list is separated by `|`, and a list that is left out or `nil`
+/// takes the default. Upstream returns numeric codes instead, but
+/// `MANGAINFO.Status` is read back from these words.
 fn status_from_keywords(
     lua: &Lua,
     (text, ongoing, completed, hiatus, dropped): (Value, Value, Value, Value, Value),
@@ -192,7 +196,8 @@ mod tests {
         assert_eq!(read("Cancelled"), Some(SeriesStatus::Dropped));
         assert_eq!(read(""), None);
         assert_eq!(read("something else"), None);
-        // Ongoing wins when a status matches both lists, as upstream orders it.
+        // Ongoing wins when the text matches both lists, because upstream tries
+        // ongoing first.
         assert_eq!(read("Ongoing (was completed)"), Some(SeriesStatus::Ongoing));
     }
 
