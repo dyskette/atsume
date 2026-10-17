@@ -30,12 +30,12 @@ const CASE_INSENSITIVE_COLLATION: &str =
 #[derive(Default)]
 pub struct Engine {
     queries: Queries<'static>,
-    prepared: RefCell<HashMap<String, Rc<Prepared>>>,
+    prepared: RefCell<HashMap<String, Rc<PreparedExpression>>>,
 }
 
 /// An expression ready to run: its standard XPath, compiled, and the
 /// `json()` arguments to evaluate first.
-pub(crate) struct Prepared {
+pub(crate) struct PreparedExpression {
     pub(crate) query: SequenceQuery,
     /// The arguments in the order of their variables; see
     /// [`rewrite::json_variable_name`].
@@ -66,7 +66,7 @@ impl Engine {
 
     /// Rewrites `expression` into standard XPath and compiles it, or returns
     /// the result of an earlier call with the same expression.
-    pub(crate) fn prepare(&self, expression: &str) -> Result<Rc<Prepared>, Error> {
+    pub(crate) fn prepare(&self, expression: &str) -> Result<Rc<PreparedExpression>, Error> {
         if let Some(prepared) = self.prepared.borrow().get(expression) {
             return Ok(Rc::clone(prepared));
         }
@@ -78,7 +78,7 @@ impl Engine {
         let query = self
             .compile(&rewritten.xpath, rewritten.json_arguments.len())
             .map_err(compile_error)?;
-        let prepared = Rc::new(Prepared {
+        let prepared = Rc::new(PreparedExpression {
             query,
             json_arguments: rewritten.json_arguments,
         });
