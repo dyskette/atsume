@@ -100,7 +100,7 @@ fn a_file_declares_its_websites() {
         takes_login: true,
         lists_in_stable_order: false,
         listing_count: 3,
-        file: checkout.file("modules/Example.lua"),
+        file: checkout.path_of("modules/Example.lua"),
     };
     assert_eq!(sites[1].declaration(), &want);
 }
@@ -125,7 +125,7 @@ fn a_catalog_loads_every_module_and_records_failures() {
     assert_eq!(catalog.failures().len(), 1);
     assert_eq!(
         catalog.failures()[0].file,
-        checkout.file("modules/Broken.lua")
+        checkout.path_of("modules/Broken.lua")
     );
     assert_eq!(catalog.failures()[0].error.kind(), ErrorKind::Load);
     assert!(catalog.site("a", None).is_some());
@@ -244,7 +244,7 @@ fn a_site_that_its_file_no_longer_declares_does_not_open() {
         .site("modules/Gone.lua", Some("Gated Site"), None)
         .unwrap();
     std::fs::write(
-        checkout.file("modules/Gone.lua"),
+        checkout.path_of("modules/Gone.lua"),
         "function Init() NewWebsiteModule().Name = 'Other' end",
     )
     .unwrap();

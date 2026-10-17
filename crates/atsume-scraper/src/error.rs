@@ -18,7 +18,7 @@ pub enum ErrorKind {
     /// The module reported that a request it needed failed. The error's
     /// [`last_request`](Error::last_request) says what the site sent back.
     Network,
-    /// The page the module was given holds nothing it recognises, which
+    /// The page the module was given holds nothing it recognizes, which
     /// usually means the site moved it.
     NotFound,
     /// The site rejected the credentials.

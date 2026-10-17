@@ -30,38 +30,42 @@ impl Checkout {
         self.dir.path().join("lua")
     }
 
-    pub(crate) fn file(&self, name: &str) -> PathBuf {
-        self.lua_dir().join(name)
+    /// Returns the path of `file`, given relative to the `lua` directory.
+    pub(crate) fn path_of(&self, file: &str) -> PathBuf {
+        self.lua_dir().join(file)
     }
 
-    /// Returns the websites the module file `name` declares.
-    pub(crate) fn sites(&self, name: &str) -> Result<Vec<Site>> {
-        Catalog::load_file(&self.lua_dir(), &self.file(name))
+    /// Returns the websites the module file `file` declares.
+    pub(crate) fn sites(&self, file: &str) -> Result<Vec<Site>> {
+        Catalog::load_file(&self.lua_dir(), &self.path_of(file))
     }
 
-    /// Returns the website `site` declares in file `name`, or its first.
+    /// Returns the website named `site_name` that `file` declares, or the
+    /// first it declares.
     pub(crate) fn site(
         &self,
-        name: &str,
-        site: Option<&str>,
+        file: &str,
+        site_name: Option<&str>,
         root_url: Option<&str>,
     ) -> Result<Site> {
-        let sites = self.sites(name)?;
-        let Some(site) = site else {
+        let sites = self.sites(file)?;
+        let Some(site_name) = site_name else {
             return Ok(sites[0].clone());
         };
-        select_site(&sites, site, root_url)
-            .ok_or_else(|| Error::new(ErrorKind::Unsupported, format!("no website named {site:?}")))
+        select_site(&sites, site_name, root_url).ok_or_else(|| {
+            let message = format!("no website named {site_name:?}");
+            Error::new(ErrorKind::Unsupported, message)
+        })
     }
 
-    /// Opens a session for a website declared in file `name`.
+    /// Opens a session for a website that `file` declares.
     pub(crate) fn open(
         &self,
-        name: &str,
-        site: Option<&str>,
+        file: &str,
+        site_name: Option<&str>,
         root_url: Option<&str>,
     ) -> Result<Session> {
-        let site = self.site(name, site, root_url)?;
+        let site = self.site(file, site_name, root_url)?;
         site.open(&SessionConfig::default(), CancelToken::new())
     }
 }

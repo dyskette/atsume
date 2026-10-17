@@ -2,7 +2,7 @@
 
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods, Value};
 
-use crate::links::normalise_link;
+use crate::links::normalize_link;
 use crate::model::{Chapter, SeriesInfo, SeriesStatus};
 use crate::runtime::bind::{ignore_unknown_fields, text_field};
 use crate::runtime::convert::{lua_text, text_arg};
@@ -97,7 +97,7 @@ impl SeriesRecord {
             .iter()
             .enumerate()
             .map(|(i, link)| Chapter {
-                url: normalise_link(link),
+                url: normalize_link(link),
                 name: names
                     .get(i)
                     .map(|n| n.trim())

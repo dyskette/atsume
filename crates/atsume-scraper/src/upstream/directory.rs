@@ -3,7 +3,7 @@
 
 use mlua::{Lua, UserData, UserDataFields, UserDataMethods, Value};
 
-use crate::links::normalise_link;
+use crate::links::normalize_link;
 use crate::model::{DirectoryEntry, DirectoryPage};
 use crate::runtime::bind::{borrow_state, ignore_unknown_fields, int_field};
 use crate::runtime::convert::text_arg;
@@ -34,7 +34,7 @@ impl DirectoryPageRecord {
             .iter()
             .enumerate()
             .map(|(i, link)| DirectoryEntry {
-                url: normalise_link(link),
+                url: normalize_link(link),
                 name: names
                     .get(i)
                     .map(|n| n.trim())
