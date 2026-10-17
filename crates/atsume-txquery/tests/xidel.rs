@@ -199,7 +199,7 @@ fn atsume(engine: &Engine, page: &str, expression: &str) -> Outcome {
             result
                 .items()
                 .iter()
-                .map(|item| document.text(item))
+                .map(|item| document.item_text(item))
                 .collect(),
         ),
         Err(_) => Outcome::Failed,

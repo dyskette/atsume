@@ -133,7 +133,7 @@ impl Page {
         context: Option<Node>,
     ) -> Result<Vec<xot::Node>, Error> {
         let value = self.evaluate(engine, argument, context)?;
-        let text = self.joined_text(&value);
+        let text = self.sequence_text(&value);
         let parsed = match self.parse_json_tree(&text) {
             Err(_) if self.is_whole_page(argument, context) => {
                 let as_received = std::mem::take(&mut self.as_received);
@@ -213,7 +213,7 @@ impl Page {
 
     /// Returns an item's text: a node's full text content, or a value as it is.
     #[must_use]
-    pub fn text(&self, item: &Item) -> String {
+    pub fn item_text(&self, item: &Item) -> String {
         match item {
             Item::Node(node) => self
                 .xot_node_of(*node)
@@ -226,8 +226,12 @@ impl Page {
     /// Returns a sequence's text as internettools gives it: every item's text,
     /// joined with nothing between.
     #[must_use]
-    pub fn joined_text(&self, sequence: &Sequence) -> String {
-        sequence.items.iter().map(|item| self.text(item)).collect()
+    pub fn sequence_text(&self, sequence: &Sequence) -> String {
+        sequence
+            .items
+            .iter()
+            .map(|item| self.item_text(item))
+            .collect()
     }
 
     /// Returns an element's attribute, if it has one by that name. Case is

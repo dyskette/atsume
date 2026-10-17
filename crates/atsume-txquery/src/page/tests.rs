@@ -21,7 +21,11 @@ fn texts(expression: &str) -> Vec<String> {
     let engine = Engine::new();
     let mut page = page();
     let result = page.evaluate(&engine, expression, None).unwrap();
-    result.items().iter().map(|item| page.text(item)).collect()
+    result
+        .items()
+        .iter()
+        .map(|item| page.item_text(item))
+        .collect()
 }
 
 #[test]
@@ -61,10 +65,10 @@ fn a_sequence_reads_as_its_items_joined_with_nothing_between() {
     let engine = Engine::new();
     let mut page = page();
     let links = page.evaluate(&engine, "//li/a", None).unwrap();
-    assert_eq!(page.joined_text(&links), "Chapter 2Chapter 1");
+    assert_eq!(page.sequence_text(&links), "Chapter 2Chapter 1");
     let none = page.evaluate(&engine, "//nothing", None).unwrap();
     assert!(none.is_empty());
-    assert_eq!(page.joined_text(&none), "");
+    assert_eq!(page.sequence_text(&none), "");
 }
 
 #[test]
@@ -76,7 +80,7 @@ fn an_expression_may_start_from_a_node() {
         panic!("a list item should be a node");
     };
     let link = page.evaluate(&engine, "a/@href", Some(second)).unwrap();
-    assert_eq!(page.joined_text(&link), "/manga/solo/1/");
+    assert_eq!(page.sequence_text(&link), "/manga/solo/1/");
     assert_eq!(
         page.attribute(second, "class").as_deref(),
         Some("wp-manga-chapter")
@@ -123,7 +127,7 @@ fn invalid_utf8_is_replaced() {
     let engine = Engine::new();
     let mut page = Page::parse_html(b"<p>caf\xe9</p>");
     let text = page.evaluate(&engine, "//p", None).unwrap();
-    assert_eq!(page.joined_text(&text), "caf\u{fffd}");
+    assert_eq!(page.sequence_text(&text), "caf\u{fffd}");
 }
 
 const API: &str = r#"{"data": {"title": "Solo", "items": [
@@ -136,7 +140,11 @@ fn json_texts(expression: &str) -> Vec<String> {
     let engine = Engine::new();
     let mut page = Page::parse_html(API.as_bytes());
     let result = page.evaluate(&engine, expression, None).unwrap();
-    result.items().iter().map(|item| page.text(item)).collect()
+    result
+        .items()
+        .iter()
+        .map(|item| page.item_text(item))
+        .collect()
 }
 
 #[test]
@@ -176,7 +184,7 @@ fn an_html_encoded_response_is_still_json() {
     let encoded = "{&quot;summary&quot;: &quot;&lt;b&gt;bold&lt;/b&gt;&quot;}";
     let mut page = Page::parse_html(encoded.as_bytes());
     let summary = page.evaluate(&engine, "json(*).summary", None).unwrap();
-    assert_eq!(page.joined_text(&summary), "<b>bold</b>");
+    assert_eq!(page.sequence_text(&summary), "<b>bold</b>");
 }
 
 #[test]
@@ -184,7 +192,7 @@ fn a_response_html_parsing_breaks_is_read_as_received() {
     let engine = Engine::new();
     let mut page = Page::parse_html(br#"{"note": "<!-- hidden", "id": 7}"#);
     let id = page.evaluate(&engine, "json(*).id", None).unwrap();
-    assert_eq!(page.joined_text(&id), "7");
+    assert_eq!(page.sequence_text(&id), "7");
 }
 
 #[test]
@@ -198,7 +206,7 @@ fn json_reads_any_text_the_page_holds() {
         result
             .items()
             .iter()
-            .map(|item| page.text(item))
+            .map(|item| page.item_text(item))
             .collect::<Vec<_>>()
     };
     assert_eq!(
@@ -277,7 +285,7 @@ fn a_listed_json_item_is_the_context_for_the_next_expression() {
                 panic!("an item should be a node")
             };
             let name = page.evaluate(&engine, "name", Some(*node)).unwrap();
-            page.joined_text(&name)
+            page.sequence_text(&name)
         })
         .collect();
     assert_eq!(names, ["Chapter 2", "Chapter 1"]);
@@ -299,7 +307,7 @@ fn a_property_xpath_cannot_name_is_still_read() {
     let url = page
         .evaluate(&engine, "json(*).image.1280x720.url", None)
         .unwrap();
-    assert_eq!(page.joined_text(&url), "/big.jpg");
+    assert_eq!(page.sequence_text(&url), "/big.jpg");
 }
 
 /// Returns the first item of `expression`'s result, which must be a node.
@@ -317,7 +325,7 @@ fn a_property_is_a_child_named_after_it() {
     let mut page = Page::parse_html(br#"{"data": {"title": "One", "id": 7}}"#);
     let data = first_node(&mut page, &engine, "json(*).data");
     let title = page.property(data, "title").unwrap();
-    assert_eq!(page.text(&Item::Node(title)), "One");
+    assert_eq!(page.item_text(&Item::Node(title)), "One");
     assert_eq!(page.property(data, "missing"), None);
 }
 
@@ -327,11 +335,11 @@ fn nodes_of_a_replaced_page_still_read_from_it() {
     let mut page = Page::parse_html(b"<p>old</p>");
     let old = first_node(&mut page, &engine, "//p");
     page.replace_html(b"<b>new</b>");
-    assert_eq!(page.text(&Item::Node(old)), "old");
+    assert_eq!(page.item_text(&Item::Node(old)), "old");
     let new = page.evaluate(&engine, "//b | //p", None).unwrap();
-    assert_eq!(page.joined_text(&new), "new");
+    assert_eq!(page.sequence_text(&new), "new");
     let from_old = page.evaluate(&engine, "text()", Some(old)).unwrap();
-    assert_eq!(page.joined_text(&from_old), "old");
+    assert_eq!(page.sequence_text(&from_old), "old");
 }
 
 #[test]
@@ -339,14 +347,14 @@ fn capitalised_names_match_html_in_any_case_and_json_exactly() {
     let engine = Engine::new();
     let mut page = Page::parse_html(br#"<TotalPage>3</TotalPage><div data-URL="/x"></div>"#);
     let total = page.evaluate(&engine, "//TotalPage", None).unwrap();
-    assert_eq!(page.joined_text(&total), "3");
+    assert_eq!(page.sequence_text(&total), "3");
     let url = page.evaluate(&engine, "//DIV/@data-URL", None).unwrap();
-    assert_eq!(page.joined_text(&url), "/x");
+    assert_eq!(page.sequence_text(&url), "/x");
     let mut json = Page::parse_html(br#"{"pageProps": {"Title": "A", "title": "B"}}"#);
     let title = json
         .evaluate(&engine, "json(*)/pageProps/Title", None)
         .unwrap();
-    assert_eq!(json.joined_text(&title), "AB");
+    assert_eq!(json.sequence_text(&title), "AB");
 }
 
 #[test]
@@ -355,7 +363,7 @@ fn comparisons_ignore_ascii_case_as_upstream_does() {
     let mut page = Page::parse_html(br#"<p class="Status">Status: ONGOING</p>"#);
     let mut text = |expression: &str| {
         let result = page.evaluate(&engine, expression, None).unwrap();
-        page.joined_text(&result)
+        page.sequence_text(&result)
     };
     assert_eq!(
         text(r#"//p[@class = "status"]/substring-after(., "status: ")"#),
@@ -371,7 +379,7 @@ fn json_keys_still_match_exactly() {
     let engine = Engine::new();
     let mut page = Page::parse_html(br#"{"Title": "upper", "title": "lower"}"#);
     let title = page.evaluate(&engine, r#"json(*)("title")"#, None).unwrap();
-    assert_eq!(page.joined_text(&title), "lower");
+    assert_eq!(page.sequence_text(&title), "lower");
 }
 
 #[test]
@@ -380,14 +388,14 @@ fn a_node_of_another_page_reads_as_nothing() {
     let mut first = Page::parse_html(br#"<p id="a">first</p>"#);
     let mut second = Page::parse_html(b"<p>second</p>");
     let paragraph = first_node(&mut first, &engine, "//p");
-    assert_eq!(second.text(&Item::Node(paragraph)), "");
+    assert_eq!(second.item_text(&Item::Node(paragraph)), "");
     assert_eq!(second.attribute(paragraph, "id"), None);
     assert_eq!(second.property(paragraph, "p"), None);
     let failed = second
         .evaluate(&engine, "text()", Some(paragraph))
         .unwrap_err();
     assert!(matches!(failed, Error::Evaluate { .. }), "{failed}");
-    assert_eq!(first.text(&Item::Node(paragraph)), "first");
+    assert_eq!(first.item_text(&Item::Node(paragraph)), "first");
 }
 
 #[test]

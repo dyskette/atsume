@@ -60,7 +60,7 @@ impl ValueObject {
     /// Returns each item's text.
     pub(super) fn texts(&self) -> mlua::Result<Vec<String>> {
         let page = self.page()?;
-        Ok(self.items.iter().map(|item| page.text(item)).collect())
+        Ok(self.items.iter().map(|item| page.item_text(item)).collect())
     }
 
     /// Returns the object's text as upstream's `ToString` gives it: every
@@ -71,7 +71,7 @@ impl ValueObject {
 
     /// Returns one item's text.
     pub(super) fn item_text(&self, item: &Item) -> mlua::Result<String> {
-        Ok(self.page()?.text(item))
+        Ok(self.page()?.item_text(item))
     }
 
     /// Returns an item's attribute, or `""` when it has none or is not an

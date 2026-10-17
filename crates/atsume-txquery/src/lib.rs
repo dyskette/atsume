@@ -11,7 +11,7 @@
 //! let engine = Engine::new();
 //! let mut page = Page::parse_html(b"<p>Status: <b>Ongoing</b></p>");
 //! let status = page.evaluate(&engine, "substring-after(//p, ': ')", None).unwrap();
-//! assert_eq!(page.joined_text(&status), "Ongoing");
+//! assert_eq!(page.sequence_text(&status), "Ongoing");
 //! ```
 //!
 //! An expression goes through two halves. The [`Engine`] prepares it once:

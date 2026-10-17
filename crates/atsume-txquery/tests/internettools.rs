@@ -26,7 +26,7 @@ fn check(page: &str, cases: &[Case], separator: &str) {
             let texts: Vec<String> = result
                 .items()
                 .iter()
-                .map(|item| document.text(item))
+                .map(|item| document.item_text(item))
                 .collect();
             texts.join(separator)
         });
