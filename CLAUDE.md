@@ -50,14 +50,19 @@ that line, and then say why in the attribute's `reason`.
 - A doc comment opens with one sentence saying what the item does. Add more
   only for what a caller must know: errors, edge cases, an upstream contract.
 - Write full, plain sentences that a reader new to the file understands
-  without any other context.
-- Keep comments to one or two sentences. Longer reasoning belongs in `docs/`,
-  with the comment pointing there.
+  without any other context. Every sentence has a subject and a verb, and a
+  pronoun refers only to something the same comment has named.
+- Keep comments short, but prefer three plain sentences to two crowded ones.
+  Reasoning that needs a paragraph belongs in `docs/`, with the comment
+  pointing there.
+- Say directly what is true. Do not describe something by what it is not, and
+  do not repeat a stock phrase from one comment to the next. When every item
+  of a type needs the same remark, make the remark once on the type.
 - No history: not what the code used to do, nor what was fixed. That belongs
   in commit messages.
 - Do not state counts or facts that can go stale ("used by 113 modules")
   unless a test keeps them checked.
-- Name Rust items after what they are, even where FMD2's name says
-  otherwise. The FMD2 name stays in the string that binds it and in the
-  item's doc comment, in backticks (``Modules see it as `TASK.PageNumber`.``),
-  so a grep for the Lua name finds the Rust one.
+- Name each Rust item after what it holds or does, even when FMD2 uses a
+  different name for it. Keep the FMD2 name easy to find: it stays in the
+  string that binds the item to Lua, and the item's doc comment mentions it in
+  backticks, as in "Modules read and change it through `HTTP.UserAgent`."
