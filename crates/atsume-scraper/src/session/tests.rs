@@ -85,7 +85,7 @@ const SETTINGS: &str = "local m = NewWebsiteModule(); m.Name = 'Site'; m.TotalDi
 
 #[test]
 fn module_exposes_the_selected_site() {
-    let session = open_module(SETTINGS, "");
+    let mut session = open_module(SETTINGS, "");
     assert_eq!(
         session.eval("MODULE.Name .. MODULE.TotalDirectory"),
         "Site2"
@@ -94,15 +94,15 @@ fn module_exposes_the_selected_site() {
     assert_eq!(session.eval(storage), "from init|");
     assert_eq!(session.eval("MODULE.GetOption('n') + 1"), "6");
 
-    session.select_directory(1).unwrap();
+    session.directory_pages(1).unwrap();
     assert_eq!(session.eval("MODULE.CurrentDirectoryIndex"), "1");
-    let beyond = session.select_directory(2).unwrap_err();
+    let beyond = session.directory_pages(2).unwrap_err();
     assert_eq!(beyond.kind(), ErrorKind::Unsupported);
 }
 
 #[test]
 fn settings_take_only_values_that_suit_them() {
-    let session = open_module(SETTINGS, "");
+    let mut session = open_module(SETTINGS, "");
     session.set_option("n", OptionValue::Int(7)).unwrap();
     session.set_option("c", OptionValue::Bool(true)).unwrap();
     session
@@ -138,7 +138,7 @@ end";
 #[test]
 fn login_reports_what_the_module_recorded() {
     let init = "local m = NewWebsiteModule(); m.Name = 'L'; m.OnLogin = 'Login'";
-    let session = open_module(init, LOGIN);
+    let mut session = open_module(init, LOGIN);
     assert_eq!(session.login().unwrap_err().kind(), ErrorKind::Unsupported);
     assert_eq!(session.eval("MODULE.Account.Status"), "-1");
 
@@ -156,13 +156,13 @@ fn login_reports_what_the_module_recorded() {
 #[test]
 fn directory_pages_reads_pagenumber() {
     let init = "local m = NewWebsiteModule(); m.Name = 'D'; m.OnGetDirectoryPageNumber = 'Pages'";
-    let session = open_module(
+    let mut session = open_module(
         init,
         "function Pages() PAGENUMBER = 12.0; return no_error end",
     );
-    assert_eq!(session.directory_pages().unwrap(), 12);
-    let without_handler = open_module("NewWebsiteModule()", "");
-    assert_eq!(without_handler.directory_pages().unwrap(), 1);
+    assert_eq!(session.directory_pages(0).unwrap(), 12);
+    let mut without_handler = open_module("NewWebsiteModule()", "");
+    assert_eq!(without_handler.directory_pages(0).unwrap(), 1);
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn after_image_saved_may_edit_only_that_page() {
     let init = "local m = NewWebsiteModule(); m.Name = 'W'; m.OnAfterImageSaved = 'Edit'";
     let rest =
         "function Edit() local f = io.open(FILENAME, 'wb'); f:write('EDITED'); f:close() end";
-    let session = open_module(init, rest);
+    let mut session = open_module(init, rest);
 
     session.after_image_saved(&page).unwrap();
     assert_eq!(std::fs::read_to_string(&page).unwrap(), "EDITED");
@@ -339,7 +339,7 @@ end";
 
 #[test]
 fn info_returns_what_the_module_recorded() {
-    let session = open_module(
+    let mut session = open_module(
         "local m = NewWebsiteModule(); m.Name = 'S'; m.OnGetInfo = 'Info'",
         INFO,
     );
@@ -368,7 +368,7 @@ fn info_returns_what_the_module_recorded() {
 
 #[test]
 fn info_reports_a_page_without_a_series() {
-    let session = open_module(
+    let mut session = open_module(
         "local m = NewWebsiteModule(); m.Name = 'S'; m.OnGetInfo = 'Info'",
         INFO,
     );
@@ -405,7 +405,7 @@ fn pages_lists_images_against_the_site() {
         TASK.PageLinks.Add('/p/1.jpg'); TASK.PageLinks.Add('//cdn.example/2.jpg')
         return true end
         function Image() return true end";
-    let session = open_module(PAGES_INIT, rest);
+    let mut session = open_module(PAGES_INIT, rest);
     let pages = session.pages("/chapter/1").unwrap();
     assert_eq!(
         pages,
@@ -428,7 +428,7 @@ fn pages_found_only_when_asked_are_resolved_one_at_a_time() {
         CALLS = (CALLS or 0) + 1
         TASK.PageLinks[WORKID] = TASK.PageContainerLinks[WORKID] .. '.jpg?from=' .. URL
         return true end";
-    let session = open_module(PAGES_INIT, rest);
+    let mut session = open_module(PAGES_INIT, rest);
     let pages = session.pages("/chapter/1").unwrap();
     assert_eq!(
         pages,
@@ -453,7 +453,7 @@ fn a_module_may_resolve_every_page_on_the_first_call() {
         CALLS = (CALLS or 0) + 1
         if WORKID == 0 then TASK.PageLinks.Add('/1.jpg'); TASK.PageLinks.Add('/2.jpg') end
         return true end";
-    let session = open_module(PAGES_INIT, rest);
+    let mut session = open_module(PAGES_INIT, rest);
     assert_eq!(session.pages("/chapter/1").unwrap().len(), 2);
     session.resolve_page("/chapter/1", 0).unwrap();
     assert_eq!(
@@ -467,7 +467,7 @@ fn a_module_may_resolve_every_page_on_the_first_call() {
 fn a_page_is_resolved_only_for_the_chapter_last_listed() {
     let rest = "function Pages() TASK.PageNumber = 1; return true end
         function Image() return true end";
-    let session = open_module(PAGES_INIT, rest);
+    let mut session = open_module(PAGES_INIT, rest);
     let unlisted = session.resolve_page("/chapter/1", 0).unwrap_err();
     assert_eq!(unlisted.kind(), ErrorKind::Unsupported);
     session.pages("/chapter/1").unwrap();
@@ -478,7 +478,7 @@ fn a_page_is_resolved_only_for_the_chapter_last_listed() {
 
 #[test]
 fn pages_reports_a_refusal_or_no_pages() {
-    let refused = open_module(PAGES_INIT, "function Pages() return false end");
+    let mut refused = open_module(PAGES_INIT, "function Pages() return false end");
     let err = refused.pages("/chapter/1").unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Module);
     assert!(
@@ -487,7 +487,7 @@ fn pages_reports_a_refusal_or_no_pages() {
         "{err}"
     );
 
-    let empty = open_module(PAGES_INIT, "function Pages() return true end");
+    let mut empty = open_module(PAGES_INIT, "function Pages() return true end");
     assert_eq!(
         empty.pages("/chapter/1").unwrap_err().kind(),
         ErrorKind::NotFound
@@ -498,7 +498,7 @@ fn pages_reports_a_refusal_or_no_pages() {
 fn counted_pages_need_a_way_to_resolve_them() {
     let init = "local m = NewWebsiteModule(); m.Name = 'P'; m.OnGetPageNumber = 'Pages'";
     let rest = "function Pages() TASK.PageNumber = 5; TASK.PageLinks.Add('https://a.example/1.jpg'); return true end";
-    let session = open_module(init, rest);
+    let mut session = open_module(init, rest);
     assert_eq!(session.pages("/chapter/1").unwrap().len(), 1);
 }
 
@@ -513,12 +513,12 @@ end";
 #[test]
 fn list_reads_one_directory_page() {
     let init = "local m = NewWebsiteModule(); m.Name = 'D'; m.OnGetNameAndLink = 'List'";
-    let session = open_module(init, LISTING);
+    let mut session = open_module(init, LISTING);
     let messages = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let sink = std::rc::Rc::clone(&messages);
     session.on_status(move |text| sink.borrow_mut().push(text.to_owned()));
 
-    let first = session.list(0).unwrap();
+    let first = session.list(0, 0).unwrap();
     let entries: Vec<_> = first
         .entries
         .iter()
@@ -531,7 +531,7 @@ fn list_reads_one_directory_page() {
     assert_eq!(first.reported_pages, Some(3));
 
     // Each page starts from empty lists and no reported count.
-    let second = session.list(1).unwrap();
+    let second = session.list(0, 1).unwrap();
     assert_eq!(second.entries.len(), 1);
     assert_eq!(second.reported_pages, None);
     assert_eq!(*messages.borrow(), ["reading page 1", "reading page 2"]);

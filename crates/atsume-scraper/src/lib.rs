@@ -10,8 +10,8 @@
 //! # fn main() -> atsume_scraper::Result<()> {
 //! let catalog = Catalog::load("/data/modules/lua")?;
 //! let site = catalog.site("MangaDex", None).expect("declared by the checkout");
-//! let session = site.open(&SessionConfig::default(), CancelToken::new())?;
-//! println!("{} has {} directory pages", site.module().name, session.directory_pages()?);
+//! let mut session = site.open(&SessionConfig::default(), CancelToken::new())?;
+//! println!("{} has {} directory pages", site.module().name, session.directory_pages(0)?);
 //! # Ok(())
 //! # }
 //! ```

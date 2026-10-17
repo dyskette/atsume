@@ -339,7 +339,7 @@ fn image_hooks_use_the_http_object() {
     let rest =
         "function Before() HTTP.Headers.Values['Referer'] = MODULE.RootURL .. 'r'; return true end
         function Download() return HTTP.GET(URL) end";
-    let runner = open_module_with(&config(transport), CancelToken::new(), init, rest);
+    let mut runner = open_module_with(&config(transport), CancelToken::new(), init, rest);
     let headers = runner
         .before_download_image("https://img.example/1.jpg")
         .unwrap();
@@ -455,7 +455,7 @@ fn a_reported_network_problem_carries_the_last_request() {
     let transport = scripted(|_, _| Ok(respond(404, "missing")));
     let init = "local m = NewWebsiteModule(); m.Name = 'Net'; m.OnGetInfo = 'Info'";
     let rest = "function Info() if not HTTP.GET('https://a.example' .. URL) then return net_problem end end";
-    let session = open_module_with(&config(transport), CancelToken::new(), init, rest);
+    let mut session = open_module_with(&config(transport), CancelToken::new(), init, rest);
     let err = session.info("/series/x").unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Network);
     let request = err.request().unwrap();
@@ -474,7 +474,7 @@ fn a_page_handler_reporting_net_problem_is_a_network_error() {
     let transport = scripted(|_, _| Ok(respond(503, "")));
     let init = "local m = NewWebsiteModule(); m.Name = 'Net'; m.OnGetPageNumber = 'Pages'";
     let rest = "function Pages() if not HTTP.GET('https://a.example' .. URL) then return net_problem end return no_error end";
-    let session = open_module_with(&config(transport), CancelToken::new(), init, rest);
+    let mut session = open_module_with(&config(transport), CancelToken::new(), init, rest);
     let err = session.pages("/chapter/1").unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Network, "{err}");
     assert_eq!(err.request().unwrap().status, 503);
@@ -485,8 +485,8 @@ fn a_listing_reporting_net_problem_names_the_page() {
     let transport = scripted(|_, _| Ok(respond(404, "")));
     let init = "local m = NewWebsiteModule(); m.Name = 'Net'; m.OnGetNameAndLink = 'List'";
     let rest = "function List() if not HTTP.GET('https://a.example/page/' .. (URL + 1)) then return net_problem end return no_error end";
-    let session = open_module_with(&config(transport), CancelToken::new(), init, rest);
-    let err = session.list(2).unwrap_err();
+    let mut session = open_module_with(&config(transport), CancelToken::new(), init, rest);
+    let err = session.list(0, 2).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Network);
     assert_eq!(
         err.to_string(),

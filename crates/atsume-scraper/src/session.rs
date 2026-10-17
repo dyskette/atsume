@@ -55,10 +55,10 @@ impl SessionConfig {
 
 /// A website's module loaded into its own Lua runtime, for one scrape.
 ///
-/// Open one with [`Site::open`](crate::Site::open). A session is
-/// single-threaded and keeps its cookies and settings across calls, as
-/// modules expect. Run it on a thread that may block: requests wait on the
-/// network.
+/// Open one with [`Site::open`](crate::Site::open). A session keeps its
+/// cookies and settings across calls, as modules expect. It is not `Send`:
+/// open it on the thread that runs the scrape and keep it there, a thread
+/// that may block, since requests wait on the network.
 pub struct Session {
     runtime: Runtime,
 }
@@ -90,6 +90,16 @@ impl Session {
         self.state::<SiteState>().module.clone()
     }
 
+    /// Returns the website's name, for error messages.
+    fn module_name(&self) -> String {
+        self.state::<SiteState>().module.name.clone()
+    }
+
+    /// Returns the address the website is reached at now.
+    fn root_url(&self) -> String {
+        self.state::<SiteState>().module.root_url.clone()
+    }
+
     /// Reports whether the module implements `event`.
     #[must_use]
     pub fn has_handler(&self, event: Event) -> bool {
@@ -103,7 +113,7 @@ impl Session {
     /// Fails if the module declares no such setting, or the value does not
     /// suit it: a checkbox takes a flag, a number field a whole number, a
     /// choice the index of one of its items, and a text field text.
-    pub fn set_option(&self, name: &str, value: OptionValue) -> Result<()> {
+    pub fn set_option(&mut self, name: &str, value: OptionValue) -> Result<()> {
         let mut site = self.state::<SiteState>();
         let module = &site.module;
         let Some(option) = module.options.iter().find(|o| o.name == name) else {
@@ -128,7 +138,7 @@ impl Session {
     }
 
     /// Supplies credentials for a module that implements `OnLogin`.
-    pub fn set_account(&self, username: &str, password: &str) {
+    pub fn set_account(&mut self, username: &str, password: &str) {
         let mut account = self.state::<Account>();
         account.enabled = !username.is_empty();
         username.clone_into(&mut account.username);
@@ -141,13 +151,9 @@ impl Session {
         self.state::<Account>().status
     }
 
-    /// Selects which of the site's directory listings to walk next, counting
-    /// from 0.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the site has no listing with that index.
-    pub fn select_directory(&self, index: u32) -> Result<()> {
+    /// Points `MODULE.CurrentDirectoryIndex` at directory listing `index`,
+    /// counting from 0, which the module reads to know which listing to walk.
+    fn select_directory(&mut self, index: u32) -> Result<()> {
         let mut site = self.state::<SiteState>();
         if index >= site.module.directories {
             let message = format!(
@@ -168,21 +174,24 @@ impl Session {
         self.state::<HttpSession>().last.clone()
     }
 
-    /// Runs `OnGetNameAndLink` for one page, counting from 0, of the selected
-    /// directory listing.
+    /// Runs `OnGetNameAndLink` for one page of directory listing `directory`,
+    /// both counting from 0.
     ///
     /// # Errors
     ///
-    /// Fails if the module has no `OnGetNameAndLink` handler, the handler
-    /// fails, or a request it needed failed ([`Network`](ErrorKind::Network)).
-    pub fn list(&self, page: u32) -> Result<DirectoryPage> {
+    /// Fails if the site has no such listing
+    /// ([`Unsupported`](ErrorKind::Unsupported)), the module has no
+    /// `OnGetNameAndLink` handler, the handler fails, or a request it needed
+    /// failed ([`Network`](ErrorKind::Network)).
+    pub fn list(&mut self, directory: u32, page: u32) -> Result<DirectoryPage> {
+        self.select_directory(directory)?;
         *self.state::<Directory>() = Directory::default();
         globals::set_page_index(&self.runtime.lua, page)?;
         let code = to_int(&self.runtime.lua, &self.call(Event::GetNameAndLink)?);
         if code == globals::NET_PROBLEM {
             let what = format!("listing page {}", u64::from(page) + 1);
             return Err(Error::network(
-                &self.module().name,
+                &self.module_name(),
                 &what,
                 self.last_request(),
             ));
@@ -192,17 +201,20 @@ impl Session {
 
     /// Sends the progress messages a module reports while it runs, through
     /// `UPDATELIST.UpdateStatusText`, to `report`.
-    pub fn on_status(&self, report: impl FnMut(&str) + 'static) {
+    pub fn on_status(&mut self, report: impl FnMut(&str) + 'static) {
         self.state::<StatusSink>().0 = Some(Box::new(report));
     }
 
-    /// Runs `OnGetDirectoryPageNumber`, returning how many pages the selected
-    /// directory listing has. A module without the handler has one.
+    /// Runs `OnGetDirectoryPageNumber`, returning how many pages directory
+    /// listing `directory`, counting from 0, has. A module without the
+    /// handler has one.
     ///
     /// # Errors
     ///
-    /// Fails if the handler fails.
-    pub fn directory_pages(&self) -> Result<u32> {
+    /// Fails if the site has no such listing
+    /// ([`Unsupported`](ErrorKind::Unsupported)) or the handler fails.
+    pub fn directory_pages(&mut self, directory: u32) -> Result<u32> {
+        self.select_directory(directory)?;
         if !self.has_handler(Event::GetDirectoryPageNumber) {
             return Ok(1);
         }
@@ -220,11 +232,11 @@ impl Session {
     /// Fails if the module has no `OnGetInfo` handler, the handler fails, a
     /// request it needed failed ([`Network`](ErrorKind::Network)), or the page
     /// holds no series ([`NotFound`](ErrorKind::NotFound)).
-    pub fn info(&self, series_url: &str) -> Result<SeriesInfo> {
+    pub fn info(&mut self, series_url: &str) -> Result<SeriesInfo> {
         *self.state::<MangaInfo>() = MangaInfo::for_url(series_url);
         globals::set_url(&self.runtime.lua, series_url)?;
         let code = to_int(&self.runtime.lua, &self.call(Event::GetInfo)?);
-        let module = self.module().name;
+        let module = self.module_name();
         match code {
             globals::NET_PROBLEM => {
                 let what = format!("fetching {series_url}");
@@ -254,17 +266,16 @@ impl Session {
     /// or declines, a request it needed failed
     /// ([`Network`](ErrorKind::Network)), or it lists no pages
     /// ([`NotFound`](ErrorKind::NotFound)).
-    pub fn pages(&self, chapter_url: &str) -> Result<Vec<ChapterPage>> {
+    pub fn pages(&mut self, chapter_url: &str) -> Result<Vec<ChapterPage>> {
         *self.state::<Task>() = Task::for_chapter(chapter_url);
         globals::set_url(&self.runtime.lua, chapter_url)?;
         let result = self.call(Event::GetPageNumber)?;
         self.check_outcome(&result, &format!("reading pages for {chapter_url}"))?;
 
-        let module = self.module();
         let resolvable = self.has_handler(Event::GetImageUrl);
-        let pages = self.state::<Task>().pages(&module.root_url, resolvable);
+        let pages = self.state::<Task>().pages(&self.root_url(), resolvable);
         if pages.is_empty() {
-            let message = format!("{}: no pages listed for {chapter_url}", module.name);
+            let message = format!("{}: no pages listed for {chapter_url}", self.module_name());
             return Err(Error::new(ErrorKind::NotFound, message));
         }
         Ok(pages)
@@ -283,13 +294,13 @@ impl Session {
     /// handler fails or declines, a request it needed failed
     /// ([`Network`](ErrorKind::Network)), or it leaves the page without an
     /// address.
-    pub fn resolve_page(&self, chapter_url: &str, index: usize) -> Result<String> {
-        let module = self.module();
+    pub fn resolve_page(&mut self, chapter_url: &str, index: usize) -> Result<String> {
+        let root_url = self.root_url();
         if !self.state::<Task>().is_for(chapter_url) {
             let message = format!("list the pages of {chapter_url} before resolving one");
             return Err(Error::new(ErrorKind::Unsupported, message));
         }
-        if let ChapterPage::Image(url) = self.state::<Task>().page(&module.root_url, index) {
+        if let ChapterPage::Image(url) = self.state::<Task>().page(&root_url, index) {
             return Ok(url);
         }
         globals::set_url(&self.runtime.lua, chapter_url)?;
@@ -297,10 +308,10 @@ impl Session {
         let what = format!("resolving page {} of {chapter_url}", index + 1);
         let result = self.call(Event::GetImageUrl)?;
         self.check_outcome(&result, &what)?;
-        match self.state::<Task>().page(&module.root_url, index) {
+        match self.state::<Task>().page(&root_url, index) {
             ChapterPage::Image(url) => Ok(url),
             ChapterPage::Unresolved => {
-                let message = format!("{}: no image address after {what}", module.name);
+                let message = format!("{}: no image address after {what}", self.module_name());
                 Err(Error::new(ErrorKind::Module, message))
             }
         }
@@ -312,7 +323,7 @@ impl Session {
     /// `no_error`. `false` or `nil` is a refusal, and `net_problem` is a
     /// failed request, though Lua reads both codes as true.
     fn check_outcome(&self, result: &Value, what: &str) -> Result<()> {
-        let module = self.module().name;
+        let module = self.module_name();
         let net_problem = globals::NET_PROBLEM;
         match result {
             Value::Nil | Value::Boolean(false) => {
@@ -334,8 +345,8 @@ impl Session {
     /// Fails if the module has no login handler, no credentials were set, the
     /// handler fails, or the module recorded the credentials as invalid even
     /// though the handler succeeded.
-    pub fn login(&self) -> Result<bool> {
-        let module = self.module().name;
+    pub fn login(&mut self) -> Result<bool> {
+        let module = self.module_name();
         if !self.has_handler(Event::Login) {
             return Err(no_handler(&module, Event::Login));
         }
@@ -357,7 +368,7 @@ impl Session {
     /// # Errors
     ///
     /// Fails if the handler fails.
-    pub fn before_download_image(&self, image_url: &str) -> Result<HashMap<String, String>> {
+    pub fn before_download_image(&mut self, image_url: &str) -> Result<HashMap<String, String>> {
         if !self.has_handler(Event::BeforeDownloadImage) {
             return Ok(HashMap::new());
         }
@@ -378,10 +389,10 @@ impl Session {
     /// # Errors
     ///
     /// Fails if the handler fails, returns false, or leaves no data.
-    pub fn download_image(&self, image_url: &str) -> Result<Vec<u8>> {
+    pub fn download_image(&mut self, image_url: &str) -> Result<Vec<u8>> {
         self.state::<HttpSession>().document.clear();
         globals::set_url(&self.runtime.lua, image_url)?;
-        let module = self.module().name;
+        let module = self.module_name();
         if !truthy(&self.call(Event::DownloadImage)?) {
             let message = format!("{module}: module declined to download {image_url}");
             return Err(Error::new(ErrorKind::Module, message));
@@ -400,7 +411,7 @@ impl Session {
     /// # Errors
     ///
     /// Fails if the handler fails.
-    pub fn after_image_saved(&self, path: &Path) -> Result<()> {
+    pub fn after_image_saved(&mut self, path: &Path) -> Result<()> {
         if !self.has_handler(Event::AfterImageSaved) {
             return Ok(());
         }
@@ -413,18 +424,22 @@ impl Session {
 
     /// Calls the Lua function bound to `event` and returns its result.
     pub(crate) fn call(&self, event: Event) -> Result<Value> {
-        let module = self.module();
-        let Some(function) = module.handler(event).map(str::to_owned) else {
-            return Err(no_handler(&module.name, event));
+        let module = self.module_name();
+        let function = self
+            .state::<SiteState>()
+            .module
+            .handler(event)
+            .map(str::to_owned);
+        let Some(function) = function else {
+            return Err(no_handler(&module, event));
         };
         let Value::Function(handler) = self.runtime.lua.globals().get(function.as_str())? else {
             let message = format!(
-                "module {} declares {event}={function:?} but defines no such function",
-                module.name
+                "module {module} declares {event}={function:?} but defines no such function"
             );
             return Err(Error::new(ErrorKind::Module, message));
         };
-        let context = format!("{}/{function}", module.name);
+        let context = format!("{module}/{function}");
         self.runtime
             .protect(|_| handler.call::<Value>(()))
             .map_err(|e| e.within(context, ErrorKind::Module))
