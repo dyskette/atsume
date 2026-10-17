@@ -1,18 +1,20 @@
-//! One HTTP exchange, without redirects or cookies.
+//! Sends one HTTP request and returns its response, without redirects or
+//! cookies.
 //!
-//! [`Transport`] is the seam tests and recorded-traffic replay plug into.
-//! Redirects and the cookie jar are handled above it, so they behave the same
-//! whichever transport is in use.
+//! Tests and the replay of recorded traffic plug into [`Transport`]. Redirects
+//! and the cookie jar are handled above it, so they behave the same whichever
+//! transport is in use.
 
 use std::time::Duration;
 
 use url::Url;
 
-/// The most of a response body the default transport reads: well above any
-/// page or image, and a bound on what a hostile server can make us hold.
+/// The largest response body that the default transport reads. It is well
+/// above the size of any page or image, and it bounds how much memory a
+/// hostile server can make atsume use.
 const MAX_BODY: u64 = 64 * 1024 * 1024;
 
-/// A request method modules use.
+/// A request method that modules use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
     /// `GET`.
@@ -36,13 +38,13 @@ impl Method {
 /// One request.
 #[derive(Clone, Debug)]
 pub struct Request {
-    /// The method.
+    /// The request method.
     pub method: Method,
-    /// The address.
+    /// The address to request.
     pub url: Url,
     /// Header names and values, in the order they are sent.
     pub headers: Vec<(String, String)>,
-    /// The body; empty for none.
+    /// The body, which is empty when the request has none.
     pub body: Vec<u8>,
 }
 
@@ -67,20 +69,20 @@ impl Response {
     }
 }
 
-/// Why a request got no response at all: a name that did not resolve, a
-/// refused connection, a timeout.
+/// Why a request got no response at all, such as a name that did not resolve,
+/// a refused connection or a timeout.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct TransportError(pub String);
 
 /// Sends a single request and returns the response as received.
 ///
-/// An implementation must not follow redirects or keep cookies, and must
-/// return error statuses as responses rather than errors.
+/// An implementation must not follow redirects or keep cookies, and it must
+/// return error statuses as responses rather than as errors.
 ///
-/// Each request runs on a thread of its own. When the scrape is cancelled the
-/// request is abandoned, but its thread lives until `send` returns, so `send`
-/// must give up after a timeout.
+/// Each request runs on a thread of its own. When the scrape is cancelled, the
+/// request is abandoned, but its thread lives on until `send` returns. `send`
+/// must therefore give up after a timeout.
 pub trait Transport: Send + Sync {
     /// Sends `request`.
     ///
@@ -96,7 +98,7 @@ pub struct UreqTransport {
 }
 
 impl UreqTransport {
-    /// Returns a transport whose requests time out after `timeout`, which is
+    /// Returns a transport whose requests time out after `timeout`. That is
     /// also how long an abandoned request can keep its thread.
     #[must_use]
     pub fn new(timeout: Duration) -> Self {
