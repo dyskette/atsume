@@ -158,6 +158,8 @@ fn attribute_test(inside: &str) -> Result<String, String> {
     let value = value.trim().trim_matches(['"', '\'']);
     let test = match operator {
         "" => format!("{name} = {}", quoted(value)),
+        // A value with whitespace in it can never be one word of the list.
+        "~" if value.is_empty() || value.contains(char::is_whitespace) => "false()".to_owned(),
         "~" => has_word(&name, value),
         "^" => format!("starts-with({name}, {})", quoted(value)),
         "$" => format!("ends-with({name}, {})", quoted(value)),
@@ -284,6 +286,7 @@ mod tests {
             to_xpath("img[data-src], h1 + p").unwrap(),
             ".//img[@data-src] | .//h1/following-sibling::*[1]/self::p"
         );
+        assert_eq!(to_xpath("[title~='a b']").unwrap(), ".//*[false()]");
     }
 
     #[test]
