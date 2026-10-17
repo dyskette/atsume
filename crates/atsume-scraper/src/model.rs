@@ -16,7 +16,7 @@ pub struct SiteOption {
     pub caption: String,
     /// The value before the reader changes it, if the module gave one.
     pub default: Option<OptionValue>,
-    /// The choices of a [`OptionKind::ComboBox`], and empty otherwise.
+    /// The choices of a [`OptionKind::Choice`], and empty otherwise.
     pub items: Vec<String>,
 }
 
@@ -143,20 +143,21 @@ impl std::fmt::Display for Event {
 /// The widget a module asks for when declaring a setting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptionKind {
-    /// A boolean switch.
-    CheckBox,
-    /// A number.
-    SpinEdit,
-    /// A choice from a list; the value is the chosen item's index.
-    ComboBox,
-    /// Free text.
-    EditBox,
+    /// A boolean switch. Modules add it with `AddOptionCheckBox`.
+    Toggle,
+    /// A number. Modules add it with `AddOptionSpinEdit`.
+    Number,
+    /// A choice from a list; the value is the chosen item's index. Modules
+    /// add it with `AddOptionComboBox`.
+    Choice,
+    /// Free text. Modules add it with `AddOptionEdit` or `AddOptionEditBox`.
+    Text,
 }
 
 /// A setting's value, kept free of Lua types so callers never depend on them.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OptionValue {
-    /// A checkbox state.
+    /// A toggle's state.
     Bool(bool),
     /// A whole number. A whole float such as `1.0` is read as this.
     Int(i64),

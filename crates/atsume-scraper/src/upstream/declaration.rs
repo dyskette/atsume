@@ -114,11 +114,11 @@ fn declaration_table(lua: &Lua, index: usize) -> mlua::Result<Table> {
     let table = lua.create_table()?;
     table.set("Storage", StorageObject)?;
     for (name, kind) in [
-        ("AddOptionCheckBox", OptionKind::CheckBox),
-        ("AddOptionSpinEdit", OptionKind::SpinEdit),
-        ("AddOptionComboBox", OptionKind::ComboBox),
-        ("AddOptionEdit", OptionKind::EditBox),
-        ("AddOptionEditBox", OptionKind::EditBox),
+        ("AddOptionCheckBox", OptionKind::Toggle),
+        ("AddOptionSpinEdit", OptionKind::Number),
+        ("AddOptionComboBox", OptionKind::Choice),
+        ("AddOptionEdit", OptionKind::Text),
+        ("AddOptionEditBox", OptionKind::Text),
     ] {
         let setter = lua.create_function(move |lua, args: Variadic<Value>| {
             let option = parse_option(lua, kind, &args)?;
@@ -132,13 +132,13 @@ fn declaration_table(lua: &Lua, index: usize) -> mlua::Result<Table> {
     Ok(table)
 }
 
-/// Reads a setter's arguments: name, caption, then the default, with a combo
-/// box's items between the caption and the default.
+/// Reads a setter's arguments: name, caption, then the default, with a choice
+/// setting's items between the caption and the default.
 fn parse_option(lua: &Lua, kind: OptionKind, args: &[Value]) -> mlua::Result<SiteOption> {
     let arg = |i: usize| args.get(i).unwrap_or(&Value::Nil);
     let name = string_arg(lua, arg(0), 1)?;
     let (items, default) = match kind {
-        OptionKind::ComboBox => (combo_items(lua, arg(2)), arg(3)),
+        OptionKind::Choice => (choice_list(lua, arg(2)), arg(3)),
         _ => (Vec::new(), arg(2)),
     };
     Ok(SiteOption {
@@ -150,9 +150,9 @@ fn parse_option(lua: &Lua, kind: OptionKind, args: &[Value]) -> mlua::Result<Sit
     })
 }
 
-/// Reads a combo box's choices: one per line of a string, as nearly every
+/// Reads a choice setting's items: one per line of a string, as nearly every
 /// module passes them, or the items of a table.
-fn combo_items(lua: &Lua, value: &Value) -> Vec<String> {
+fn choice_list(lua: &Lua, value: &Value) -> Vec<String> {
     match value {
         Value::String(s) => split_lines(&s.to_string_lossy()),
         Value::Table(t) => t

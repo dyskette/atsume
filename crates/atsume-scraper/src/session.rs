@@ -115,8 +115,8 @@ impl Session {
     /// # Errors
     ///
     /// Fails if the module declares no such setting, or the value does not
-    /// suit it: a checkbox takes a flag, a number field a whole number, a
-    /// choice the index of one of its items, and a text field text.
+    /// suit it: a toggle takes a flag, a number a whole number, a choice
+    /// the index of one of its items, and a text setting text.
     pub fn set_option(&mut self, name: &str, value: OptionValue) -> Result<()> {
         let mut site = self.state::<SiteRecord>();
         let declaration = &site.declaration;
@@ -125,10 +125,10 @@ impl Session {
             return Err(Error::new(ErrorKind::Unsupported, message));
         };
         let suits = match (&value, option.kind) {
-            (OptionValue::Bool(_), OptionKind::CheckBox)
-            | (OptionValue::Int(_), OptionKind::SpinEdit)
-            | (OptionValue::Text(_), OptionKind::EditBox) => true,
-            (OptionValue::Int(index), OptionKind::ComboBox) => {
+            (OptionValue::Bool(_), OptionKind::Toggle)
+            | (OptionValue::Int(_), OptionKind::Number)
+            | (OptionValue::Text(_), OptionKind::Text) => true,
+            (OptionValue::Int(index), OptionKind::Choice) => {
                 usize::try_from(*index).is_ok_and(|i| i < option.items.len())
             }
             _ => false,

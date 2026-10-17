@@ -49,11 +49,11 @@ fn option(kind: OptionKind, name: &str, caption: &str, default: Option<OptionVal
     }
 }
 
-fn combo(name: &str, caption: &str, items: &[&str], default: i64) -> SiteOption {
+fn choice(name: &str, caption: &str, items: &[&str], default: i64) -> SiteOption {
     SiteOption {
         items: items.iter().map(|&i| i.to_owned()).collect(),
         ..option(
-            OptionKind::ComboBox,
+            OptionKind::Choice,
             name,
             caption,
             Some(OptionValue::Int(default)),
@@ -82,20 +82,20 @@ fn a_file_declares_its_websites() {
         ]),
         options: vec![
             option(
-                OptionKind::CheckBox,
+                OptionKind::Toggle,
                 "paid",
                 "Show paid chapters",
                 Some(OptionValue::Bool(false)),
             ),
             option(
-                OptionKind::SpinEdit,
+                OptionKind::Number,
                 "delay",
                 "Delay",
                 Some(OptionValue::Int(1)),
             ),
-            combo("lang", "Language", &["en", "es"], 1),
-            combo("svr", "Server", &["Main", "Secondary", "Compress"], 0),
-            option(OptionKind::EditBox, "token", "Token", None),
+            choice("lang", "Language", &["en", "es"], 1),
+            choice("svr", "Server", &["Main", "Secondary", "Compress"], 0),
+            option(OptionKind::Text, "token", "Token", None),
         ],
         takes_login: true,
         lists_in_stable_order: false,
