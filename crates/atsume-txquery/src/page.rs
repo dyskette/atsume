@@ -1,4 +1,4 @@
-//! A parsed page and the expressions run against it.
+//! A parsed page and the expressions that run against it.
 
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
@@ -17,16 +17,17 @@ use crate::{html, json};
 
 /// A node of a [`Page`].
 ///
-/// It remembers which page it came from. Read on another page it has no
-/// text, attributes or properties, and as an expression's context it is an
-/// error.
+/// A node remembers which page it came from. On any other page it has no
+/// text, attributes or properties, and using it as an expression's context is
+/// an error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Node {
     page_id: u64,
     xot_node: xot::Node,
 }
 
-/// The number the next page is given, so its nodes can be told apart.
+/// The number that the next parsed page receives, so that nodes from different
+/// pages can be told apart.
 static NEXT_PAGE_ID: AtomicU64 = AtomicU64::new(0);
 
 /// A parsed page that expressions run against.
@@ -34,17 +35,17 @@ pub struct Page {
     id: u64,
     documents: Documents,
     xot_root: xot::Node,
-    /// The page as received, which `json(*)` falls back to when the parsed
-    /// page's text is not JSON.
+    /// The page exactly as it was received. `json(*)` falls back to it when
+    /// the parsed page's text is not JSON.
     as_received: String,
-    /// The tree `json()` built for each text, so a module calling it in a
-    /// loop parses the text once.
+    /// The tree that `json()` built for each text it was given. A module that
+    /// calls `json()` in a loop therefore parses each text only once.
     json_trees: HashMap<String, Vec<xot::Node>>,
 }
 
 impl Page {
-    /// Parses an HTML page. It never fails: malformed markup is repaired as a
-    /// browser would.
+    /// Parses an HTML page. Parsing never fails, because malformed markup is
+    /// repaired the way a browser repairs it.
     #[must_use]
     pub fn parse_html(html: &[u8]) -> Self {
         let mut documents = Documents::new();
@@ -59,23 +60,24 @@ impl Page {
         }
     }
 
-    /// Replaces the page with another, as FMD2's `ParseHTML` does.
+    /// Replaces the page with a new one, as FMD2's `ParseHTML` does.
     ///
-    /// The new page is parsed beside the old one, so nodes already read from
-    /// the old page stay valid and keep reading from it.
+    /// The new page is parsed alongside the old one. Nodes that were already
+    /// read from the old page therefore stay valid and keep reading from it.
     pub fn replace_html(&mut self, html: &[u8]) {
         self.xot_root = html::parse(self.documents.xot_mut(), html);
         register_document_root(&self.documents, self.xot_root);
         self.as_received = String::from_utf8_lossy(html).into_owned();
     }
 
-    /// Returns the document node, the context an expression starts from.
+    /// Returns the document node, which is where an expression starts when it
+    /// is given no context.
     #[must_use]
     pub fn root(&self) -> Node {
         self.wrap(self.xot_root)
     }
 
-    /// Returns the public node for a tree node of this page.
+    /// Wraps a tree node of this page in a [`Node`] that remembers the page.
     fn wrap(&self, xot_node: xot::Node) -> Node {
         Node {
             page_id: self.id,
@@ -88,17 +90,19 @@ impl Page {
         (node.page_id == self.id).then_some(node.xot_node)
     }
 
-    /// Evaluates `expression`, starting from `context` or the document node.
+    /// Evaluates `expression`, starting from `context`, or from the document
+    /// node when `context` is `None`.
     ///
-    /// internettools' syntax is rewritten into standard XPath, and each
-    /// `json(…)` argument is evaluated first and its text parsed as JSON; the
-    /// expression then runs with the trees bound in place of the calls.
+    /// The expression's internettools syntax is first rewritten into standard
+    /// XPath. Each `json(…)` argument is then evaluated and its text parsed as
+    /// JSON. Finally the expression runs, with the resulting trees standing in
+    /// for the `json()` calls.
     ///
     /// # Errors
     ///
-    /// Fails if the expression does not compile, a `json()` argument is not
-    /// JSON, the context is a node of another page, or the expression
-    /// fails while running.
+    /// Fails if the expression does not compile, if a `json()` argument's text
+    /// is not JSON, if the context is a node of another page, or if the
+    /// expression fails while running.
     pub fn evaluate(
         &mut self,
         engine: &Engine,
@@ -118,14 +122,13 @@ impl Page {
         self.execute(&prepared.query, expression, context, &trees)
     }
 
-    /// Evaluates a `json()` argument and returns the tree of the JSON its text
-    /// holds.
+    /// Evaluates a `json()` argument and parses the text it yields as JSON.
     ///
-    /// The text is the parsed page's, as upstream reads it, so markup inside
-    /// a JSON string is dropped and entities are decoded. When the argument is
-    /// the whole page and that text is not JSON, the page as received is
-    /// tried too: parsing it as HTML can swallow part of a JSON response, as a
-    /// `<!--` inside one of its strings does.
+    /// The text comes from the parsed page, as it does upstream, so markup
+    /// inside a JSON string is dropped and entities are decoded. When the
+    /// argument selects the whole page and that text is not JSON, the page as
+    /// received is tried as well. HTML parsing can swallow part of a JSON
+    /// response, for example when one of its strings contains `<!--`.
     fn evaluate_json_argument(
         &mut self,
         engine: &Engine,
@@ -146,14 +149,14 @@ impl Page {
         parsed.map_err(|message| evaluate_error(argument, format!("invalid JSON: {message}")))
     }
 
-    /// Reports whether a `json()` argument reads the whole page.
+    /// Reports whether a `json()` argument selects the whole page.
     fn is_whole_page(&self, argument: &str, context: Option<Node>) -> bool {
         matches!(argument.trim(), "*" | "." | "/" | "/*")
             && context.is_none_or(|node| node.xot_node == self.xot_root)
     }
 
-    /// Parses `text` as JSON into a tree, reusing the tree of an earlier call
-    /// with the same text.
+    /// Parses `text` as JSON into a tree. A later call with the same text
+    /// reuses that tree.
     fn parse_json_tree(&mut self, text: &str) -> Result<Vec<xot::Node>, String> {
         if let Some(tree) = self.json_trees.get(text) {
             return Ok(tree.clone());
@@ -167,8 +170,9 @@ impl Page {
         Ok(tree)
     }
 
-    /// Executes a compiled query with each `$jsonN` bound to its tree.
-    /// `expression` is the text the module wrote, for error messages.
+    /// Executes a compiled query with each `$jsonN` variable bound to its tree.
+    /// `expression` is the text that the module wrote, and it appears only in
+    /// error messages.
     fn execute(
         &mut self,
         query: &SequenceQuery,
@@ -185,8 +189,9 @@ impl Page {
         builder.context_node(context.map_or(self.xot_root, |node| node.xot_node));
         builder.variables(variables);
         let dynamic_context = builder.build();
-        // xee panics on a few arithmetic edge cases, such as round() to a huge
-        // negative precision, and a module's expression must not end the scrape.
+        // xee panics on a few arithmetic edge cases, such as `round()` with a
+        // huge negative precision. A module's expression must never end the
+        // scrape, so the panic is caught and reported as an error.
         let documents = &mut self.documents;
         let outcome_or_panic = panic::catch_unwind(AssertUnwindSafe(|| {
             query.execute_with_context(documents, &dynamic_context)
@@ -202,8 +207,8 @@ impl Page {
         Ok(Sequence { items })
     }
 
-    /// Converts a result. A map or array has no text in xee, and reads as
-    /// `""`, as an object does upstream.
+    /// Converts an xee item into an [`Item`]. A map or an array has no text in
+    /// xee, so it reads as `""`, which is how upstream reads a JSON object.
     fn convert_item(&self, item: XeeItem) -> Item {
         match item {
             XeeItem::Node(xot_node) => Item::Node(self.wrap(xot_node)),
@@ -211,7 +216,8 @@ impl Page {
         }
     }
 
-    /// Returns an item's text: a node's full text content, or a value as it is.
+    /// Returns an item's text. For a node, that is its full text content; for
+    /// an atomic value, it is the value itself.
     #[must_use]
     pub fn item_text(&self, item: &Item) -> String {
         match item {
@@ -223,8 +229,8 @@ impl Page {
         }
     }
 
-    /// Returns a sequence's text as internettools gives it: every item's text,
-    /// joined with nothing between.
+    /// Returns a sequence's text the way internettools gives it, with every
+    /// item's text joined and nothing between them.
     #[must_use]
     pub fn sequence_text(&self, sequence: &Sequence) -> String {
         sequence
@@ -234,8 +240,9 @@ impl Page {
             .collect()
     }
 
-    /// Returns an element's attribute, if it has one by that name. Case is
-    /// ignored, as FMD2's `GetAttribute` ignores it.
+    /// Returns the value of the element's attribute named `name`, if it has
+    /// one. The name is compared ignoring case, as FMD2's `GetAttribute`
+    /// compares it.
     #[must_use]
     pub fn attribute(&self, node: Node, name: &str) -> Option<String> {
         let xot_node = self.xot_node_of(node)?;
@@ -247,8 +254,8 @@ impl Page {
         found.map(|(_, value)| value.clone())
     }
 
-    /// Returns the child element named `name`, which is how a property of a
-    /// JSON object is read.
+    /// Returns the child element named `name`. This is how a property of a JSON
+    /// object is read, because `json` builds each property as a child element.
     #[must_use]
     pub fn property(&self, node: Node, name: &str) -> Option<Node> {
         let xot_node = self.xot_node_of(node)?;
@@ -262,8 +269,9 @@ impl Page {
     }
 }
 
-/// Registers a document node, which paths through it need to resolve the
-/// root. A failure is logged and leaves the tree usable for plain steps.
+/// Registers a document node with xee, which needs it to resolve paths that
+/// start at the root. A failure is only logged, because the tree still works
+/// for paths that do not start at the root.
 fn register_document_root(documents: &Documents, root: xot::Node) {
     if let Err(error) = documents.documents().borrow_mut().add_root(None, root) {
         tracing::debug!(%error, "a parsed tree could not be registered");
