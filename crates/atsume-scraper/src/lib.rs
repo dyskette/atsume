@@ -21,6 +21,7 @@
 //! GPL-3.0-only license. They are therefore cloned when atsume runs and never
 //! built into it. See `docs/MODULES.md`.
 
+mod byte_search;
 mod cancel;
 mod catalog;
 mod error;
