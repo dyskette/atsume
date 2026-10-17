@@ -1,11 +1,13 @@
-//! Translating `css("…")` selectors into XPath.
+//! Translates `css("…")` selectors into XPath.
 //!
-//! internettools evaluates `css()` itself. The modules use plain selectors,
-//! so this covers type, `*`, `#id`, `.class`, attribute tests, the four
-//! combinators, and the structural pseudo-classes that count siblings.
+//! internettools evaluates `css()` itself, so this crate translates each
+//! selector before xee can run it. The modules use only plain selectors, and
+//! this module covers what they use: type selectors, `*`, `#id`, `.class`,
+//! attribute tests, the four combinators, and the structural pseudo-classes
+//! that count siblings.
 
-/// Translates a selector list into an XPath expression selecting the
-/// matching elements below the context node, in document order.
+/// Translates a selector list into an XPath expression. The expression selects
+/// the matching elements below the context node, in document order.
 pub(crate) fn to_xpath(selector: &str) -> Result<String, String> {
     let paths = split_top_level(selector, ',')
         .into_iter()
@@ -24,7 +26,7 @@ enum Combinator {
 }
 
 impl Combinator {
-    /// The XPath that leads from the previous element to this one.
+    /// Returns the XPath that leads from the previous element to this one.
     fn axis(self) -> &'static str {
         match self {
             Self::Descendant => "//",
@@ -70,8 +72,9 @@ fn complex_to_xpath(complex: &str) -> Result<String, String> {
     }
 }
 
-/// Splits off the first compound selector, which ends at whitespace or a
-/// combinator outside brackets, parentheses and quotes.
+/// Splits off the first compound selector and returns it with the rest of the
+/// text. The compound ends at the first whitespace or combinator that is
+/// outside brackets, parentheses and quotes.
 fn split_compound(selector: &str) -> (&str, &str) {
     let mut depth = 0;
     let mut quote = None;
@@ -114,8 +117,8 @@ fn compound_to_xpath(compound: &str) -> Result<String, String> {
     Ok(xpath)
 }
 
-/// Translates the simple selector at the start of `rest` into a predicate,
-/// returning it and what follows.
+/// Translates the simple selector at the start of `rest` into a predicate.
+/// Returns the predicate and the text that follows the selector.
 fn simple_to_predicate(rest: &str) -> Result<(String, &str), String> {
     let marker = rest.chars().next().unwrap_or(' ');
     let body = &rest[1..];
@@ -137,7 +140,8 @@ fn simple_to_predicate(rest: &str) -> Result<(String, &str), String> {
     }
 }
 
-/// Reads a CSS identifier from the start of `text`.
+/// Reads a CSS identifier from the start of `text`, and returns it with the
+/// rest of the text.
 fn identifier(text: &str) -> (&str, &str) {
     let end = text
         .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
@@ -145,8 +149,8 @@ fn identifier(text: &str) -> (&str, &str) {
     text.split_at(end)
 }
 
-/// Translates the inside of `[…]`: a bare attribute name, or a name, an
-/// operator and a value.
+/// Translates the inside of `[…]` into a predicate. The inside is either a
+/// bare attribute name, or a name followed by an operator and a value.
 fn attribute_to_predicate(inside: &str) -> Result<String, String> {
     let Some(op_start) = inside.find(['=', '~', '^', '$', '*', '|']) else {
         return Ok(format!("@{}", inside.trim().to_ascii_lowercase()));
@@ -158,7 +162,8 @@ fn attribute_to_predicate(inside: &str) -> Result<String, String> {
     let value = value.trim().trim_matches(['"', '\'']);
     let test = match operator {
         "" => format!("{name} = {}", quoted(value)),
-        // A value with whitespace in it can never be one word of the list.
+        // A value that contains whitespace can never be a single word of the
+        // list.
         "~" if value.is_empty() || value.contains(char::is_whitespace) => "false()".to_owned(),
         "~" => word_in_list_predicate(&name, value),
         "^" => format!("starts-with({name}, {})", quoted(value)),
@@ -174,8 +179,8 @@ fn attribute_to_predicate(inside: &str) -> Result<String, String> {
     Ok(test)
 }
 
-/// Translates a pseudo-class. Only the ones that count siblings are
-/// supported; their argument must be a whole number.
+/// Translates a pseudo-class into a predicate. Only the pseudo-classes that
+/// count siblings are supported, and their argument must be a whole number.
 fn pseudo_class_to_predicate(body: &str) -> Result<(String, &str), String> {
     let (name, after) = identifier(body);
     let (argument, after) = match after.strip_prefix('(') {
@@ -202,7 +207,7 @@ fn pseudo_class_to_predicate(body: &str) -> Result<(String, &str), String> {
     Ok((predicate, after))
 }
 
-/// Returns a predicate testing whether a space-separated attribute holds
+/// Returns a predicate that tests whether a space-separated attribute contains
 /// `word`, as `.class` and `[attr~=word]` do.
 fn word_in_list_predicate(attribute: &str, word: &str) -> String {
     format!(
