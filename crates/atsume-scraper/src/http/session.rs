@@ -10,7 +10,7 @@ use super::flaresolverr::{Flaresolverr, has_challenge_markers, looks_like_challe
 use super::transport::{Method, Request};
 use super::{DEFAULT_USER_AGENT, HttpConfig, LastRequest};
 use crate::cancel::{CancelToken, Cancelled};
-use crate::upstream::string_list::Strings;
+use crate::string_list::StringList;
 
 /// The requests of one scrape, and what the module set up for them.
 ///
@@ -22,9 +22,9 @@ pub(crate) struct HttpSession {
     solver: Option<Arc<Flaresolverr>>,
     backoff: Duration,
     /// Request headers the module set, as `name=value`.
-    pub(crate) headers: Strings,
+    pub(crate) headers: StringList,
     /// Cookies the module set or a server issued, as `name=value`.
-    pub(crate) cookies: Strings,
+    pub(crate) cookies: StringList,
     /// The body of the last response.
     pub(crate) document: Vec<u8>,
     pub(crate) mime_type: String,
@@ -46,8 +46,8 @@ impl HttpSession {
             client,
             solver: config.solver.clone(),
             backoff: config.retry.backoff,
-            headers: Strings::default(),
-            cookies: Strings::default(),
+            headers: StringList::default(),
+            cookies: StringList::default(),
             document: Vec::new(),
             mime_type: String::new(),
             user_agent: DEFAULT_USER_AGENT.to_owned(),

@@ -3,7 +3,8 @@ use mlua::Lua;
 use super::*;
 use crate::CancelToken;
 use crate::http::HttpConfig;
-use crate::upstream::string_list::{ListHandle, Strings};
+use crate::string_list::StringList;
+use crate::upstream::string_list::ListObject;
 
 const PAGE: &str = r#"<html><head><title> The  Title </title>
 <meta property="og:image" content="/cover.jpg"></head><body>
@@ -22,8 +23,8 @@ const JSON: &str =
 /// The lists a test fills.
 #[derive(Default)]
 struct Lists {
-    links: Strings,
-    names: Strings,
+    links: StringList,
+    names: StringList,
 }
 
 /// Runs `source` with `CreateTXQuery`, the page in `HTTP.Document` as `DOC`,
@@ -38,11 +39,11 @@ fn run(source: &str) -> mlua::Result<String> {
     let globals = lua.globals();
     globals.set(
         "DOC",
-        DocumentHandle::<HttpSession>::new(|h| &mut h.document),
+        DocumentObject::<HttpSession>::new(|h| &mut h.document),
     )?;
     globals.set("JSON", JSON)?;
-    globals.set("LINKS", ListHandle::<Lists>::new(|l| &mut l.links))?;
-    globals.set("NAMES", ListHandle::<Lists>::new(|l| &mut l.names))?;
+    globals.set("LINKS", ListObject::<Lists>::new(|l| &mut l.links))?;
+    globals.set("NAMES", ListObject::<Lists>::new(|l| &mut l.names))?;
     lua.load(format!("local x = CreateTXQuery(DOC)\n{source}"))
         .eval()
 }

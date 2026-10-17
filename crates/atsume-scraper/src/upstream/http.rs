@@ -5,8 +5,8 @@ use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods, Value};
 use crate::http::{HttpSession, Method};
 use crate::runtime::bind::{bool_field, int_field, lenient, state, text_field};
 use crate::runtime::convert::{bad_argument, string_arg, text_of};
-use crate::upstream::document::DocumentHandle;
-use crate::upstream::string_list::ListHandle;
+use crate::upstream::document::DocumentObject;
+use crate::upstream::string_list::ListObject;
 
 /// `HTTP`. It holds nothing itself; every access reaches the session.
 pub(crate) struct HttpObject;
@@ -26,13 +26,13 @@ impl UserData for HttpObject {
             &mut h.terminated
         });
         fields.add_field_function_get("Headers", |_, _: AnyUserData| {
-            Ok(ListHandle::<HttpSession>::new(|h| &mut h.headers))
+            Ok(ListObject::<HttpSession>::new(|h| &mut h.headers))
         });
         fields.add_field_function_get("Cookies", |_, _: AnyUserData| {
-            Ok(ListHandle::<HttpSession>::new(|h| &mut h.cookies))
+            Ok(ListObject::<HttpSession>::new(|h| &mut h.cookies))
         });
         fields.add_field_function_get("Document", |_, _: AnyUserData| {
-            Ok(DocumentHandle::<HttpSession>::new(|h| &mut h.document))
+            Ok(DocumentObject::<HttpSession>::new(|h| &mut h.document))
         });
     }
 

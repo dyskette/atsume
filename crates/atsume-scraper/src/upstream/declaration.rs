@@ -13,6 +13,7 @@ use mlua::{AnyUserData, Lua, MetaMethod, Table, UserData, UserDataMethods, Value
 use crate::model::{Event, Module, ModuleOption, OptionKind, OptionValue};
 use crate::runtime::bind::state;
 use crate::runtime::convert::{string_arg, text_of, truthy};
+use crate::string_list::split_lines;
 
 impl OptionValue {
     /// Reads a Lua value, or `None` for `nil` and for values no setting holds.
@@ -155,11 +156,6 @@ fn combo_items(lua: &Lua, value: &Value) -> Vec<String> {
             .collect(),
         _ => Vec::new(),
     }
-}
-
-/// Splits text into lines, accepting both LF and CRLF line endings.
-pub(crate) fn split_lines(text: &str) -> Vec<String> {
-    text.lines().map(str::to_owned).collect()
 }
 
 /// Reads a declaration table back into a [`Module`].

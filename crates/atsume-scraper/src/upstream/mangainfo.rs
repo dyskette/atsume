@@ -6,7 +6,8 @@ use crate::links::normalise_link;
 use crate::model::{Chapter, SeriesInfo, SeriesStatus};
 use crate::runtime::bind::{lenient, text_field};
 use crate::runtime::convert::{string_arg, text_of};
-use crate::upstream::string_list::{ListHandle, Strings};
+use crate::string_list::StringList;
+use crate::upstream::string_list::ListObject;
 
 /// The keywords upstream looks for when a module gives none, in the order it
 /// tries them. Modules call `MangaInfoStatusIfPos` with one argument and rely
@@ -69,8 +70,8 @@ pub(crate) struct MangaInfo {
     genres: String,
     status: String,
     summary: String,
-    chapter_links: Strings,
-    chapter_names: Strings,
+    chapter_links: StringList,
+    chapter_names: StringList,
 }
 
 impl MangaInfo {
@@ -133,10 +134,10 @@ impl UserData for MangaInfoObject {
         text_field(fields, "Status", |m: &mut MangaInfo| &mut m.status);
         text_field(fields, "Summary", |m: &mut MangaInfo| &mut m.summary);
         fields.add_field_function_get("ChapterLinks", |_, _: AnyUserData| {
-            Ok(ListHandle::<MangaInfo>::new(|m| &mut m.chapter_links))
+            Ok(ListObject::<MangaInfo>::new(|m| &mut m.chapter_links))
         });
         fields.add_field_function_get("ChapterNames", |_, _: AnyUserData| {
-            Ok(ListHandle::<MangaInfo>::new(|m| &mut m.chapter_names))
+            Ok(ListObject::<MangaInfo>::new(|m| &mut m.chapter_names))
         });
     }
 

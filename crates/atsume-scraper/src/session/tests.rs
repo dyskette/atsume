@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::testing::{Checkout, module_source, open_module};
-use crate::{CancelToken, Page, SessionConfig};
+use crate::{CancelToken, ChapterPage, SessionConfig};
 
 const FAILING: &str = "
 local shared = require 'templates.Shared'
@@ -410,8 +410,8 @@ fn pages_lists_images_against_the_site() {
     assert_eq!(
         pages,
         [
-            Page::Image("https://site.example/p/1.jpg".into()),
-            Page::Image("https://cdn.example/2.jpg".into()),
+            ChapterPage::Image("https://site.example/p/1.jpg".into()),
+            ChapterPage::Image("https://cdn.example/2.jpg".into()),
         ]
     );
 }
@@ -432,7 +432,11 @@ fn pages_found_only_when_asked_are_resolved_one_at_a_time() {
     let pages = session.pages("/chapter/1").unwrap();
     assert_eq!(
         pages,
-        [Page::Unresolved, Page::Unresolved, Page::Unresolved]
+        [
+            ChapterPage::Unresolved,
+            ChapterPage::Unresolved,
+            ChapterPage::Unresolved
+        ]
     );
     let second = session.resolve_page("/chapter/1", 1).unwrap();
     assert_eq!(second, "https://site.example/c/1/2.jpg?from=/chapter/1");

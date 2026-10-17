@@ -4,9 +4,10 @@
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods};
 
 use crate::links::fill_host;
-use crate::model::Page;
+use crate::model::ChapterPage;
 use crate::runtime::bind::{Place, int_field, lenient, text_field};
-use crate::upstream::string_list::{ListHandle, Strings};
+use crate::string_list::StringList;
+use crate::upstream::string_list::ListObject;
 
 /// What `TASK` holds for the chapter being read, kept in the runtime.
 #[derive(Debug, Default)]
@@ -19,12 +20,12 @@ pub(crate) struct Task {
     current_download_chapter_ptr: i64,
     /// Each page's image address, by position. An entry may be missing or
     /// empty until `OnGetImageURL` fills it.
-    page_links: Strings,
+    page_links: StringList,
     /// Each page's own web page, which some modules read the image from.
-    page_container_links: Strings,
-    file_names: Strings,
-    chapter_links: Strings,
-    chapter_names: Strings,
+    page_container_links: StringList,
+    file_names: StringList,
+    chapter_links: StringList,
+    chapter_names: StringList,
 }
 
 impl Task {
@@ -47,7 +48,7 @@ impl Task {
     /// A module may count its pages or list their web pages instead of their
     /// images. Those pages are unresolved, but only if the module can resolve
     /// them; otherwise just the images it listed count.
-    pub(crate) fn pages(&self, root_url: &str, resolvable: bool) -> Vec<Page> {
+    pub(crate) fn pages(&self, root_url: &str, resolvable: bool) -> Vec<ChapterPage> {
         let mut count = self.page_links.items().len();
         if resolvable {
             let counted = usize::try_from(self.page_number).unwrap_or(0);
@@ -59,10 +60,10 @@ impl Task {
     }
 
     /// Returns the page at `index`, resolved against `root_url` if known.
-    pub(crate) fn page(&self, root_url: &str, index: usize) -> Page {
+    pub(crate) fn page(&self, root_url: &str, index: usize) -> ChapterPage {
         match self.page_links.items().get(index).map(|link| link.trim()) {
-            Some(link) if !link.is_empty() => Page::Image(fill_host(root_url, link)),
-            _ => Page::Unresolved,
+            Some(link) if !link.is_empty() => ChapterPage::Image(fill_host(root_url, link)),
+            _ => ChapterPage::Unresolved,
         }
     }
 }
@@ -77,7 +78,7 @@ impl UserData for TaskObject {
         int_field(fields, "CurrentDownloadChapterPtr", |t: &mut Task| {
             &mut t.current_download_chapter_ptr
         });
-        let lists: [(&str, Place<Task, Strings>); 5] = [
+        let lists: [(&str, Place<Task, StringList>); 5] = [
             ("PageLinks", |t| &mut t.page_links),
             ("PageContainerLinks", |t| &mut t.page_container_links),
             ("FileNames", |t| &mut t.file_names),
@@ -86,7 +87,7 @@ impl UserData for TaskObject {
         ];
         for (name, place) in lists {
             fields.add_field_function_get(name, move |_, _: AnyUserData| {
-                Ok(ListHandle::<Task>::new(place))
+                Ok(ListObject::<Task>::new(place))
             });
         }
     }
@@ -125,10 +126,10 @@ mod tests {
         assert_eq!(
             pages,
             [
-                Page::Image("https://site.example/p/1.jpg".into()),
-                Page::Unresolved,
-                Page::Image("https://cdn.example/3.jpg".into()),
-                Page::Unresolved,
+                ChapterPage::Image("https://site.example/p/1.jpg".into()),
+                ChapterPage::Unresolved,
+                ChapterPage::Image("https://cdn.example/3.jpg".into()),
+                ChapterPage::Unresolved,
             ]
         );
     }

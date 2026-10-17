@@ -10,19 +10,19 @@ use mlua::{Lua, MetaMethod, UserData, UserDataMethods, Value};
 use crate::runtime::bind::{Place, state};
 
 /// The Lua face of a body kept in the runtime's state `S`.
-pub(crate) struct DocumentHandle<S> {
+pub(crate) struct DocumentObject<S> {
     place: Place<S, Vec<u8>>,
 }
 
-impl<S> Clone for DocumentHandle<S> {
+impl<S> Clone for DocumentObject<S> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<S> Copy for DocumentHandle<S> {}
+impl<S> Copy for DocumentObject<S> {}
 
-impl<S: 'static> DocumentHandle<S> {
+impl<S: 'static> DocumentObject<S> {
     pub(crate) fn new(place: Place<S, Vec<u8>>) -> Self {
         Self { place }
     }
@@ -44,7 +44,7 @@ impl<S: 'static> DocumentHandle<S> {
     }
 }
 
-impl<S: 'static> UserData for DocumentHandle<S> {
+impl<S: 'static> UserData for DocumentObject<S> {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |lua, document, key: Value| {
             let Value::String(key) = key else {

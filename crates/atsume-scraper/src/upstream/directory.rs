@@ -7,14 +7,15 @@ use crate::links::normalise_link;
 use crate::model::{DirectoryEntry, DirectoryPage};
 use crate::runtime::bind::{int_field, lenient, state};
 use crate::runtime::convert::string_arg;
-use crate::upstream::string_list::{ListHandle, Strings};
+use crate::string_list::StringList;
+use crate::upstream::string_list::ListObject;
 
 /// What `LINKS`, `NAMES` and `UPDATELIST` hold while a directory page is
 /// read, kept in the runtime.
 #[derive(Debug, Default)]
 pub(crate) struct Directory {
-    links: Strings,
-    names: Strings,
+    links: StringList,
+    names: StringList,
     /// `UPDATELIST.CurrentDirectoryPageNumber`: the page count, if reported.
     reported_pages: i64,
 }
@@ -83,8 +84,8 @@ pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     lua.set_app_data(Directory::default());
     lua.set_app_data(StatusSink::default());
     let globals = lua.globals();
-    globals.set("LINKS", ListHandle::<Directory>::new(|d| &mut d.links))?;
-    globals.set("NAMES", ListHandle::<Directory>::new(|d| &mut d.names))?;
+    globals.set("LINKS", ListObject::<Directory>::new(|d| &mut d.links))?;
+    globals.set("NAMES", ListObject::<Directory>::new(|d| &mut d.names))?;
     globals.set("UPDATELIST", UpdateListObject)
 }
 

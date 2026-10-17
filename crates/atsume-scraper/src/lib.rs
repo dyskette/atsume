@@ -28,6 +28,7 @@ mod links;
 mod model;
 mod runtime;
 mod session;
+mod string_list;
 #[cfg(test)]
 mod testing;
 mod upstream;
@@ -36,7 +37,7 @@ pub use cancel::{CancelToken, Cancelled};
 pub use catalog::{Catalog, LoadFailure, Site};
 pub use error::{Error, ErrorKind, Result};
 pub use model::{
-    AccountStatus, Chapter, DirectoryEntry, DirectoryPage, Event, Module, ModuleOption, OptionKind,
-    OptionValue, Page, SeriesInfo, SeriesStatus,
+    AccountStatus, Chapter, ChapterPage, DirectoryEntry, DirectoryPage, Event, Module,
+    ModuleOption, OptionKind, OptionValue, SeriesInfo, SeriesStatus,
 };
 pub use session::{Session, SessionConfig};

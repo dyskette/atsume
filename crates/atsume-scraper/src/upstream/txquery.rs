@@ -16,7 +16,7 @@ use mlua::{
 
 use crate::http::HttpSession;
 use crate::runtime::convert::{pascal_trim, text_of};
-use crate::upstream::document::DocumentHandle;
+use crate::upstream::document::DocumentObject;
 
 mod value;
 
@@ -65,7 +65,7 @@ fn create_query(
 fn page_text(lua: &Lua, source: &Value) -> mlua::Result<Option<Vec<u8>>> {
     match source {
         Value::String(text) => Ok(Some(text.as_bytes().to_vec())),
-        Value::UserData(data) => match data.borrow::<DocumentHandle<HttpSession>>() {
+        Value::UserData(data) => match data.borrow::<DocumentObject<HttpSession>>() {
             Ok(document) => document.bytes(lua).map(Some),
             Err(_) => Ok(None),
         },

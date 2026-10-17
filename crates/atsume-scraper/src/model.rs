@@ -262,7 +262,7 @@ impl DirectoryEntry {
 
 /// One page of a chapter.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Page {
+pub enum ChapterPage {
     /// The page's image address.
     Image(String),
     /// A page whose address the module finds only when asked, with

@@ -8,7 +8,7 @@ use mlua::{AppDataRefMut, Value};
 use crate::error::{Error, ErrorKind, Result};
 use crate::http::{HttpConfig, HttpSession, LastRequest};
 use crate::model::{
-    AccountStatus, DirectoryPage, Event, Module, OptionKind, OptionValue, Page, SeriesInfo,
+    AccountStatus, ChapterPage, DirectoryPage, Event, Module, OptionKind, OptionValue, SeriesInfo,
 };
 use crate::runtime::Runtime;
 use crate::runtime::bind::state;
@@ -244,7 +244,7 @@ impl Session {
     /// pages in reading order.
     ///
     /// Image addresses are made absolute against the site's address. A page
-    /// the module finds only when asked is [`Page::Unresolved`]; resolve it
+    /// the module finds only when asked is [`ChapterPage::Unresolved`]; resolve it
     /// with [`resolve_page`](Self::resolve_page).
     ///
     /// # Errors
@@ -253,7 +253,7 @@ impl Session {
     /// or declines, a request it needed failed
     /// ([`Network`](ErrorKind::Network)), or it lists no pages
     /// ([`NotFound`](ErrorKind::NotFound)).
-    pub fn pages(&self, chapter_url: &str) -> Result<Vec<Page>> {
+    pub fn pages(&self, chapter_url: &str) -> Result<Vec<ChapterPage>> {
         *self.state::<Task>() = Task::for_chapter(chapter_url);
         globals::set_url(&self.runtime.lua, chapter_url)?;
         let result = self.call(Event::GetPageNumber)?;
@@ -288,7 +288,7 @@ impl Session {
             let message = format!("list the pages of {chapter_url} before resolving one");
             return Err(Error::new(ErrorKind::Unsupported, message));
         }
-        if let Page::Image(url) = self.state::<Task>().page(&module.root_url, index) {
+        if let ChapterPage::Image(url) = self.state::<Task>().page(&module.root_url, index) {
             return Ok(url);
         }
         globals::set_url(&self.runtime.lua, chapter_url)?;
@@ -297,8 +297,8 @@ impl Session {
         let result = self.call(Event::GetImageUrl)?;
         self.check_outcome(&result, &what)?;
         match self.state::<Task>().page(&module.root_url, index) {
-            Page::Image(url) => Ok(url),
-            Page::Unresolved => {
+            ChapterPage::Image(url) => Ok(url),
+            ChapterPage::Unresolved => {
                 let message = format!("{}: no image address after {what}", module.name);
                 Err(Error::new(ErrorKind::Module, message))
             }
