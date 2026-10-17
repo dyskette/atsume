@@ -69,6 +69,11 @@ const SERIES_EXPRESSIONS: &[&str] = &[
     r#"json(//script[@id = "data"]).props.title"#,
     r#"json(//script[@id = "data"]).props.pages().url"#,
     "json(//script).props.pages()[2].url",
+    // Upstream compares strings ignoring ASCII case.
+    r#"//li/a[@title = "second"]"#,
+    r#"//li/a[contains(., "chapter 1")]"#,
+    r#"//li[starts-with(a, "CHAPTER")]/a/@href"#,
+    r#"substring-after(//p[@class="status"], "STATUS: ")"#,
     "//LI/A",
     "//li[1]/a/@TITLE",
     r#"//li[@class = "chapter"]/a"#,
@@ -119,14 +124,12 @@ const JSON_EXPRESSIONS: &[&str] = &[
     r#"json(*).data.tags()[. = "fantasy"]"#,
     "string(json(*).data.cover)",
     "json(*).data.1280x720",
+    r#"json(*).data.chapters()[name = "two"].id"#,
 ];
 
 /// Expressions atsume still evaluates differently from internettools, with
 /// the page each runs on.
 const DIVERGENCES: &[(&str, &str)] = &[
-    // Upstream compares strings ignoring case; xee does not yet.
-    (SERIES_PAGE, r#"//li/a[@title = "second"]"#),
-    (SERIES_PAGE, r#"//li/a[contains(., "chapter 1")]"#),
     // A JSON value is an element here, so a property that is false is still
     // there, and true as a predicate.
     (JSON_PAGE, "json(*).data.chapters()[free].name"),

@@ -20,10 +20,13 @@ fn dots_after_a_value_read_properties() {
         ),
         ("(//a)[1].href", "(//a)[1]/href"),
         // A quoted name, or one XPath cannot write as a step, matches by name.
-        (r#"($json0)."PH".slug"#, r#"($json0)/*[name() = "PH"]/slug"#),
+        (
+            r#"($json0)."PH".slug"#,
+            r#"($json0)/*[codepoint-equal(name(), "PH")]/slug"#,
+        ),
         (
             "($json0).data.image.1280x1840_480.url",
-            r#"($json0)/data/image/*[name() = "1280x1840_480"]/url"#,
+            r#"($json0)/data/image/*[codepoint-equal(name(), "1280x1840_480")]/url"#,
         ),
         // Elsewhere a dot is the context item, part of a name, or a number.
         ("./a", "./a"),
@@ -43,7 +46,7 @@ fn calling_a_value_reads_its_members_or_one_of_them() {
         ),
         (
             r#"(($json0).chapters)("PH")"#,
-            r#"(($json0)/chapters)/*[name() = "PH"]"#,
+            r#"(($json0)/chapters)/*[codepoint-equal(name(), "PH")]"#,
         ),
         ("(groups)(2)", "(groups)/*[2]"),
         // An ordinary function call is left alone.
@@ -131,14 +134,17 @@ fn strings_and_comments_are_left_alone() {
 #[test]
 fn a_capitalised_name_matches_either_case() {
     check(&[
-        ("//TotalPage", r#"//*[name() = ("TotalPage", "totalpage")]"#),
+        (
+            "//TotalPage",
+            r#"//*[codepoint-equal(name(), "TotalPage") or codepoint-equal(name(), "totalpage")]"#,
+        ),
         (
             "//div/@data-URL",
-            r#"//div/@*[name() = ("data-URL", "data-url")]"#,
+            r#"//div/@*[codepoint-equal(name(), "data-URL") or codepoint-equal(name(), "data-url")]"#,
         ),
         (
             "jn:members(result)[Number=$n]",
-            r#"((result)/*)[*[name() = ("Number", "number")]=$n]"#,
+            r#"((result)/*)[*[codepoint-equal(name(), "Number") or codepoint-equal(name(), "number")]=$n]"#,
         ),
         // Functions, axes, prefixed names and JSON properties keep their case.
         ("Foo(1)", "Foo(1)"),

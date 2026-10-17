@@ -16,6 +16,11 @@ use crate::error::Error;
 /// from growing the cache without end.
 const CACHE_LIMIT: usize = 1024;
 
+/// The collation comparisons and string functions use. Upstream's default
+/// collation ignores ASCII case, so `contains(., "ongoing")` matches `Ongoing`.
+const CASE_INSENSITIVE_COLLATION: &str =
+    "http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive";
+
 /// Compiles expressions and keeps them for reuse.
 ///
 /// Modules pass expressions as strings, often the same one inside a loop, so
@@ -49,15 +54,20 @@ impl Engine {
         if let Some(query) = self.compiled.borrow().get(expression) {
             return Ok(Rc::clone(query));
         }
+        let compile_error = |message: String| Error::Compile {
+            expression: expression.to_owned(),
+            message,
+        };
+        let collation = CASE_INSENSITIVE_COLLATION
+            .try_into()
+            .map_err(|e: iri_string::validate::Error| compile_error(e.to_string()))?;
         let mut context = StaticContextBuilder::default();
         context.variable_names((0..variables).map(|i| OwnedName::name(&json_variable(i))));
+        context.default_collation(collation);
         let query = self
             .queries
             .sequence_with_context(expression, context.build())
-            .map_err(|e| Error::Compile {
-                expression: expression.to_owned(),
-                message: e.to_string(),
-            })?;
+            .map_err(|e| compile_error(e.to_string()))?;
         let query = Rc::new(query);
         let mut compiled = self.compiled.borrow_mut();
         if compiled.len() >= CACHE_LIMIT {

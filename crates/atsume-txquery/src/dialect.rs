@@ -8,15 +8,17 @@
 //! |-------------------------------|-----------------------------------|
 //! | `X.a.b` after `)`, `]`, `}`   | `X/a/b`                           |
 //! | `X()`, a call on a value      | `X/*`, its members                |
-//! | `X("key")`, `X(2)`            | `X/*[name() = "key"]`, `X/*[2]`   |
+//! | `X("key")`, `X(2)`            | `X/*[codepoint-equal(name(), "key")]`, `X/*[2]` |
 //! | `X?a`, `X?*`, `X?2`           | `X/a`, `X/*`, `X/*[2]`            |
 //! | `jn:keys(X)`, `jn:members(X)` | `((X)/*/name())`, `((X)/*)`       |
 //! | `css("sel")`                  | the selector as a path            |
 //! | `true`, `false`, `null`       | `true()`, `false()`, `"null"`     |
-//! | `TotalPage`, a capital in a name test | `*[name() = ("TotalPage", "totalpage")]` |
+//! | `TotalPage`, a capital in a name test | `TotalPage` or `totalpage`, compared exactly |
 //!
 //! The last row exists because upstream matches HTML names ignoring case,
 //! while html5ever stores them in lowercase and JSON keys keep their case.
+//! Names are compared with `codepoint-equal`, because the engine's default
+//! collation ignores case and upstream reads JSON keys exactly.
 
 use crate::css;
 
@@ -260,7 +262,7 @@ impl<'e> Rewriter<'_, 'e> {
                 next.text.split('.').map(property_step).collect()
             }
             // `X."key"` reads a property whose name is quoted.
-            Kind::String => vec![format!("*[name() = {}]", next.text)],
+            Kind::String => vec![named(next.text)],
             _ => return false,
         };
         for step in steps {
@@ -284,7 +286,7 @@ impl<'e> Rewriter<'_, 'e> {
             (Kind::Number, index) if index.bytes().all(|b| b.is_ascii_digit()) => {
                 format!("*[{index}]")
             }
-            (Kind::String, name) => format!("*[name() = {name}]"),
+            (Kind::String, name) => named(name),
             _ => return false,
         };
         if self.before != Before::Operator {
@@ -307,13 +309,13 @@ impl<'e> Rewriter<'_, 'e> {
         let inner = significant(&self.tokens[self.at + 1..close]);
         let selection = match inner.as_slice() {
             [] => "/*".to_owned(),
-            [key] if key.kind == Kind::String => format!("/*[name() = {}]", key.text),
+            [key] if key.kind == Kind::String => format!("/{}", named(key.text)),
             [index] if index.kind == Kind::Number => format!("/*[{}]", index.text),
             _ => {
                 let key = rewrite_tokens(&self.tokens[self.at + 1..close])?;
                 format!(
                     "/*[let $atsume_key := ({key}) return if ($atsume_key instance of xs:numeric) \
-                     then position() = $atsume_key else name() = string($atsume_key)]"
+                     then position() = $atsume_key else codepoint-equal(name(), string($atsume_key))]"
                 )
             }
         };
@@ -376,7 +378,10 @@ impl<'e> Rewriter<'_, 'e> {
         if name.contains(':') || is_call_or_axis {
             return false;
         }
-        let test = format!("*[name() = (\"{name}\", \"{}\")]", name.to_lowercase());
+        let test = format!(
+            "*[codepoint-equal(name(), \"{name}\") or codepoint-equal(name(), \"{}\")]",
+            name.to_lowercase()
+        );
         self.out.push_str(&test);
         self.at += 1;
         self.before = Before::Step;
@@ -408,8 +413,14 @@ fn property_step(name: &str) -> String {
     if is_step_name {
         name.to_owned()
     } else {
-        format!("*[name() = \"{name}\"]")
+        named(&format!("\"{name}\""))
     }
+}
+
+/// Returns a step to the child whose name is exactly the string literal
+/// `quoted_name`.
+fn named(quoted_name: &str) -> String {
+    format!("*[codepoint-equal(name(), {quoted_name})]")
 }
 
 fn rewrite_tokens(tokens: &[Token<'_>]) -> Result<String, String> {

@@ -144,7 +144,15 @@ lookups, `jn:keys`, `jn:members`, `css()` and bare `true`/`false`/`null`.
 revision measured, 3602 of 3603 call sites compile; the corpus test in
 `src/corpus.rs` fails below 99%.
 
-Two readings follow upstream where it is easy to get wrong:
+Three readings follow upstream where it is easy to get wrong:
+
+- **Strings compare ignoring ASCII case**, as upstream's default collation
+  does: `contains(., "ongoing")` matches `Ongoing`, and `@class = "info"`
+  matches `Info`. xee hard-codes its default collation, so atsume takes xee
+  from a fork that makes it configurable, and sets xee's
+  `html-ascii-case-insensitive`; the fork is pinned in the root `Cargo.toml`.
+  Upstream also orders digits by value, putting `a9` before `a10`; atsume
+  orders strings as plain text, and no module expression orders strings.
 
 - **`json(*)` reads the parsed page's text**, as upstream does, so markup
   inside a JSON string is dropped and entities are decoded. The modules that
@@ -156,6 +164,8 @@ Two readings follow upstream where it is easy to get wrong:
   JSON keys keep theirs, so a name test written with a capital, such as
   `//TotalPage` or `@data-URL`, matches the name as written or in lowercase. A
   JSON object holding both `Name` and `name` would match both for `Name`.
+  Generated name tests use `codepoint-equal`, so JSON keys never match
+  ignoring case.
 
 #### Comparing with xidel
 
@@ -169,8 +179,8 @@ xidel changes three of the settings the engine FMD2 creates has; the test's
 XQuery prolog restores them: `true`, `false` and `null` as literals, path
 steps on JSON objects, and string literals without entities.
 
-Expressions that still differ are pinned: case-insensitive string comparison,
-and a JSON `false` used as a predicate, which is an element here and so true.
+An expression that still differs is pinned: a JSON `false` used as a
+predicate, which is an element here and so true.
 To run it locally, point `ATSUME_XIDEL` at a xidel binary and run
 `make rust-xidel`.
 
@@ -179,9 +189,7 @@ which are GPL-3.0-or-later and so may be copied. Only cases for what the
 modules use are kept: `json()`, the string functions they call, sequences and
 `css()`. Cases left out are those that depend on internettools parsing its
 test pages as XML, where FMD2 and atsume parse HTML, and those for features no
-module uses, such as `:nth-child(2n+1)` or namespaced selectors. Where atsume
-still differs, as on case-insensitive comparison, the case is pinned with both
-results, so closing the gap shows up as a failing test.
+module uses, such as `:nth-child(2n+1)` or namespaced selectors.
 
 `crates/atsume-scraper/src/query.rs` gives modules `CreateTXQuery`, following
 `baseunits/lua/LuaXQuery.pas` and `LuaIXQValue.pas` rather than the Go port:

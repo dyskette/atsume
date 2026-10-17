@@ -179,6 +179,12 @@ const CSS: &[(&str, &[Case])] = &[
         r#"<x><h1>A</h1><h1 title="T">B</h1><h1 title>C</h1><span class="example">S1</span><span hello="Cleveland">S2</span><span hello="Cleveland" class="EXAMPLE">S3</span><span goodbye="Columbus">S4</span><span hello="Cleveland" goodbye="Columbus">S5</span><a rel="copyright copyleft copyeditor">A1</a><a href="http://www.w3.org/">A2</a><a rel="copyright" href="http://www.w3.org/index.html">A3</a><a rel="xyzcopyrightfoo">A4</a><DIALOGUE character="romeo">D1</DIALOGUE><DIALOGUE character="juliet">D2</DIALOGUE></x>"#,
         &[
             (3109, r#"string-join(css("h1[title]"), ",")"#, "B,C"),
+            // internettools compares attribute values ignoring case.
+            (
+                3110,
+                r#"string-join(css("span[class='example']"), ",")"#,
+                "S1,S3",
+            ),
             (
                 3111,
                 r#"string-join(css("span[hello='Cleveland'][goodbye=Columbus]"), ",")"#,
@@ -209,6 +215,14 @@ const CSS: &[(&str, &[Case])] = &[
     (
         r#"<a href="http://xyz.com">A1</a><a href="http://xyz.com/test.gif">A2</a><a href="http://xyz.com/test.html">A3</a>"#,
         &[(3117, r#"string-join(css('a[href$=".html"]'), ",")"#, "A3")],
+    ),
+    (
+        r#"<x><object type="image/123">O1</object><object type="IMAGE/">O2</object><object type="image">O3</object></x>"#,
+        &[(
+            3116,
+            r#"string-join(css('object[type^="image/"]'), ",")"#,
+            "O1,O2",
+        )],
     ),
     (
         r#"<p title="foobar">P1</p><p title="xyzhelloyzxy">P2</p><p title="hello">P3</p>"#,
@@ -406,39 +420,3 @@ const CSS: &[(&str, &[Case])] = &[
         ],
     ),
 ];
-
-/// Cases where atsume still gives another result than internettools: the
-/// line, the page, the expression, internettools' text, and atsume's.
-///
-/// Upstream compares strings ignoring case; xee does not yet.
-const DIVERGENCES: &[(u32, &str, &str, &str, &str)] = &[
-    (
-        3110,
-        r#"<x><h1>A</h1><h1 title="T">B</h1><h1 title>C</h1><span class="example">S1</span><span hello="Cleveland">S2</span><span hello="Cleveland" class="EXAMPLE">S3</span><span goodbye="Columbus">S4</span><span hello="Cleveland" goodbye="Columbus">S5</span><a rel="copyright copyleft copyeditor">A1</a><a href="http://www.w3.org/">A2</a><a rel="copyright" href="http://www.w3.org/index.html">A3</a><a rel="xyzcopyrightfoo">A4</a><DIALOGUE character="romeo">D1</DIALOGUE><DIALOGUE character="juliet">D2</DIALOGUE></x>"#,
-        r#"string-join(css("span[class='example']"), ",")"#,
-        "S1,S3",
-        "S1",
-    ),
-    (
-        3116,
-        r#"<x><object type="image/123">O1</object><object type="IMAGE/">O2</object><object type="image">O3</object></x>"#,
-        r#"string-join(css('object[type^="image/"]'), ",")"#,
-        "O1,O2",
-        "O1",
-    ),
-];
-
-#[test]
-fn known_divergences_still_diverge() {
-    let engine = Engine::new();
-    for &(line, page, expression, upstream, atsume) in DIVERGENCES {
-        let mut document = Document::parse_html(page.as_bytes());
-        let result = document.evaluate(&engine, expression, None).unwrap();
-        let got = document.text_of(&result);
-        assert_ne!(
-            got, upstream,
-            "line {line} now matches upstream; move it to its group"
-        );
-        assert_eq!(got, atsume, "line {line}: {expression}");
-    }
-}

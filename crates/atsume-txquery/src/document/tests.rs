@@ -348,3 +348,28 @@ fn capitalised_names_match_html_in_any_case_and_json_exactly() {
         .unwrap();
     assert_eq!(json.text_of(&title), "AB");
 }
+
+#[test]
+fn comparisons_ignore_ascii_case_as_upstream_does() {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(br#"<p class="Status">Status: ONGOING</p>"#);
+    let mut text = |expression: &str| {
+        let result = page.evaluate(&engine, expression, None).unwrap();
+        page.text_of(&result)
+    };
+    assert_eq!(
+        text(r#"//p[@class = "status"]/substring-after(., "status: ")"#),
+        "ONGOING"
+    );
+    assert_eq!(text(r#"contains(//p, "ongoing")"#), "true");
+    // Only ASCII letters fold, as with upstream's FPC string functions.
+    assert_eq!(text(r#""É" = "é""#), "false");
+}
+
+#[test]
+fn json_keys_still_match_exactly() {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(br#"{"Title": "upper", "title": "lower"}"#);
+    let title = page.evaluate(&engine, r#"json(*)("title")"#, None).unwrap();
+    assert_eq!(page.text_of(&title), "lower");
+}
