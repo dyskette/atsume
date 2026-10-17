@@ -135,7 +135,7 @@ fn declaration_table(lua: &Lua, index: usize) -> mlua::Result<Table> {
 }
 
 /// Reads a setter's arguments: name, caption, then the default, with a choice
-/// setting's items between the caption and the default.
+/// setting's choices between the caption and the default.
 fn option_from_setter_args(
     lua: &Lua,
     kind: OptionKind,
@@ -143,7 +143,7 @@ fn option_from_setter_args(
 ) -> mlua::Result<SiteOption> {
     let arg = |i: usize| args.get(i).unwrap_or(&Value::Nil);
     let name = text_arg(lua, arg(0), 1)?;
-    let (items, default) = match kind {
+    let (choices, default) = match kind {
         OptionKind::Choice => (choice_list(lua, arg(2)), arg(3)),
         _ => (Vec::new(), arg(2)),
     };
@@ -152,12 +152,12 @@ fn option_from_setter_args(
         name,
         caption: lua_text(lua, arg(1)).unwrap_or_default(),
         default: OptionValue::from_lua_value(default),
-        items,
+        choices,
     })
 }
 
-/// Reads a choice setting's items: one per line of a string, as nearly every
-/// module passes them, or the items of a table.
+/// Reads the choices of a choice setting: one per line of a string, as nearly
+/// every module passes them, or the items of a table.
 fn choice_list(lua: &Lua, value: &Value) -> Vec<String> {
     match value {
         Value::String(s) => split_lines(&s.to_string_lossy()),

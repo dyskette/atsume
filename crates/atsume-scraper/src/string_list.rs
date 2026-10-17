@@ -28,7 +28,7 @@ impl StringList {
     }
 
     /// Replaces every item.
-    pub(crate) fn set(&mut self, items: Vec<String>) {
+    pub(crate) fn replace_all(&mut self, items: Vec<String>) {
         self.items = items;
     }
 
@@ -71,7 +71,7 @@ impl StringList {
 
     /// Reads the value of the `name=value` pair named `name`, ignoring case.
     #[must_use]
-    pub(crate) fn value(&self, name: &str) -> &str {
+    pub(crate) fn value_of(&self, name: &str) -> &str {
         self.position_of(name)
             .and_then(|i| self.items[i].split_once('='))
             .map_or("", |(_, value)| value)
@@ -176,7 +176,7 @@ mod tests {
         list.set_value("Referer", "https://a.example");
         list.set_value("referer", "https://b.example");
         assert_eq!(list.items(), ["referer=https://b.example"]);
-        assert_eq!(list.value("REFERER"), "https://b.example");
+        assert_eq!(list.value_of("REFERER"), "https://b.example");
         list.set_value("Referer", "");
         assert_eq!(list.items(), [] as [String; 0]);
     }

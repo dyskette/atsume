@@ -132,7 +132,7 @@ impl Session {
             | (OptionValue::Int(_), OptionKind::Number)
             | (OptionValue::Text(_), OptionKind::Text) => true,
             (OptionValue::Int(index), OptionKind::Choice) => {
-                usize::try_from(*index).is_ok_and(|i| i < option.items.len())
+                usize::try_from(*index).is_ok_and(|i| i < option.choices.len())
             }
             _ => false,
         };
@@ -315,7 +315,7 @@ impl Session {
             let message = format!("list the pages of {chapter_url} before resolving one");
             return Err(Error::new(ErrorKind::Unsupported, message));
         }
-        if let ChapterPage::Image(url) = self
+        if let ChapterPage::ImageUrl(url) = self
             .borrow_state::<ChapterPagesRecord>()
             .page(&root_url, index)
         {
@@ -330,7 +330,7 @@ impl Session {
             .borrow_state::<ChapterPagesRecord>()
             .page(&root_url, index)
         {
-            ChapterPage::Image(url) => Ok(url),
+            ChapterPage::ImageUrl(url) => Ok(url),
             ChapterPage::Unresolved => {
                 let message = format!("{}: no image address after {action}", self.site_name());
                 Err(Error::new(ErrorKind::Module, message))

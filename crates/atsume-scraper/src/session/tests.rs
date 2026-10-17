@@ -413,8 +413,8 @@ fn pages_lists_images_against_the_site() {
     assert_eq!(
         pages,
         [
-            ChapterPage::Image("https://site.example/p/1.jpg".into()),
-            ChapterPage::Image("https://cdn.example/2.jpg".into()),
+            ChapterPage::ImageUrl("https://site.example/p/1.jpg".into()),
+            ChapterPage::ImageUrl("https://cdn.example/2.jpg".into()),
         ]
     );
 }

@@ -17,7 +17,7 @@ pub struct SiteOption {
     /// The value before the reader changes it, if the module gave one.
     pub default: Option<OptionValue>,
     /// The choices of a [`OptionKind::Choice`], and empty otherwise.
-    pub items: Vec<String>,
+    pub choices: Vec<String>,
 }
 
 /// A website as a module declared it in `Init()`.
@@ -276,7 +276,7 @@ impl DirectoryEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChapterPage {
     /// The page's image address.
-    Image(String),
+    ImageUrl(String),
     /// A page whose address the module finds only when asked, with
     /// [`Session::resolve_page`](crate::Session::resolve_page).
     Unresolved,

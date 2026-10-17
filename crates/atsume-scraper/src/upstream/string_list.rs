@@ -95,7 +95,7 @@ impl<S: 'static> ListObject<S> {
             }
             "Text" => {
                 let lines = split_lines(&text_arg(lua, value, 3)?);
-                self.with(lua, |list| list.set(lines))
+                self.with(lua, |list| list.replace_all(lines))
             }
             _ => Ok(()),
         }
@@ -124,7 +124,7 @@ impl<S: 'static> UserData for ValuesObject<S> {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |lua, values, name: Value| {
             let name = text_arg(lua, &name, 2)?;
-            let value = values.0.with(lua, |list| list.value(&name).to_owned())?;
+            let value = values.0.with(lua, |list| list.value_of(&name).to_owned())?;
             lua.create_string(value)
         });
         methods.add_meta_method(

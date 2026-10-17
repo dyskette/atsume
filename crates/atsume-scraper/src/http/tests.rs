@@ -417,7 +417,7 @@ fn the_session_works_without_lua() {
         Ok(true)
     );
     assert_eq!(session.response_body, b"ok");
-    assert_eq!(session.cookies.value("s"), "1");
+    assert_eq!(session.cookies.value_of("s"), "1");
     assert_eq!(transport.seen.lock().unwrap().len(), 2);
 }
 

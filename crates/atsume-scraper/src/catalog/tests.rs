@@ -45,13 +45,13 @@ fn option(kind: OptionKind, name: &str, caption: &str, default: Option<OptionVal
         name: name.into(),
         caption: caption.into(),
         default,
-        items: Vec::new(),
+        choices: Vec::new(),
     }
 }
 
-fn choice(name: &str, caption: &str, items: &[&str], default: i64) -> SiteOption {
+fn choice(name: &str, caption: &str, choices: &[&str], default: i64) -> SiteOption {
     SiteOption {
-        items: items.iter().map(|&i| i.to_owned()).collect(),
+        choices: choices.iter().map(|&c| c.to_owned()).collect(),
         ..option(
             OptionKind::Choice,
             name,

@@ -69,7 +69,7 @@ impl ChapterPagesRecord {
             .get(index)
             .map(|link| link.trim())
         {
-            Some(link) if !link.is_empty() => ChapterPage::Image(resolve_link(root_url, link)),
+            Some(link) if !link.is_empty() => ChapterPage::ImageUrl(resolve_link(root_url, link)),
             _ => ChapterPage::Unresolved,
         }
     }
@@ -138,9 +138,9 @@ mod tests {
         assert_eq!(
             pages,
             [
-                ChapterPage::Image("https://site.example/p/1.jpg".into()),
+                ChapterPage::ImageUrl("https://site.example/p/1.jpg".into()),
                 ChapterPage::Unresolved,
-                ChapterPage::Image("https://cdn.example/3.jpg".into()),
+                ChapterPage::ImageUrl("https://cdn.example/3.jpg".into()),
                 ChapterPage::Unresolved,
             ]
         );
