@@ -1,8 +1,8 @@
-//! Rewriting internettools' extensions into standard XPath 3.1.
+//! Rewrites internettools' extensions into standard XPath 3.1.
 //!
-//! Upstream reads module expressions in its XPath 4.0 mode, with extensions
-//! for JSON. Over the node tree [`json`](crate::json) builds, each extension
-//! has a standard form:
+//! Upstream reads module expressions in its XPath 4.0 mode, which adds syntax
+//! for JSON. Each addition has a standard XPath equivalent over the node tree
+//! that [`json`](crate::json) builds:
 //!
 //! | internettools                 | XPath 3.1                         |
 //! |-------------------------------|-----------------------------------|
@@ -16,35 +16,35 @@
 //! | `json(X)`                     | `($json0)`, with `X` evaluated first |
 //! | `TotalPage`, a capital in a name test | `TotalPage` or `totalpage`, compared exactly |
 //!
-//! The last row exists because upstream matches HTML names ignoring case,
-//! while html5ever stores them in lowercase and JSON keys keep their case.
-//! Names are compared with `codepoint-equal`, because the engine's default
-//! collation ignores case and upstream reads JSON keys exactly.
+//! The last row is needed because upstream matches HTML names ignoring case,
+//! while html5ever stores HTML names in lowercase and JSON keys keep their
+//! case. Names are compared with `codepoint-equal` because the engine's
+//! default collation ignores case, and upstream reads JSON keys exactly.
 
 use crate::css;
 
-/// What kind of token comes before the one being read, which decides whether
-/// a `.`, `(` or `?` is internettools syntax.
+/// The kind of token that came before the one being read. It decides whether a
+/// `.`, `(` or `?` is internettools syntax.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreviousToken {
-    /// The start of the expression, or an operator: nothing a value ends in.
+    /// The start of the expression, or an operator. Neither can end a value.
     Operator,
-    /// A closing `)`, `]` or `}`, or a value this rewrite produced: a dot or
-    /// a call can apply to it.
+    /// A closing `)`, `]` or `}`, or a value that this rewrite produced. A dot
+    /// or a call after it applies to that value.
     Value,
-    /// A step or variable: a lookup can apply to it, but a `(` after it
-    /// starts a function call.
+    /// A step or a variable. A lookup after it applies to it, but a `(` after
+    /// it starts a function call.
     Step,
 }
 
 /// An expression in standard XPath, with the `json()` arguments it needs.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct RewrittenExpression {
-    /// The expression, where the `n`th `json()` call is the variable named by
-    /// [`json_variable_name`]`(n)`.
+    /// The expression in standard XPath. The `n`th `json()` call in it has
+    /// become the variable that [`json_variable_name`]`(n)` names.
     pub(crate) xpath: String,
-    /// Each `json()` call's argument as written, to evaluate before the
-    /// expression runs.
+    /// Each `json()` call's argument as the module wrote it. Every argument is
+    /// evaluated before the expression runs.
     pub(crate) json_arguments: Vec<String>,
 }
 
@@ -60,14 +60,16 @@ pub(crate) fn json_variable_name(index: usize) -> String {
     format!("json{index}")
 }
 
-/// What can come right before a path step. A `json(` after one of these would
-/// run once per node, so its argument cannot be evaluated beforehand.
+/// The characters that can come right before a path step. A `json(` after one
+/// of them would run once for each node, so its argument cannot be evaluated
+/// in advance.
 const STEP_MARKERS: [char; 3] = ['/', '!', '['];
 
 /// The kinds of token the rewrite tells apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TokenKind {
-    /// Whitespace or a comment, which the rewrite copies but never reads.
+    /// Whitespace or a comment. The rewrite copies it unchanged and never
+    /// interprets it.
     Trivia,
     String,
     Number,
@@ -82,7 +84,8 @@ struct Token<'e> {
     text: &'e str,
 }
 
-/// Operators of two characters, which must not be read as two of one.
+/// Operators made of two characters. The tokenizer reads each of them as one
+/// token, rather than as two one-character symbols.
 const TWO_CHAR_OPERATORS: [&str; 11] = [
     "//", "::", "!=", "<=", ">=", "||", "=>", ":=", "..", "<<", ">>",
 ];
@@ -101,9 +104,9 @@ fn tokenize(expression: &str) -> Result<Vec<Token<'_>>, String> {
     Ok(tokens)
 }
 
-/// Returns the kind and length of the token `rest` starts with, given its
-/// `first` character, which the caller has already read to know `rest` is not
-/// empty.
+/// Returns the kind and length of the token at the start of `rest`. The caller
+/// passes the first character of `rest` as `first`, because it has already
+/// read that character to check that `rest` is not empty.
 fn token_at(rest: &str, first: char) -> Result<(TokenKind, usize), String> {
     let starts_number = first.is_ascii_digit()
         || (first == '.' && rest[1..].starts_with(|c: char| c.is_ascii_digit()));
@@ -126,7 +129,8 @@ fn is_name_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '-' | '.')
 }
 
-/// Measures a name, which may carry a prefix: `div`, `data.items`, `jn:keys`.
+/// Measures a name, which may have a prefix, such as `div`, `data.items` or
+/// `jn:keys`.
 fn qname_length(text: &str) -> usize {
     let local = text.find(|c: char| !is_name_char(c)).unwrap_or(text.len());
     let after = &text[local..];
@@ -159,7 +163,8 @@ fn number_length(text: &str) -> usize {
     length
 }
 
-/// Measures a string literal; a doubled quote inside is an escaped quote.
+/// Measures a string literal. Inside the literal, a doubled quote stands for
+/// one quote character.
 fn string_length(text: &str, quote: char) -> Result<usize, String> {
     let mut chars = text.char_indices().skip(1).peekable();
     while let Some((pos, c)) = chars.next() {
@@ -175,7 +180,7 @@ fn string_length(text: &str, quote: char) -> Result<usize, String> {
     Err("unterminated string literal".to_owned())
 }
 
-/// Measures an XPath comment, `(: … :)`, which may nest.
+/// Measures an XPath comment, `(: … :)`. Comments may nest.
 fn comment_length(text: &str) -> Result<usize, String> {
     let mut depth = 0;
     let mut pos = 0;
@@ -203,14 +208,14 @@ fn symbol_length(text: &str, first: char) -> usize {
         .map_or(first.len_utf8(), |pair| pair.len())
 }
 
-/// Rewrites a run of tokens, writing standard XPath to `out`.
+/// Rewrites a sequence of tokens and writes the standard XPath to `out`.
 struct Rewriter<'t, 'e> {
     tokens: &'t [Token<'e>],
     pos: usize,
     out: String,
     previous: PreviousToken,
-    /// The `json()` arguments found so far, shared with nested rewrites so the
-    /// variables are numbered across the whole expression.
+    /// The `json()` arguments found so far. Nested rewrites share this list,
+    /// so the variables are numbered across the whole expression.
     json_arguments: Vec<String>,
 }
 
@@ -235,8 +240,9 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         })
     }
 
-    /// Rewrites a run of tokens inside the current one, such as a function's
-    /// argument, keeping the `json()` arguments in one list.
+    /// Rewrites the tokens of a nested part of the expression, such as a
+    /// function's argument. The nested rewrite adds its `json()` arguments to
+    /// the same list.
     fn rewrite_nested(&mut self, tokens: &[Token<'_>]) -> Result<String, String> {
         let json_arguments = std::mem::take(&mut self.json_arguments);
         let nested = Rewriter::new(tokens, json_arguments).rewrite_all()?;
@@ -244,7 +250,8 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         Ok(nested.xpath)
     }
 
-    /// Rewrites the construct at the current token and moves past it.
+    /// Rewrites the construct that starts at the current token, and moves past
+    /// it.
     fn rewrite_next_construct(&mut self) -> Result<(), String> {
         let token = self.tokens[self.pos];
         let handled = match (token.kind, token.text) {
@@ -275,14 +282,15 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         }
     }
 
-    /// Decides what a copied token is to whatever follows it.
+    /// Decides how a copied token affects the reading of the token after it.
     fn classify(&self, token: Token<'_>) -> PreviousToken {
         match (token.kind, token.text) {
             (TokenKind::Symbol, ")" | "]" | "}") => PreviousToken::Value,
             (TokenKind::Name | TokenKind::Variable, _) | (TokenKind::Symbol, "." | "..") => {
                 PreviousToken::Step
             }
-            // `*` after an operand multiplies; anywhere else it is a step.
+            // A `*` after an operand multiplies. Anywhere else, it is a step
+            // that selects every element.
             (TokenKind::Symbol, "*") if self.previous == PreviousToken::Operator => {
                 PreviousToken::Step
             }
@@ -295,14 +303,15 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         self.tokens.get(self.pos + offset).copied()
     }
 
-    /// Returns the next token that is not whitespace, and how far ahead it is.
+    /// Returns the next token that is not whitespace or a comment, together
+    /// with how far ahead it is.
     fn next_significant(&self) -> Option<(usize, Token<'e>)> {
         (1..)
             .map_while(|offset| self.peek(offset).map(|t| (offset, t)))
             .find(|(_, t)| t.kind != TokenKind::Trivia)
     }
 
-    /// `X.a.b`: each dotted name after a value is a property read.
+    /// Rewrites `X.a.b`, where each dotted name after a value reads a property.
     fn property_chain(&mut self) -> bool {
         let Some(next) = self.peek(1) else {
             return false;
@@ -327,8 +336,9 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         true
     }
 
-    /// `X?key` and `?key`: a lookup is a child step. After a value or step it
-    /// continues the path; at the start it selects from the context item.
+    /// Rewrites the lookups `X?key` and `?key` as child steps. After a value or
+    /// a step, a lookup continues the path. At the start of an expression, it
+    /// selects from the context item.
     fn lookup(&mut self) -> bool {
         let Some(key) = self.peek(1) else {
             return false;
@@ -351,9 +361,9 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         true
     }
 
-    /// `X()`, `X("key")`, `X(2)`: calling a value reads its members, a
-    /// property by name, or a member by position. A call after a name is an
-    /// ordinary function call and is left alone.
+    /// Rewrites a call on a value. `X()` reads the value's members, `X("key")`
+    /// reads a property by name, and `X(2)` reads a member by position. A call
+    /// after a name is an ordinary function call, so it is left alone.
     fn call_on_value(&mut self) -> Result<bool, String> {
         if self.previous != PreviousToken::Value {
             return Ok(false);
@@ -379,7 +389,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         Ok(true)
     }
 
-    /// `jn:keys(X)`, `jn:members(X)` and `css("sel")`.
+    /// Rewrites the calls `jn:keys(X)`, `jn:members(X)` and `css("sel")`.
     fn jsoniq_or_css_call(&mut self, name: &str) -> Result<bool, String> {
         let Some((offset, open)) = self.next_significant() else {
             return Ok(false);
@@ -402,8 +412,9 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         Ok(true)
     }
 
-    /// `json(X)`: the argument is evaluated before the expression runs, and
-    /// the call becomes the variable holding the tree of the JSON it read.
+    /// Rewrites `json(X)`. The argument is evaluated before the expression
+    /// runs, and the call is replaced by the variable that holds the tree of
+    /// the JSON it read.
     fn json_call(&mut self) -> Result<bool, String> {
         let Some((offset, open)) = self.next_significant() else {
             return Ok(false);
@@ -422,8 +433,8 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             .collect();
         let variable = json_variable_name(self.json_arguments.len());
         self.json_arguments.push(argument);
-        // Parenthesized, so a dot after the call reads as a property rather
-        // than as part of the variable's name.
+        // The variable is parenthesized so that a dot after it reads a
+        // property, instead of becoming part of the variable's name.
         self.out.push_str("($");
         self.out.push_str(&variable);
         self.out.push(')');
@@ -432,8 +443,8 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         Ok(true)
     }
 
-    /// `true`, `false` and `null` are values, as in JSONiq, unless they are a
-    /// path step or a function's name.
+    /// Rewrites `true`, `false` and `null` as values, as JSONiq reads them. A
+    /// word used as a path step or as a function's name is left alone.
     fn json_literal(&mut self, word: &str) -> bool {
         let is_step = matches!(self.previous, PreviousToken::Step)
             || self.out.trim_end().ends_with(['/', '@', ':']);
@@ -453,9 +464,9 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         true
     }
 
-    /// A name test with a capital matches the name as written, for a JSON key,
-    /// and in lowercase, for an HTML name. A prefixed name, a function's name
-    /// and an axis are left alone.
+    /// Rewrites a name test that contains a capital letter, so that it matches
+    /// both the name as written, for a JSON key, and its lowercase form, for an
+    /// HTML name. Prefixed names, function names and axes are left alone.
     fn capitalized_name(&mut self, name: &str) -> bool {
         let is_call_or_axis = self
             .next_significant()
@@ -491,8 +502,9 @@ impl<'t, 'e> Rewriter<'t, 'e> {
     }
 }
 
-/// Returns the step reading the property `name`. A name XPath cannot write as
-/// a step, such as one starting with a digit, is matched by `name()`.
+/// Returns the step that reads the property `name`. Some names, such as one
+/// that starts with a digit, cannot be written as an XPath step, so the step
+/// matches them with `name()` instead.
 fn property_step(name: &str) -> String {
     let is_step_name = name.starts_with(|c: char| c.is_alphabetic() || c == '_');
     if is_step_name {
