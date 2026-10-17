@@ -9,10 +9,10 @@ use xee_xpath::query::SequenceQuery;
 use xee_xpath::{Documents, Item as XeeItem, Query};
 use xot::xmlname::OwnedName;
 
-use crate::dialect::json_variable_name;
 use crate::engine::Engine;
 use crate::error::Error;
-use crate::value::{Item, Sequence};
+use crate::rewrite::json_variable_name;
+use crate::sequence::{Item, Sequence};
 use crate::{html, json};
 
 /// A node of a [`Page`].

@@ -9,8 +9,8 @@ use xee_xpath::context::StaticContextBuilder;
 use xee_xpath::query::SequenceQuery;
 use xot::xmlname::OwnedName;
 
-use crate::dialect::{self, json_variable_name};
 use crate::error::Error;
+use crate::rewrite::{self, json_variable_name};
 
 /// How many compiled expressions an engine keeps. Modules use a few dozen
 /// expressions each; the bound only stops expressions built from page content
@@ -38,7 +38,7 @@ pub struct Engine {
 pub(crate) struct Prepared {
     pub(crate) query: SequenceQuery,
     /// The arguments in the order of their variables; see
-    /// [`dialect::json_variable_name`].
+    /// [`rewrite::json_variable_name`].
     pub(crate) json_arguments: Vec<String>,
 }
 
@@ -74,7 +74,7 @@ impl Engine {
             expression: expression.to_owned(),
             message,
         };
-        let rewritten = dialect::rewrite(expression).map_err(compile_error)?;
+        let rewritten = rewrite::to_xpath(expression).map_err(compile_error)?;
         let query = self
             .compile(&rewritten.xpath, rewritten.json_arguments.len())
             .map_err(compile_error)?;

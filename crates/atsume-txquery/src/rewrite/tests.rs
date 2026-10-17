@@ -3,7 +3,7 @@ use super::*;
 fn check(cases: &[(&str, &str)]) {
     for (internettools, standard) in cases {
         assert_eq!(
-            rewrite(internettools).unwrap().xpath,
+            to_xpath(internettools).unwrap().xpath,
             *standard,
             "{internettools}"
         );
@@ -52,7 +52,7 @@ fn calling_a_value_reads_its_members_or_one_of_them() {
         // An ordinary function call is left alone.
         ("concat(a, b)", "concat(a, b)"),
     ]);
-    let dynamic = rewrite("(groups)(key)").unwrap().xpath;
+    let dynamic = to_xpath("(groups)(key)").unwrap().xpath;
     assert!(
         dynamic.starts_with("(groups)/*[let $atsume_key := (key)"),
         "{dynamic}"
@@ -102,7 +102,7 @@ fn css_selectors_become_paths() {
             r#"(.//img[contains(concat(' ', normalize-space(@class), ' '), " cover ")])/@src"#,
         ),
     ]);
-    assert!(rewrite("css(//a)").is_err());
+    assert!(to_xpath("css(//a)").is_err());
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn strings_and_comments_are_left_alone() {
         ("'it''s'.x", "'it''s'.x"),
         ("//a (: a comment with ?x :)", "//a (: a comment with ?x :)"),
     ]);
-    assert!(rewrite("'open").is_err());
+    assert!(to_xpath("'open").is_err());
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn a_capitalized_name_matches_either_case() {
 fn json_calls_become_variables_and_keep_their_arguments() {
     let expression =
         r#"json(*).a, parse-json('x'), 'json(no)', myjson(1), json( //script[@id="d"] )"#;
-    let rewritten = rewrite(expression).unwrap();
+    let rewritten = to_xpath(expression).unwrap();
     assert_eq!(
         rewritten.xpath,
         "($json0)/a, parse-json('x'), 'json(no)', myjson(1), ($json1)"
@@ -168,15 +168,15 @@ fn json_calls_become_variables_and_keep_their_arguments() {
 
 #[test]
 fn json_calls_are_numbered_across_nested_rewrites() {
-    let rewritten = rewrite("jn:keys(json(*).a), json(//b)").unwrap();
+    let rewritten = to_xpath("jn:keys(json(*).a), json(//b)").unwrap();
     assert_eq!(rewritten.xpath, "((($json0)/a)/*/name()), ($json1)");
     assert_eq!(rewritten.json_arguments, ["*", "//b"]);
 }
 
 #[test]
 fn a_json_call_in_a_comment_or_a_path_step_is_not_a_call_to_evaluate() {
-    let commented = rewrite("//a (: json(x) :)").unwrap();
+    let commented = to_xpath("//a (: json(x) :)").unwrap();
     assert_eq!(commented.json_arguments, [] as [String; 0]);
-    assert!(rewrite("//script/json(.)").is_err());
-    assert!(rewrite("json(").is_err());
+    assert!(to_xpath("//script/json(.)").is_err());
+    assert!(to_xpath("json(").is_err());
 }

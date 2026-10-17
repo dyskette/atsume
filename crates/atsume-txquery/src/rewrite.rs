@@ -49,7 +49,7 @@ pub(crate) struct RewrittenExpression {
 }
 
 /// Rewrites `expression`'s internettools extensions into standard XPath.
-pub(crate) fn rewrite(expression: &str) -> Result<RewrittenExpression, String> {
+pub(crate) fn to_xpath(expression: &str) -> Result<RewrittenExpression, String> {
     let tokens = tokenize(expression)?;
     Rewriter::new(&tokens, Vec::new()).rewrite_all()
 }
