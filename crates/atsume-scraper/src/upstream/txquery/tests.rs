@@ -3,7 +3,7 @@ use mlua::Lua;
 use super::*;
 use crate::CancelToken;
 use crate::http::HttpConfig;
-use crate::strings::{ListHandle, Strings};
+use crate::upstream::string_list::{ListHandle, Strings};
 
 const PAGE: &str = r#"<html><head><title> The  Title </title>
 <meta property="og:image" content="/cover.jpg"></head><body>

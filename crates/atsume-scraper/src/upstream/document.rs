@@ -7,7 +7,7 @@
 
 use mlua::{Lua, MetaMethod, UserData, UserDataMethods, Value};
 
-use crate::bind::{Place, state};
+use crate::runtime::bind::{Place, state};
 
 /// The Lua face of a body kept in the runtime's state `S`.
 pub(crate) struct DocumentHandle<S> {

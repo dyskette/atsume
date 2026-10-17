@@ -11,7 +11,7 @@ use atsume_txquery::{Item, Node, Page};
 use mlua::{Function, Lua, LuaString, MetaMethod, UserData, UserDataMethods, Value};
 
 use super::SharedPage;
-use crate::convert::{text_of, to_int};
+use crate::runtime::convert::{text_of, to_int};
 
 /// The items an expression returned, with the page they came from.
 #[derive(Clone)]

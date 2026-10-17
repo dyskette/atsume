@@ -1,9 +1,10 @@
-//! Fetching pages for modules: the `HTTP` object and the session behind it.
+//! Fetching pages for modules, free of Lua.
 //!
-//! [`session`] holds the requests of one scrape as plain Rust, and
-//! [`binding`] exposes it to modules as `HTTP`.
+//! A transport sends one request; a client adds redirects, cookies and rate
+//! limiting; the session behind one scrape adds retries and anti-bot
+//! solving. Modules reach the session through the `HTTP` object in
+//! `upstream::http`.
 
-mod binding;
 mod client;
 mod flaresolverr;
 mod limiter;
@@ -13,7 +14,6 @@ mod transport;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub(crate) use binding::{HttpObject, add_server_cookies, clear_cookies};
 pub use flaresolverr::Flaresolverr;
 pub use limiter::{HostLimiter, Limiter, Unlimited};
 pub(crate) use session::HttpSession;

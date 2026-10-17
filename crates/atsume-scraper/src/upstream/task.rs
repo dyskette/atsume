@@ -3,19 +3,10 @@
 
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods};
 
-use crate::bind::{Place, int_field, lenient, text_field};
 use crate::links::fill_host;
-use crate::strings::{ListHandle, Strings};
-
-/// One page of a chapter.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Page {
-    /// The page's image address.
-    Image(String),
-    /// A page whose address the module finds only when asked, with
-    /// [`Session::resolve_page`](crate::Session::resolve_page).
-    Unresolved,
-}
+use crate::model::Page;
+use crate::runtime::bind::{Place, int_field, lenient, text_field};
+use crate::upstream::string_list::{ListHandle, Strings};
 
 /// What `TASK` holds for the chapter being read, kept in the runtime.
 #[derive(Debug, Default)]

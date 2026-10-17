@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cancel::CancelToken;
 use crate::error::{Error, ErrorKind, Result};
-use crate::module::Module;
+use crate::model::Module;
 use crate::runtime::Runtime;
 use crate::session::{Session, SessionConfig};
 

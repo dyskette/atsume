@@ -6,8 +6,8 @@
 
 use mlua::{Lua, Value};
 
-use crate::convert::to_int;
-use crate::site::AccountStatus;
+use crate::model::AccountStatus;
+use crate::runtime::convert::to_int;
 
 /// The code a handler returns when a request it needed failed.
 pub(crate) const NET_PROBLEM: i64 = 1;

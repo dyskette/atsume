@@ -6,9 +6,9 @@
 
 use mlua::{Function, Lua, MetaMethod, UserData, UserDataMethods, Value};
 
-use crate::bind::{Place, state};
-use crate::convert::{int_arg, string_arg, to_int};
-use crate::module::split_lines;
+use crate::runtime::bind::{Place, state};
+use crate::runtime::convert::{int_arg, string_arg, to_int};
+use crate::upstream::declaration::split_lines;
 
 /// An ordered list of strings.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

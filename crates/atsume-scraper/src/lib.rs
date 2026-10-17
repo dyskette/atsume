@@ -20,36 +20,23 @@
 //! GPL-3.0-only, so they are cloned at run time and never built in. See
 //! `docs/MODULES.md`.
 
-mod bind;
-mod budget;
 mod cancel;
 mod catalog;
-mod convert;
-mod directory;
-mod document;
 mod error;
-mod globals;
 pub mod http;
-mod libs;
 mod links;
-mod module;
-mod query;
+mod model;
 mod runtime;
-mod sandbox;
-mod series;
 mod session;
-mod site;
-mod strings;
-mod task;
 #[cfg(test)]
 mod testing;
+mod upstream;
 
 pub use cancel::{CancelToken, Cancelled};
 pub use catalog::{Catalog, LoadFailure, Site};
-pub use directory::{DirectoryEntry, DirectoryPage};
 pub use error::{Error, ErrorKind, Result};
-pub use module::{Event, Module, ModuleOption, OptionKind, OptionValue};
-pub use series::{Chapter, SeriesInfo, SeriesStatus};
+pub use model::{
+    AccountStatus, Chapter, DirectoryEntry, DirectoryPage, Event, Module, ModuleOption, OptionKind,
+    OptionValue, Page, SeriesInfo, SeriesStatus,
+};
 pub use session::{Session, SessionConfig};
-pub use site::AccountStatus;
-pub use task::Page;

@@ -10,7 +10,7 @@ use mlua::{
     AnyUserData, AppDataRefMut, Lua, MetaMethod, UserData, UserDataFields, UserDataMethods, Value,
 };
 
-use crate::convert::{text_of, to_int, truthy};
+use crate::runtime::convert::{text_of, to_int, truthy};
 
 /// Returns the place in a state value that a field reads and writes.
 pub(crate) type Place<S, V> = fn(&mut S) -> &mut V;

@@ -1,18 +1,25 @@
 //! Preparing a Lua runtime for a module and running calls into it.
 
+pub(crate) mod bind;
+pub(crate) mod budget;
+pub(crate) mod convert;
+pub(crate) mod sandbox;
+
 use std::path::Path;
 use std::rc::Rc;
 
 use mlua::{Function, Lua, Value};
 
-use crate::budget::{Budget, Termination};
 use crate::cancel::CancelToken;
 use crate::error::{Error, ErrorKind, Result};
-use crate::http::{HttpObject, HttpSession};
-use crate::module::{self, Module, Storage};
+use crate::http::HttpSession;
+use crate::model::Module;
 use crate::session::SessionConfig;
-use crate::site::Account;
-use crate::{directory, globals, libs, query, sandbox, series, task};
+use crate::upstream::declaration::{self, Storage};
+use crate::upstream::http::HttpObject;
+use crate::upstream::module::Account;
+use crate::upstream::{directory, globals, libs, mangainfo, task, txquery};
+use budget::{Budget, Termination};
 
 /// A sandboxed runtime holding the state a scrape keeps, with every call
 /// into it bounded by the CPU budget and the scrape's cancellation.
@@ -38,11 +45,11 @@ impl Runtime {
         lua.set_app_data(Account::default());
         lua.set_app_data(HttpSession::new(&config.http, cancel));
         lua.globals().set("HTTP", HttpObject)?;
-        query::register(&lua)?;
-        series::register(&lua)?;
+        txquery::register(&lua)?;
+        mangainfo::register(&lua)?;
         task::register(&lua)?;
         directory::register(&lua)?;
-        module::register_declarations(&lua)?;
+        declaration::register_declarations(&lua)?;
         Ok(Self { lua, budget })
     }
 
@@ -52,7 +59,7 @@ impl Runtime {
         let init_result = self
             .protect(|lua| lua.globals().get::<Function>("Init")?.call::<Value>(()))
             .map_err(|e| e.within(format_args!("Init {}", file.display()), ErrorKind::Load))?;
-        let declared = module::take_declarations(&self.lua, init_result, file)?;
+        let declared = declaration::take_declarations(&self.lua, init_result, file)?;
         declared.ok_or_else(|| {
             let message = format!("{}: Init never called NewWebsiteModule", file.display());
             Error::new(ErrorKind::Load, message)

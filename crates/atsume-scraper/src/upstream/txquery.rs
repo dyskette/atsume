@@ -14,9 +14,9 @@ use mlua::{
     Function, Lua, LuaString, MetaMethod, MultiValue, ObjectLike, UserData, UserDataMethods, Value,
 };
 
-use crate::convert::{pascal_trim, text_of};
-use crate::document::DocumentHandle;
 use crate::http::HttpSession;
+use crate::runtime::convert::{pascal_trim, text_of};
+use crate::upstream::document::DocumentHandle;
 
 mod value;
 

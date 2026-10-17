@@ -2,12 +2,11 @@
 
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods, Value};
 
-use super::session::HttpSession;
-use super::transport::Method;
-use crate::bind::{bool_field, int_field, lenient, state, text_field};
-use crate::convert::{bad_argument, string_arg, text_of};
-use crate::document::DocumentHandle;
-use crate::strings::ListHandle;
+use crate::http::{HttpSession, Method};
+use crate::runtime::bind::{bool_field, int_field, lenient, state, text_field};
+use crate::runtime::convert::{bad_argument, string_arg, text_of};
+use crate::upstream::document::DocumentHandle;
+use crate::upstream::string_list::ListHandle;
 
 /// `HTTP`. It holds nothing itself; every access reaches the session.
 pub(crate) struct HttpObject;

@@ -12,8 +12,8 @@ use mlua::{
 };
 
 use super::{WritableFile, normalize, read_in_root};
-use crate::bind::state;
-use crate::convert::text_of;
+use crate::runtime::bind::state;
+use crate::runtime::convert::text_of;
 
 pub(super) fn library(lua: &Lua, root: PathBuf) -> mlua::Result<Table> {
     let io = lua.create_table()?;

@@ -3,7 +3,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use super::*;
-use crate::convert::text_of;
+use crate::runtime::convert::text_of;
 
 /// Runs `source` in a fresh sandbox over the checkout at `root` and returns
 /// its result as text.

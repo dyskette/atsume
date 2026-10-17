@@ -4,10 +4,11 @@ use std::collections::HashMap;
 
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods, Value};
 
-use crate::bind::{bool_field, int_field, lenient, state, text_field};
-use crate::convert::to_int;
-use crate::http::{add_server_cookies, clear_cookies};
-use crate::module::{Module, OptionValue, StorageObject};
+use crate::model::{AccountStatus, Module, OptionValue};
+use crate::runtime::bind::{bool_field, int_field, lenient, state, text_field};
+use crate::runtime::convert::to_int;
+use crate::upstream::declaration::StorageObject;
+use crate::upstream::http::{add_server_cookies, clear_cookies};
 
 /// The website a runner scrapes, kept in the runtime as `MODULE` exposes it.
 pub(crate) struct SiteState {
@@ -31,20 +32,6 @@ impl SiteState {
             directory_index: 0,
         }
     }
-}
-
-/// A login state, as a module records it in `MODULE.Account.Status`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum AccountStatus {
-    /// Not checked yet.
-    #[default]
-    Unknown,
-    /// A login is in progress.
-    Checking,
-    /// The site accepted the credentials.
-    Valid,
-    /// The site rejected the credentials.
-    Invalid,
 }
 
 impl AccountStatus {

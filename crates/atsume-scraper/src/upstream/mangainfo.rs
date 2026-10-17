@@ -2,64 +2,11 @@
 
 use mlua::{AnyUserData, Lua, UserData, UserDataFields, UserDataMethods, Value};
 
-use crate::bind::{lenient, text_field};
-use crate::convert::{string_arg, text_of};
 use crate::links::normalise_link;
-use crate::strings::{ListHandle, Strings};
-
-/// A series as a module describes it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SeriesInfo {
-    /// The title.
-    pub title: String,
-    /// Other titles, as the site lists them.
-    pub alt_titles: String,
-    /// The cover image's address.
-    pub cover_url: String,
-    /// The authors, as the site lists them.
-    pub authors: String,
-    /// The artists, as the site lists them.
-    pub artists: String,
-    /// The genres, as the site lists them.
-    pub genres: String,
-    /// Whether the series is still running, if the site says.
-    pub status: Option<SeriesStatus>,
-    /// The description.
-    pub summary: String,
-    /// The chapters, in the order the module listed them.
-    pub chapters: Vec<Chapter>,
-}
-
-/// One chapter of a series.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Chapter {
-    /// The link the module reads the chapter's pages from.
-    pub url: String,
-    /// The name, unless the module gave none.
-    pub name: Option<String>,
-}
-
-impl Chapter {
-    /// Returns the name to show: the chapter's name, or its link if it has
-    /// none.
-    #[must_use]
-    pub fn display_name(&self) -> &str {
-        self.name.as_deref().unwrap_or(&self.url)
-    }
-}
-
-/// Whether a series is still running.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SeriesStatus {
-    /// New chapters are still coming.
-    Ongoing,
-    /// The series has ended.
-    Completed,
-    /// The series is paused.
-    Hiatus,
-    /// The series was cancelled.
-    Dropped,
-}
+use crate::model::{Chapter, SeriesInfo, SeriesStatus};
+use crate::runtime::bind::{lenient, text_field};
+use crate::runtime::convert::{string_arg, text_of};
+use crate::upstream::string_list::{ListHandle, Strings};
 
 /// The keywords upstream looks for when a module gives none, in the order it
 /// tries them. Modules call `MangaInfoStatusIfPos` with one argument and rely

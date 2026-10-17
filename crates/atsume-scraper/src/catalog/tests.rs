@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::*;
-use crate::module::{Event, ModuleOption, OptionKind, OptionValue};
+use crate::model::{Event, ModuleOption, OptionKind, OptionValue};
 use crate::testing::Checkout;
 
 const BOM: &str = "\u{FEFF}";

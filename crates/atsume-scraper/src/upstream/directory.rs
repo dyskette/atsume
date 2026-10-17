@@ -3,39 +3,11 @@
 
 use mlua::{Lua, UserData, UserDataFields, UserDataMethods, Value};
 
-use crate::bind::{int_field, lenient, state};
-use crate::convert::string_arg;
 use crate::links::normalise_link;
-use crate::strings::{ListHandle, Strings};
-
-/// One page of a site's directory.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DirectoryPage {
-    /// The series on the page, in the order the module listed them.
-    pub entries: Vec<DirectoryEntry>,
-    /// How many pages the directory has, if the module said while reading
-    /// this one. Some modules say so here rather than in
-    /// [`Session::directory_pages`](crate::Session::directory_pages).
-    pub reported_pages: Option<u32>,
-}
-
-/// One series in a site's directory.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DirectoryEntry {
-    /// The link to read the series from with [`Session::info`](crate::Session::info).
-    pub url: String,
-    /// The title, unless the module gave none.
-    pub name: Option<String>,
-}
-
-impl DirectoryEntry {
-    /// Returns the name to show: the entry's title, or its link if it has
-    /// none.
-    #[must_use]
-    pub fn display_name(&self) -> &str {
-        self.name.as_deref().unwrap_or(&self.url)
-    }
-}
+use crate::model::{DirectoryEntry, DirectoryPage};
+use crate::runtime::bind::{int_field, lenient, state};
+use crate::runtime::convert::string_arg;
+use crate::upstream::string_list::{ListHandle, Strings};
 
 /// What `LINKS`, `NAMES` and `UPDATELIST` hold while a directory page is
 /// read, kept in the runtime.
