@@ -64,7 +64,8 @@ fn config(transport: Arc<dyn Transport>) -> HttpConfig {
     }
 }
 
-/// Opens a module with no handlers, for evaluating `HTTP` calls directly.
+/// Opens a module with no handlers, so that a test can evaluate `HTTP` calls
+/// directly.
 fn open_session(transport: Arc<dyn Transport>) -> Session {
     open_module_with(
         &config(transport),
@@ -222,7 +223,8 @@ fn cookies_travel_both_ways() {
 
     let seen = transport.seen.lock().unwrap();
     assert_eq!(header(&seen[0], "Cookie"), Some("ageGatePass=True"));
-    // The jar sends the session once, though the module's list holds it too.
+    // The jar sends the session cookie once, even though the module's list
+    // holds it too.
     assert_eq!(
         header(&seen[1], "Cookie"),
         Some("session=abc123; ageGatePass=True")
@@ -306,7 +308,8 @@ fn flaresolverr_recovers_a_challenged_page() {
         session.eval("HTTP.Document.ToString()"),
         "<b>real content</b>"
     );
-    // The clearance cookie and its agent carry forward together.
+    // The clearance cookie and the user agent that earned it carry forward
+    // together.
     assert_eq!(
         session.eval("HTTP.Cookies.Values['cf_clearance']"),
         "token123"
@@ -398,7 +401,8 @@ fn the_default_transport_returns_responses_as_received() {
     let ok = get("/");
     assert_eq!((ok.status, ok.body.as_slice()), (200, b"hello".as_slice()));
     assert_eq!(ok.headers_named("set-cookie").collect::<Vec<_>>(), ["a=1"]);
-    // Redirects and error statuses are left to the client above.
+    // Redirects and error statuses are left to the client that sits above the
+    // transport.
     assert_eq!(get("/moved").status, 301);
     assert_eq!(get("/missing").status, 404);
 }
@@ -448,7 +452,7 @@ fn the_retry_policy_sets_how_often_a_request_is_tried() {
         "false"
     );
     assert_eq!(failing.seen.lock().unwrap().len(), 1);
-    // A module may still ask for more for its own requests.
+    // A module may still ask for more retries for its own requests.
     session.exec("HTTP.RetryCount = 2; HTTP.GET('https://a.example/')");
     assert_eq!(failing.seen.lock().unwrap().len(), 4);
 }
