@@ -19,8 +19,8 @@ pub(crate) fn to_xpath(selector: &str) -> Result<String, String> {
 enum Combinator {
     Descendant,
     Child,
-    Adjacent,
-    Sibling,
+    NextSibling,
+    SubsequentSibling,
 }
 
 impl Combinator {
@@ -29,16 +29,16 @@ impl Combinator {
         match self {
             Self::Descendant => "//",
             Self::Child => "/",
-            Self::Adjacent => "/following-sibling::*[1]/self::",
-            Self::Sibling => "/following-sibling::",
+            Self::NextSibling => "/following-sibling::*[1]/self::",
+            Self::SubsequentSibling => "/following-sibling::",
         }
     }
 
     fn from_char(c: char) -> Option<Self> {
         match c {
             '>' => Some(Self::Child),
-            '+' => Some(Self::Adjacent),
-            '~' => Some(Self::Sibling),
+            '+' => Some(Self::NextSibling),
+            '~' => Some(Self::SubsequentSibling),
             _ => None,
         }
     }
@@ -53,19 +53,19 @@ fn complex_to_xpath(complex: &str) -> Result<String, String> {
     let mut combinator = Combinator::Descendant;
     let mut rest = complex;
     loop {
-        let (compound, after) = split_compound(rest);
+        let (compound, after_compound) = split_compound(rest);
         xpath.push_str(combinator.axis());
         xpath.push_str(&compound_to_xpath(compound)?);
-        let after = after.trim_start();
-        if after.is_empty() {
+        let next = after_compound.trim_start();
+        if next.is_empty() {
             return Ok(xpath);
         }
-        combinator = Combinator::from_char(after.chars().next().unwrap_or(' '))
+        combinator = Combinator::from_char(next.chars().next().unwrap_or(' '))
             .unwrap_or(Combinator::Descendant);
         rest = if matches!(combinator, Combinator::Descendant) {
-            after
+            next
         } else {
-            after[1..].trim_start()
+            next[1..].trim_start()
         };
     }
 }
@@ -105,7 +105,7 @@ fn compound_to_xpath(compound: &str) -> Result<String, String> {
     let mut xpath = element;
     let mut rest = &compound[type_end..];
     while !rest.is_empty() {
-        let (predicate, after) = simple_selector(rest)?;
+        let (predicate, after) = simple_to_predicate(rest)?;
         xpath.push('[');
         xpath.push_str(&predicate);
         xpath.push(']');
@@ -116,7 +116,7 @@ fn compound_to_xpath(compound: &str) -> Result<String, String> {
 
 /// Translates the simple selector at the start of `rest` into a predicate,
 /// returning it and what follows.
-fn simple_selector(rest: &str) -> Result<(String, &str), String> {
+fn simple_to_predicate(rest: &str) -> Result<(String, &str), String> {
     let marker = rest.chars().next().unwrap_or(' ');
     let body = &rest[1..];
     match marker {
@@ -126,13 +126,13 @@ fn simple_selector(rest: &str) -> Result<(String, &str), String> {
         }
         '.' => {
             let (class, after) = identifier(body);
-            Ok((has_word("@class", class), after))
+            Ok((word_in_list_predicate("@class", class), after))
         }
         '[' => {
             let end = body.find(']').ok_or("unclosed attribute selector")?;
-            Ok((attribute_test(&body[..end])?, &body[end + 1..]))
+            Ok((attribute_to_predicate(&body[..end])?, &body[end + 1..]))
         }
-        ':' => pseudo_class(body),
+        ':' => pseudo_class_to_predicate(body),
         other => Err(format!("unexpected {other:?} in selector")),
     }
 }
@@ -147,7 +147,7 @@ fn identifier(text: &str) -> (&str, &str) {
 
 /// Translates the inside of `[…]`: a bare attribute name, or a name, an
 /// operator and a value.
-fn attribute_test(inside: &str) -> Result<String, String> {
+fn attribute_to_predicate(inside: &str) -> Result<String, String> {
     let Some(op_start) = inside.find(['=', '~', '^', '$', '*', '|']) else {
         return Ok(format!("@{}", inside.trim().to_ascii_lowercase()));
     };
@@ -160,14 +160,14 @@ fn attribute_test(inside: &str) -> Result<String, String> {
         "" => format!("{name} = {}", quoted(value)),
         // A value with whitespace in it can never be one word of the list.
         "~" if value.is_empty() || value.contains(char::is_whitespace) => "false()".to_owned(),
-        "~" => has_word(&name, value),
+        "~" => word_in_list_predicate(&name, value),
         "^" => format!("starts-with({name}, {})", quoted(value)),
         "$" => format!("ends-with({name}, {})", quoted(value)),
         "*" => format!("contains({name}, {})", quoted(value)),
         "|" => format!(
-            "{name} = {v} or starts-with({name}, {d})",
-            v = quoted(value),
-            d = quoted(&format!("{value}-"))
+            "{name} = {exact} or starts-with({name}, {dash_prefix})",
+            exact = quoted(value),
+            dash_prefix = quoted(&format!("{value}-"))
         ),
         other => return Err(format!("unknown attribute operator {other:?}=")),
     };
@@ -176,7 +176,7 @@ fn attribute_test(inside: &str) -> Result<String, String> {
 
 /// Translates a pseudo-class. Only the ones that count siblings are
 /// supported; their argument must be a whole number.
-fn pseudo_class(body: &str) -> Result<(String, &str), String> {
+fn pseudo_class_to_predicate(body: &str) -> Result<(String, &str), String> {
     let (name, after) = identifier(body);
     let (argument, after) = match after.strip_prefix('(') {
         Some(inner) => {
@@ -202,9 +202,9 @@ fn pseudo_class(body: &str) -> Result<(String, &str), String> {
     Ok((predicate, after))
 }
 
-/// Tests whether a space-separated attribute holds `word`, as `.class` and
-/// `[attr~=word]` do.
-fn has_word(attribute: &str, word: &str) -> String {
+/// Returns a predicate testing whether a space-separated attribute holds
+/// `word`, as `.class` and `[attr~=word]` do.
+fn word_in_list_predicate(attribute: &str, word: &str) -> String {
     format!(
         "contains(concat(' ', normalize-space({attribute}), ' '), {})",
         quoted(&format!(" {word} "))
