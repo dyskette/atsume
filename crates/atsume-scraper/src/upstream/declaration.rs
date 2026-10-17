@@ -51,9 +51,9 @@ fn whole_number(f: f64) -> Option<i64> {
 /// The declarations `NewWebsiteModule()` handed out while a file runs, kept
 /// in the runtime until the host reads them.
 #[derive(Default)]
-pub(crate) struct Declarations(Vec<Declaration>);
+pub(crate) struct PendingDeclarations(Vec<PendingDeclaration>);
 
-struct Declaration {
+struct PendingDeclaration {
     table: Table,
     /// Each declaration collects its own options, so two sites in one file do
     /// not show each other's settings.
@@ -64,13 +64,13 @@ struct Declaration {
 /// returns.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     let new_website_module = lua.create_function(|lua, ()| {
-        let index = state::<Declarations>(lua)?.0.len();
+        let index = state::<PendingDeclarations>(lua)?.0.len();
         let table = declaration_table(lua, index)?;
-        let declaration = Declaration {
+        let declaration = PendingDeclaration {
             table: table.clone(),
             options: Vec::new(),
         };
-        state::<Declarations>(lua)?.0.push(declaration);
+        state::<PendingDeclarations>(lua)?.0.push(declaration);
         Ok(table)
     })?;
     lua.globals().set("NewWebsiteModule", new_website_module)
@@ -86,9 +86,12 @@ pub(crate) fn take_declarations(
     init_result: Value,
     file: &Path,
 ) -> mlua::Result<Option<Vec<SiteDeclaration>>> {
-    let mut declarations = lua.remove_app_data::<Declarations>().unwrap_or_default().0;
+    let mut declarations = lua
+        .remove_app_data::<PendingDeclarations>()
+        .unwrap_or_default()
+        .0;
     if let (Value::Table(table), true) = (init_result, declarations.is_empty()) {
-        declarations.push(Declaration {
+        declarations.push(PendingDeclaration {
             table,
             options: Vec::new(),
         });
@@ -119,7 +122,9 @@ fn declaration_table(lua: &Lua, index: usize) -> mlua::Result<Table> {
     ] {
         let setter = lua.create_function(move |lua, args: Variadic<Value>| {
             let option = parse_option(lua, kind, &args)?;
-            state::<Declarations>(lua)?.0[index].options.push(option);
+            state::<PendingDeclarations>(lua)?.0[index]
+                .options
+                .push(option);
             Ok(())
         })?;
         table.set(name, setter)?;

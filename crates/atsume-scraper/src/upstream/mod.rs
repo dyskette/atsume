@@ -35,7 +35,7 @@ use crate::http::HttpSession;
 /// `lua_dir` is the checkout's `lua` directory, which `fmd.env` reports.
 pub(crate) fn install(lua: &Lua, lua_dir: &Path, http: HttpSession) -> mlua::Result<()> {
     // `NewWebsiteModule`, until the host reads the declarations back.
-    lua.set_app_data(declaration::Declarations::default());
+    lua.set_app_data(declaration::PendingDeclarations::default());
     // The global `Storage`, and `MODULE.Storage`.
     lua.set_app_data(declaration::Storage::default());
     // `MODULE.Account`.
