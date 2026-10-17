@@ -32,7 +32,7 @@ impl Runtime {
         if cancel.is_cancelled() {
             return Err(Error::cancelled());
         }
-        let lua = sandbox::new_runtime(lua_dir)?;
+        let lua = sandbox::new_sandboxed_lua(lua_dir)?;
         let budget = Budget::new(cancel.clone(), config.cpu_limit);
         budget.install(&lua)?;
         let lua_dir = std::path::absolute(lua_dir).map_err(mlua::Error::external)?;
@@ -41,10 +41,10 @@ impl Runtime {
     }
 
     /// Runs a module file and its `Init()`, and returns what it declared.
-    pub(crate) fn load(&self, file: &Path) -> Result<Vec<SiteDeclaration>> {
+    pub(crate) fn load_declarations(&self, file: &Path) -> Result<Vec<SiteDeclaration>> {
         self.run_file(file)?;
         let init_result = self
-            .protect(|lua| lua.globals().get::<Function>("Init")?.call::<Value>(()))
+            .call_bounded(|lua| lua.globals().get::<Function>("Init")?.call::<Value>(()))
             .map_err(|e| e.within(format_args!("Init {}", file.display()), ErrorKind::Load))?;
         let declared = declaration::take_declarations(&self.lua, init_result, file)?;
         declared.ok_or_else(|| {
@@ -58,7 +58,7 @@ impl Runtime {
         let context = format!("load {}", file.display());
         let src = std::fs::read(file)
             .map_err(|e| Error::new(ErrorKind::Load, format!("{context}: {e}")))?;
-        self.protect(|lua| sandbox::load_text(lua, file, &src)?.call::<()>(()))
+        self.call_bounded(|lua| sandbox::load_text(lua, file, &src)?.call::<()>(()))
             .map_err(|e| e.within(context, ErrorKind::Load))
     }
 
@@ -67,7 +67,7 @@ impl Runtime {
     ///
     /// A call cancelled mid-way is a cancellation even if the module caught
     /// the termination and returned, so its result is never taken as real.
-    pub(crate) fn protect<R>(&self, call: impl FnOnce(&Lua) -> mlua::Result<R>) -> Result<R> {
+    pub(crate) fn call_bounded<R>(&self, call: impl FnOnce(&Lua) -> mlua::Result<R>) -> Result<R> {
         let cancelled = || self.budget.cancel_token().is_cancelled();
         if cancelled() {
             return Err(Error::cancelled());

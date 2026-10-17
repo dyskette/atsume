@@ -70,7 +70,7 @@ impl Catalog {
     /// nothing.
     pub fn load_file(lua_dir: &Path, file: &Path) -> Result<Vec<Site>> {
         let runtime = Runtime::new(lua_dir, &SessionConfig::offline(), CancelToken::new())?;
-        let declarations = runtime.load(file)?;
+        let declarations = runtime.load_declarations(file)?;
         let sites = declarations
             .into_iter()
             .enumerate()
@@ -128,7 +128,7 @@ impl Site {
     /// or `cancel` is already cancelled.
     pub fn open(&self, config: &SessionConfig, cancel: CancelToken) -> Result<Session> {
         let runtime = Runtime::new(&self.lua_dir, config, cancel)?;
-        let declared = runtime.load(&self.declaration.file)?;
+        let declared = runtime.load_declarations(&self.declaration.file)?;
         let Some(declaration) = declared.into_iter().nth(self.declaration_index) else {
             return Err(self.changed());
         };

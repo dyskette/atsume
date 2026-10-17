@@ -187,11 +187,14 @@ impl Session {
     /// ([`Unsupported`](ErrorKind::Unsupported)), the module has no
     /// `OnGetNameAndLink` handler, the handler fails, or a request it needed
     /// failed ([`Network`](ErrorKind::Network)).
-    pub fn list(&mut self, listing: u32, page: u32) -> Result<DirectoryPage> {
+    pub fn directory_page(&mut self, listing: u32, page: u32) -> Result<DirectoryPage> {
         self.select_listing(listing)?;
         *self.state::<DirectoryPageRecord>() = DirectoryPageRecord::default();
         globals::set_url_to_directory_page(&self.runtime.lua, page)?;
-        let code = to_int(&self.runtime.lua, &self.call(Event::ListDirectoryPage)?);
+        let code = to_int(
+            &self.runtime.lua,
+            &self.call_handler(Event::ListDirectoryPage)?,
+        );
         if code == globals::RETURN_NETWORK_FAILURE {
             let what = format!("listing page {}", u64::from(page) + 1);
             return Err(Error::network(
@@ -205,7 +208,7 @@ impl Session {
 
     /// Sends the progress messages a module reports while it runs, through
     /// `UPDATELIST.UpdateStatusText`, to `report`.
-    pub fn on_status(&mut self, report: impl FnMut(&str) + 'static) {
+    pub fn set_status_reporter(&mut self, report: impl FnMut(&str) + 'static) {
         self.state::<StatusSink>().0 = Some(Box::new(report));
     }
 
@@ -223,7 +226,7 @@ impl Session {
             return Ok(1);
         }
         globals::set_directory_page_count(&self.runtime.lua, 1)?;
-        self.call(Event::CountDirectoryPages)?;
+        self.call_handler(Event::CountDirectoryPages)?;
         let pages = globals::directory_page_count(&self.runtime.lua)?;
         Ok(u32::try_from(pages.max(1)).unwrap_or(u32::MAX))
     }
@@ -236,10 +239,10 @@ impl Session {
     /// Fails if the module has no `OnGetInfo` handler, the handler fails, a
     /// request it needed failed ([`Network`](ErrorKind::Network)), or the page
     /// holds no series ([`NotFound`](ErrorKind::NotFound)).
-    pub fn info(&mut self, series_url: &str) -> Result<SeriesInfo> {
+    pub fn series_info(&mut self, series_url: &str) -> Result<SeriesInfo> {
         *self.state::<SeriesRecord>() = SeriesRecord::for_url(series_url);
         globals::set_url(&self.runtime.lua, series_url)?;
-        let code = to_int(&self.runtime.lua, &self.call(Event::ReadSeries)?);
+        let code = to_int(&self.runtime.lua, &self.call_handler(Event::ReadSeries)?);
         let site_name = self.site_name();
         match code {
             globals::RETURN_NETWORK_FAILURE => {
@@ -273,8 +276,8 @@ impl Session {
     pub fn pages(&mut self, chapter_url: &str) -> Result<Vec<ChapterPage>> {
         *self.state::<ChapterPagesRecord>() = ChapterPagesRecord::for_chapter(chapter_url);
         globals::set_url(&self.runtime.lua, chapter_url)?;
-        let result = self.call(Event::ListChapterPages)?;
-        self.check_outcome(&result, &format!("reading pages for {chapter_url}"))?;
+        let result = self.call_handler(Event::ListChapterPages)?;
+        self.check_page_handler_result(&result, &format!("reading pages for {chapter_url}"))?;
 
         let resolvable = self.has_handler(Event::ResolvePageImage);
         let pages = self
@@ -312,8 +315,8 @@ impl Session {
         globals::set_url(&self.runtime.lua, chapter_url)?;
         globals::set_page_to_resolve(&self.runtime.lua, index)?;
         let what = format!("resolving page {} of {chapter_url}", index + 1);
-        let result = self.call(Event::ResolvePageImage)?;
-        self.check_outcome(&result, &what)?;
+        let result = self.call_handler(Event::ResolvePageImage)?;
+        self.check_page_handler_result(&result, &what)?;
         match self.state::<ChapterPagesRecord>().page(&root_url, index) {
             ChapterPage::Image(url) => Ok(url),
             ChapterPage::Unresolved => {
@@ -328,7 +331,7 @@ impl Session {
     /// Page handlers signal success either way upstream allows: `true` or
     /// `no_error`. `false` or `nil` is a refusal, and `net_problem` is a
     /// failed request, though Lua reads both codes as true.
-    fn check_outcome(&self, result: &Value, what: &str) -> Result<()> {
+    fn check_page_handler_result(&self, result: &Value, what: &str) -> Result<()> {
         let site_name = self.site_name();
         let net_problem = globals::RETURN_NETWORK_FAILURE;
         match result {
@@ -360,7 +363,7 @@ impl Session {
             let message = format!("module {site_name} has no credentials configured");
             return Err(Error::new(ErrorKind::Unsupported, message));
         }
-        let accepted = truthy(&self.call(Event::Login)?);
+        let accepted = truthy(&self.call_handler(Event::Login)?);
         if self.account_status() == AccountStatus::Invalid {
             let message = format!("module {site_name} rejected the credentials");
             return Err(Error::new(ErrorKind::LoginRejected, message));
@@ -380,7 +383,7 @@ impl Session {
         }
         self.state::<HttpSession>().headers.clear();
         globals::set_url(&self.runtime.lua, image_url)?;
-        self.call(Event::BeforeDownloadImage)?;
+        self.call_handler(Event::BeforeDownloadImage)?;
         let http = self.state::<HttpSession>();
         Ok(http
             .headers
@@ -399,7 +402,7 @@ impl Session {
         self.state::<HttpSession>().response_body.clear();
         globals::set_url(&self.runtime.lua, image_url)?;
         let site_name = self.site_name();
-        if !truthy(&self.call(Event::DownloadImage)?) {
+        if !truthy(&self.call_handler(Event::DownloadImage)?) {
             let message = format!("{site_name}: module declined to download {image_url}");
             return Err(Error::new(ErrorKind::Module, message));
         }
@@ -423,13 +426,13 @@ impl Session {
         }
         globals::set_filename(&self.runtime.lua, path)?;
         self.state::<WritableFile>().0 = Some(path.to_path_buf());
-        let result = self.call(Event::AfterImageSaved);
+        let result = self.call_handler(Event::AfterImageSaved);
         self.state::<WritableFile>().0 = None;
         result.map(|_| ())
     }
 
     /// Calls the Lua function bound to `event` and returns its result.
-    pub(crate) fn call(&self, event: Event) -> Result<Value> {
+    pub(crate) fn call_handler(&self, event: Event) -> Result<Value> {
         let site_name = self.site_name();
         let function = self
             .state::<SiteRecord>()
@@ -447,7 +450,7 @@ impl Session {
         };
         let context = format!("{site_name}/{function}");
         self.runtime
-            .protect(|_| handler.call::<Value>(()))
+            .call_bounded(|_| handler.call::<Value>(()))
             .map_err(|e| e.within(context, ErrorKind::Module))
     }
 

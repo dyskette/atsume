@@ -38,7 +38,7 @@ pub(crate) struct Budget {
     /// The most any one call has used, for calibrating the limit.
     peak: Cell<u64>,
     /// Why the hook ended the current call, if it did.
-    tripped: Cell<Option<Termination>>,
+    ended_by: Cell<Option<Termination>>,
 }
 
 impl Budget {
@@ -48,7 +48,7 @@ impl Budget {
             limit,
             used: Cell::new(0),
             peak: Cell::new(0),
-            tripped: Cell::new(None),
+            ended_by: Cell::new(None),
         })
     }
 
@@ -72,11 +72,11 @@ impl Budget {
     /// thread, so a module that catches the error with `pcall` is ended by the
     /// first instruction outside it.
     fn tick(self: &Rc<Self>, lua: &Lua) -> mlua::Result<VmState> {
-        if self.tripped.get().is_none() {
+        if self.ended_by.get().is_none() {
             self.used.set(self.used.get() + u64::from(HOOK_INTERVAL));
-            self.tripped.set(self.termination());
+            self.ended_by.set(self.termination());
         }
-        let message = match self.tripped.get() {
+        let message = match self.ended_by.get() {
             None => return Ok(VmState::Continue),
             Some(Termination::Cancelled) => "scrape cancelled",
             Some(Termination::CpuLimit) => "CPU limit reached",
@@ -97,7 +97,7 @@ impl Budget {
     /// last call was ended.
     pub(crate) fn start(self: &Rc<Self>, lua: &Lua) -> mlua::Result<()> {
         self.used.set(0);
-        if self.tripped.take().is_some() {
+        if self.ended_by.take().is_some() {
             self.install(lua)?;
         }
         Ok(())
@@ -106,7 +106,7 @@ impl Budget {
     /// Ends a call, recording its usage, and reports whether the hook ended it.
     pub(crate) fn finish(&self) -> Option<Termination> {
         self.peak.set(self.peak.get().max(self.used.get()));
-        self.tripped.get()
+        self.ended_by.get()
     }
 
     pub(crate) fn cancel_token(&self) -> &CancelToken {

@@ -256,7 +256,8 @@ pub struct DirectoryPage {
 /// One series in a site's directory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirectoryEntry {
-    /// The link to read the series from with [`Session::info`](crate::Session::info).
+    /// The link to read the series from with
+    /// [`Session::series_info`](crate::Session::series_info).
     pub url: String,
     /// The title, unless the module gave none.
     pub name: Option<String>,

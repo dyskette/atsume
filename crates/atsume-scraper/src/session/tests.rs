@@ -29,7 +29,7 @@ fn example() -> Session {
 #[test]
 fn handlers_reach_templates_through_require() {
     let session = example();
-    let result = session.call(Event::ReadSeries).unwrap();
+    let result = session.call_handler(Event::ReadSeries).unwrap();
     assert_eq!(
         session.lua().coerce_string(result).unwrap().unwrap(),
         "template"
@@ -39,14 +39,14 @@ fn handlers_reach_templates_through_require() {
 #[test]
 fn a_failing_call_names_the_handler() {
     let session = example();
-    let unhandled = session.call(Event::Login).unwrap_err();
+    let unhandled = session.call_handler(Event::Login).unwrap_err();
     assert_eq!(unhandled.kind(), ErrorKind::Unsupported);
     assert_eq!(
         unhandled.to_string(),
         "module Example has no OnLogin handler"
     );
 
-    let undefined = session.call(Event::ListChapterPages).unwrap_err();
+    let undefined = session.call_handler(Event::ListChapterPages).unwrap_err();
     assert_eq!(undefined.kind(), ErrorKind::Module);
     assert_eq!(
         undefined.to_string(),
@@ -54,7 +54,10 @@ fn a_failing_call_names_the_handler() {
     );
 
     session.set_handler(Event::CheckSite, "Fail");
-    let failed = session.call(Event::CheckSite).unwrap_err().to_string();
+    let failed = session
+        .call_handler(Event::CheckSite)
+        .unwrap_err()
+        .to_string();
     assert!(failed.starts_with("Example/Fail: "), "{failed}");
     assert!(failed.contains("broken on purpose"), "{failed}");
 }
@@ -220,11 +223,11 @@ fn looping_session(cpu_limit: u64) -> (Session, Checkout, CancelToken) {
 #[test]
 fn a_runaway_loop_stops_at_the_cpu_limit() {
     let (session, _, _) = looping_session(1_000_000);
-    let err = session.call(Event::ReadSeries).unwrap_err();
+    let err = session.call_handler(Event::ReadSeries).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::CpuLimit, "{err}");
     assert!(err.to_string().contains("ran too long"), "{err}");
     // The limit is per call, so the session is still usable.
-    let fine = session.call(Event::CheckSite).unwrap();
+    let fine = session.call_handler(Event::CheckSite).unwrap();
     assert_eq!(session.lua().coerce_string(fine).unwrap().unwrap(), "fine");
     assert!(session.peak_instructions() >= 1_000_000);
 }
@@ -232,16 +235,16 @@ fn a_runaway_loop_stops_at_the_cpu_limit() {
 #[test]
 fn the_cpu_limit_reaches_into_coroutines() {
     let (session, _, _) = looping_session(1_000_000);
-    let err = session.call(Event::TaskStart).unwrap_err();
+    let err = session.call_handler(Event::TaskStart).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::CpuLimit, "{err}");
 }
 
 #[test]
 fn cancelling_stops_the_running_call_and_every_later_one() {
     let (session, checkout, cancel) = looping_session(SessionConfig::default().cpu_limit);
-    let running = session.call(Event::ListChapterPages).unwrap_err();
+    let running = session.call_handler(Event::ListChapterPages).unwrap_err();
     assert_eq!(running.kind(), ErrorKind::Cancelled, "{running}");
-    let later = session.call(Event::CheckSite).unwrap_err();
+    let later = session.call_handler(Event::CheckSite).unwrap_err();
     assert_eq!(later.kind(), ErrorKind::Cancelled, "{later}");
     // Read from Rust: a cancelled session runs no more Lua, not even this.
     assert!(
@@ -261,14 +264,14 @@ fn cancelling_stops_the_running_call_and_every_later_one() {
 #[test]
 fn a_caught_termination_is_still_a_cancellation() {
     let (session, _, _) = looping_session(SessionConfig::default().cpu_limit);
-    let err = session.call(Event::Login).unwrap_err();
+    let err = session.call_handler(Event::Login).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Cancelled, "{err}");
 }
 
 #[test]
 fn a_loop_that_keeps_catching_the_termination_still_stops() {
     let (session, _, _) = looping_session(SessionConfig::default().cpu_limit);
-    let err = session.call(Event::ResolvePageImage).unwrap_err();
+    let err = session.call_handler(Event::ResolvePageImage).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Cancelled, "{err}");
 }
 
@@ -308,7 +311,7 @@ fn the_cpu_limit_leaves_room_for_a_large_json_decode() {
     session.lua().globals().set("DATA", json.as_str()).unwrap();
 
     let start = std::time::Instant::now();
-    let decoded = session.call(Event::ReadSeries).unwrap();
+    let decoded = session.call_handler(Event::ReadSeries).unwrap();
     let elapsed = start.elapsed();
     assert_eq!(decoded.as_integer(), Some(8000));
 
@@ -343,7 +346,7 @@ fn info_returns_what_the_module_recorded() {
         "local m = NewWebsiteModule(); m.Name = 'S'; m.OnGetInfo = 'Info'",
         INFO,
     );
-    let info = session.info("/manga/solo/").unwrap();
+    let info = session.series_info("/manga/solo/").unwrap();
     assert_eq!(info.title, "Solo Leveling");
     assert_eq!(info.authors, "Chugong");
     assert_eq!(info.status, Some(crate::SeriesStatus::Completed));
@@ -362,7 +365,7 @@ fn info_returns_what_the_module_recorded() {
     assert_eq!(session.eval("SEEN"), "/manga/solo/");
 
     // Each call starts from an empty record, so nothing carries over.
-    let again = session.info("/manga/solo/").unwrap();
+    let again = session.series_info("/manga/solo/").unwrap();
     assert_eq!(again.chapters.len(), 2);
 }
 
@@ -372,7 +375,7 @@ fn info_reports_a_page_without_a_series() {
         "local m = NewWebsiteModule(); m.Name = 'S'; m.OnGetInfo = 'Info'",
         INFO,
     );
-    let err = session.info("/manga/gone/").unwrap_err();
+    let err = session.series_info("/manga/gone/").unwrap_err();
     assert_eq!(err.kind(), ErrorKind::NotFound);
     assert!(err.to_string().contains("/manga/gone/"), "{err}");
 }
@@ -516,9 +519,9 @@ fn list_reads_one_directory_page() {
     let mut session = open_module(init, LISTING);
     let messages = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let sink = std::rc::Rc::clone(&messages);
-    session.on_status(move |text| sink.borrow_mut().push(text.to_owned()));
+    session.set_status_reporter(move |text| sink.borrow_mut().push(text.to_owned()));
 
-    let first = session.list(0, 0).unwrap();
+    let first = session.directory_page(0, 0).unwrap();
     let entries: Vec<_> = first
         .entries
         .iter()
@@ -531,7 +534,7 @@ fn list_reads_one_directory_page() {
     assert_eq!(first.reported_page_count, Some(3));
 
     // Each page starts from empty lists and no reported count.
-    let second = session.list(0, 1).unwrap();
+    let second = session.directory_page(0, 1).unwrap();
     assert_eq!(second.entries.len(), 1);
     assert_eq!(second.reported_page_count, None);
     assert_eq!(*messages.borrow(), ["reading page 1", "reading page 2"]);

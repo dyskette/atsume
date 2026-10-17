@@ -40,7 +40,7 @@ pub(crate) struct WritableFile(pub(crate) Option<PathBuf>);
 /// # Errors
 ///
 /// Fails if `lua_dir` cannot be made absolute or the runtime cannot be built.
-pub(crate) fn new_runtime(lua_dir: &Path) -> mlua::Result<Lua> {
+pub(crate) fn new_sandboxed_lua(lua_dir: &Path) -> mlua::Result<Lua> {
     let lua_dir = std::path::absolute(lua_dir).map_err(mlua::Error::external)?;
     let root = lua_dir.parent().unwrap_or(&lua_dir).to_path_buf();
 

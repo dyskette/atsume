@@ -244,7 +244,7 @@ fn cancelling_ends_a_module_looping_over_requests() {
     let init = "local m = NewWebsiteModule(); m.Name = 'Pager'; m.OnGetInfo = 'List'";
     let rest = "function List() local n = 0 while true do HTTP.GET('https://a.example/' .. n); n = n + 1 end end";
     let session = open_module_with(&config(transport.clone()), cancel, init, rest);
-    let err = session.call(Event::ReadSeries).unwrap_err();
+    let err = session.call_handler(Event::ReadSeries).unwrap_err();
     assert!(err.kind() == ErrorKind::Cancelled, "{err}");
     assert_eq!(transport.seen.lock().unwrap().len(), 3);
 }
@@ -264,7 +264,7 @@ fn cancelling_abandons_a_request_in_flight() {
         cancel.cancel();
     });
     let start = Instant::now();
-    let err = session.call(Event::ReadSeries).unwrap_err();
+    let err = session.call_handler(Event::ReadSeries).unwrap_err();
     assert!(err.kind() == ErrorKind::Cancelled, "{err}");
     assert!(
         start.elapsed() < Duration::from_secs(2),
@@ -456,7 +456,7 @@ fn a_reported_network_problem_carries_the_last_request() {
     let init = "local m = NewWebsiteModule(); m.Name = 'Net'; m.OnGetInfo = 'Info'";
     let rest = "function Info() if not HTTP.GET('https://a.example' .. URL) then return net_problem end end";
     let mut session = open_module_with(&config(transport), CancelToken::new(), init, rest);
-    let err = session.info("/series/x").unwrap_err();
+    let err = session.series_info("/series/x").unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Network);
     let request = err.request().unwrap();
     assert_eq!(
@@ -486,7 +486,7 @@ fn a_listing_reporting_net_problem_names_the_page() {
     let init = "local m = NewWebsiteModule(); m.Name = 'Net'; m.OnGetNameAndLink = 'List'";
     let rest = "function List() if not HTTP.GET('https://a.example/page/' .. (URL + 1)) then return net_problem end return no_error end";
     let mut session = open_module_with(&config(transport), CancelToken::new(), init, rest);
-    let err = session.list(0, 2).unwrap_err();
+    let err = session.directory_page(0, 2).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Network);
     assert_eq!(
         err.to_string(),

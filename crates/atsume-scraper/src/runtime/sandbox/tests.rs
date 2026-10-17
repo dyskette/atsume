@@ -8,7 +8,7 @@ use crate::runtime::convert::text_of;
 /// Runs `source` in a fresh sandbox over the checkout at `root` and returns
 /// its result as text.
 fn eval_in(root: &Path, writable: Option<&Path>, source: &str) -> mlua::Result<String> {
-    let lua = new_runtime(&root.join("lua"))?;
+    let lua = new_sandboxed_lua(&root.join("lua"))?;
     lua.set_app_data(WritableFile(writable.map(Path::to_path_buf)));
     let value: Value = lua.load(source).eval()?;
     Ok(text_of(&lua, &value).unwrap_or_else(|| value.type_name().to_owned()))
