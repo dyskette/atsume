@@ -1,12 +1,15 @@
-//! The globals FMD2 gives modules, in files named after what each holds.
+//! The globals that FMD2 gives modules. Each file defines one global, or a few
+//! related ones, and is named after the data they hold.
 //!
-//! An object here keeps no state of its own. What it reads and writes is a
-//! plain Rust value kept in the runtime, so the host reads a handler's results
-//! straight back; see [`crate::runtime::bind`].
+//! An object here keeps no state of its own. Everything it reads and writes is
+//! a plain Rust value kept in the runtime, so the host can read a handler's
+//! results straight back. [`crate::runtime::bind`] explains how.
 //!
-//! Rust names say what a value is, not what FMD2 calls it. The name a module
-//! uses is in the string that binds it and in the doc comment of the Rust
-//! item behind it, so a grep for `TASK.PageNumber` finds both.
+//! The Rust names in this module describe what each value holds, so some of
+//! them differ from the names FMD2 gives modules. Each FMD2 name still appears
+//! in two places: in the string that binds the value to Lua, and in the doc
+//! comment of the Rust item behind it. Searching for `TASK.PageNumber` finds
+//! both.
 
 pub(crate) mod chapter_pages;
 pub(crate) mod declaration;
@@ -26,27 +29,29 @@ use mlua::Lua;
 
 use crate::http::HttpSession;
 
-/// Stores the state behind the globals and sets the globals, before a module
-/// file runs.
+/// Stores the state behind the globals, and then sets the globals, before a
+/// module file runs.
 ///
-/// This is every value the objects here read and write, each kept once in the
-/// runtime. Two are kept elsewhere: the sandbox keeps the file `io` may write,
-/// and a session keeps the declared website behind `MODULE` once it knows it.
-/// `lua_dir` is the checkout's `lua` directory, which `fmd.env` reports.
+/// The state is every value that the objects here read and write, each kept
+/// once in the runtime. Two values are kept elsewhere. The sandbox keeps the
+/// file that `io` may write, and a session keeps the declared website behind
+/// `MODULE` once it knows that website. `lua_dir` is the checkout's `lua`
+/// directory, which `fmd.env` reports.
 pub(crate) fn install(lua: &Lua, lua_dir: &Path, http: HttpSession) -> mlua::Result<()> {
-    // `NewWebsiteModule`, until the host reads the declarations back.
+    // `NewWebsiteModule` adds declarations here until the host reads them back.
     lua.set_app_data(declaration::PendingDeclarations::default());
-    // The global `Storage`, and `MODULE.Storage`.
+    // The global `Storage` and `MODULE.Storage` both read this one.
     lua.set_app_data(declaration::Storage::default());
-    // `MODULE.Account`.
+    // `MODULE.Account` reads this.
     lua.set_app_data(module::AccountRecord::default());
-    // `HTTP`, and the lists and document it hands out.
+    // `HTTP` reads this, as do the lists and the document that it hands out.
     lua.set_app_data(http);
-    // `MANGAINFO`.
+    // `MANGAINFO` reads this.
     lua.set_app_data(series::SeriesRecord::default());
-    // `TASK`.
+    // `TASK` reads this.
     lua.set_app_data(chapter_pages::ChapterPagesRecord::default());
-    // `LINKS`, `NAMES` and `UPDATELIST`, and where progress messages go.
+    // `LINKS`, `NAMES` and `UPDATELIST` read this, and the next value says
+    // where progress messages go.
     lua.set_app_data(directory::DirectoryPageRecord::default());
     lua.set_app_data(directory::StatusSink::default());
 
