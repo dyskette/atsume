@@ -111,3 +111,101 @@ fn invalid_utf8_is_replaced() {
     let text = page.evaluate(&engine, "//p", None).unwrap();
     assert_eq!(page.text_of(&text), "caf\u{fffd}");
 }
+
+const API: &str = r#"{"data": {"title": "Solo", "items": [
+    {"name": "Chapter 2", "url": "/c/2", "external": null},
+    {"name": "Chapter 1", "url": "/c/1", "summary": "<p>first &amp; best</p>"}
+]}, "z": 1, "a": 2}"#;
+
+/// Evaluates `expression` on a JSON response and returns each item's text.
+fn json_texts(expression: &str) -> Vec<String> {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(API.as_bytes());
+    let result = page.evaluate(&engine, expression, None).unwrap();
+    result.items().iter().map(|item| page.text(item)).collect()
+}
+
+#[test]
+fn json_properties_are_path_steps() {
+    assert_eq!(json_texts("json(*)/data/title"), ["Solo"]);
+    assert_eq!(
+        json_texts("json(*)/data/items/*/name"),
+        ["Chapter 2", "Chapter 1"]
+    );
+    assert_eq!(json_texts("count(json(*)/data/items/*)"), ["2"]);
+    assert_eq!(json_texts("json(*)//url"), ["/c/2", "/c/1"]);
+    // Properties keep the order the response gives them.
+    assert_eq!(json_texts("string-join(json(*)/(z, a), ',')"), ["1,2"]);
+    assert_eq!(json_texts("json(*)/*[2]"), ["1"]);
+}
+
+#[test]
+fn null_is_the_string_null_and_a_missing_key_is_nothing() {
+    assert_eq!(json_texts("json(*)/data/items/*[1]/external"), ["null"]);
+    assert_eq!(
+        json_texts("json(*)/data/items/*[2]/external"),
+        [] as [&str; 0]
+    );
+}
+
+#[test]
+fn markup_inside_json_strings_survives() {
+    assert_eq!(
+        json_texts("json(*)/data/items/*[2]/summary"),
+        ["<p>first &amp; best</p>"]
+    );
+}
+
+#[test]
+fn json_reads_any_text_the_page_holds() {
+    let engine = Engine::new();
+    let html = r#"<script type="application/json">{"pages": [{"img": "1.jpg"}]}</script>
+        <script>var data = {chapter: 'one', pages: [2, 3,]};</script>"#;
+    let mut page = Document::parse_html(html.as_bytes());
+    let mut texts = |expression: &str| {
+        let result = page.evaluate(&engine, expression, None).unwrap();
+        result
+            .items()
+            .iter()
+            .map(|item| page.text(item))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        texts(r#"json(//script[@type="application/json"])/pages/*/img"#),
+        ["1.jpg"]
+    );
+    let literal = "json(substring-before(substring-after(//script[2], '= '), ';'))";
+    assert_eq!(texts(&format!("{literal}/chapter")), ["one"]);
+    assert_eq!(
+        texts(&format!("string-join({literal}/pages/*, '|')")),
+        ["2|3"]
+    );
+    assert_eq!(
+        texts(&format!(
+            "concat(json(//script[1])/pages/*/img, {literal}/chapter)"
+        )),
+        ["1.jpgone"]
+    );
+}
+
+#[test]
+fn a_json_text_is_parsed_once() {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(API.as_bytes());
+    let first = page.evaluate(&engine, "json(*)/data", None).unwrap();
+    let again = page.evaluate(&engine, "json(*)/data", None).unwrap();
+    assert_eq!(first, again);
+    assert_eq!(page.json_trees.len(), 1);
+}
+
+#[test]
+fn text_that_is_not_json_fails_naming_the_expression() {
+    let engine = Engine::new();
+    let mut page = page();
+    let err = page.evaluate(&engine, "json(//h1)/a", None).unwrap_err();
+    assert!(
+        matches!(&err, Error::Evaluate { expression, .. } if expression == "//h1"),
+        "{err}"
+    );
+    assert!(err.to_string().contains("invalid JSON"), "{err}");
+}

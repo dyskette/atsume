@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use xee_xpath::Queries;
+use xee_xpath::context::StaticContextBuilder;
 use xee_xpath::query::SequenceQuery;
+use xot::xmlname::OwnedName;
 
 use crate::error::Error;
 
@@ -24,6 +26,12 @@ pub struct Engine {
     compiled: RefCell<HashMap<String, Rc<SequenceQuery>>>,
 }
 
+/// Returns the name of the variable bound to the `index`th `json()` call of
+/// an expression.
+pub(crate) fn json_variable(index: usize) -> String {
+    format!("json{index}")
+}
+
 impl Engine {
     /// Returns an engine with nothing compiled yet.
     #[must_use]
@@ -31,14 +39,21 @@ impl Engine {
         Self::default()
     }
 
-    /// Returns the compiled form of `expression`.
-    pub(crate) fn compile(&self, expression: &str) -> Result<Rc<SequenceQuery>, Error> {
+    /// Returns the compiled form of `expression`, which may refer to the
+    /// variables `$json0` up to `$json{variables - 1}`.
+    pub(crate) fn compile(
+        &self,
+        expression: &str,
+        variables: usize,
+    ) -> Result<Rc<SequenceQuery>, Error> {
         if let Some(query) = self.compiled.borrow().get(expression) {
             return Ok(Rc::clone(query));
         }
+        let mut context = StaticContextBuilder::default();
+        context.variable_names((0..variables).map(|i| OwnedName::name(&json_variable(i))));
         let query = self
             .queries
-            .sequence(expression)
+            .sequence_with_context(expression, context.build())
             .map_err(|e| Error::Compile {
                 expression: expression.to_owned(),
                 message: e.to_string(),

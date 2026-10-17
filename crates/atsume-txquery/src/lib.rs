@@ -18,6 +18,7 @@ mod document;
 mod engine;
 mod error;
 mod html;
+mod json;
 mod value;
 
 pub use document::{Document, Node};
