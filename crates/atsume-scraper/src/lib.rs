@@ -1,8 +1,9 @@
 //! Runs the website modules from [FMD2](https://github.com/dazedcat19/FMD2).
 //!
-//! A [`Catalog`] lists the websites the modules in a checkout declare. Each
-//! [`Site`] opens a [`Session`] for one scrape, which runs the module in a
-//! sandboxed Lua 5.4 runtime with a CPU budget and cancellation on every call.
+//! A [`Catalog`] lists the websites that the modules in a checkout declare.
+//! Each [`Site`] opens a [`Session`] for one scrape. The session runs the
+//! module in a sandboxed Lua 5.4 runtime, and every call into the module has a
+//! CPU budget and can be cancelled.
 //!
 //! ```no_run
 //! use atsume_scraper::{CancelToken, Catalog, SessionConfig};
@@ -17,8 +18,8 @@
 //! ```
 //!
 //! The modules are GPL-2.0-only, which is incompatible with atsume's
-//! GPL-3.0-only, so they are cloned at run time and never built in. See
-//! `docs/MODULES.md`.
+//! GPL-3.0-only license. They are therefore cloned when atsume runs and never
+//! built into it. See `docs/MODULES.md`.
 
 mod cancel;
 mod catalog;
