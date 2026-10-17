@@ -33,6 +33,7 @@ pub mod http;
 mod libs;
 mod links;
 mod module;
+mod query;
 mod runtime;
 mod sandbox;
 mod series;

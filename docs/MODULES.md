@@ -132,6 +132,40 @@ input; atsume parses both the same way, so there it is the more lenient of the
 two. That can turn an upstream failure into a result, never change the reading
 of valid JSON.
 
+### In the Rust port
+
+`crates/atsume-txquery` evaluates expressions with
+[xee](https://github.com/Paligo/xee), an XPath 3.1 engine, so nothing is
+hoisted or folded: sequences, functions in step position and `replace()` are
+evaluated as written. What remains of internettools' dialect is rewritten
+token by token into standard XPath: dots and calls on JSON values, `?`
+lookups, `jn:keys`, `jn:members`, `css()` and bare `true`/`false`/`null`.
+`json(…)` is evaluated first and its tree bound to a variable. As of the
+revision measured, 3602 of 3603 call sites compile; the corpus test in
+`src/corpus.rs` fails below 99%.
+
+`crates/atsume-scraper/src/query.rs` gives modules `CreateTXQuery`, following
+`baseunits/lua/LuaXQuery.pas` and `LuaIXQValue.pas` rather than the Go port:
+
+- **A failed expression reads as nothing.** Upstream wraps every evaluation in
+  `try … except end`. atsume does the same and logs the error at debug level,
+  which is where to look when a field comes back blank.
+- **`XPathString` is the whole result's text**, every item joined with nothing
+  between, untrimmed. `XPathStringAll` trims each value and skips the empty
+  ones, except when it fills a list: then it adds every trimmed value. Trimming
+  is Pascal's: spaces and control characters only.
+- **`XPathCount` counts every item**, not only nodes.
+- **`XPath` returns one kind of object for any result**, with `Count`, `Get`,
+  `GetAttribute`, `GetProperty` and `ToString`. `Get(i)` out of range is an
+  empty object, not `nil`. There is no `#` and no `[i]`, as upstream has none.
+- **A context argument stands for its first item**, read on the page it came
+  from. A page and every object read from it share one tree, so `ParseHTML`
+  parses the new page beside the old one and earlier objects keep working.
+
+Two Go behaviours stay because modules gain from them: a link with no text is
+named by its `title` in `XPathHREFAll`, and `XPathStringAll` takes a context
+as its second argument.
+
 ## JavaScript execution
 
 Several sites encrypt their page lists and ship the decryption routine in the

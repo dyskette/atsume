@@ -27,6 +27,12 @@ impl<S: 'static> DocumentHandle<S> {
         Self { place }
     }
 
+    /// Returns a copy of the body.
+    pub(crate) fn bytes(self, lua: &Lua) -> mlua::Result<Vec<u8>> {
+        let mut owner = state::<S>(lua)?;
+        Ok((self.place)(&mut *owner).clone())
+    }
+
     fn text(self, lua: &Lua) -> mlua::Result<mlua::LuaString> {
         let mut owner = state::<S>(lua)?;
         lua.create_string((self.place)(&mut *owner).as_slice())

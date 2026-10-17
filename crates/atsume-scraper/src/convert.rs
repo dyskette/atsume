@@ -12,6 +12,12 @@ pub(crate) fn text_of(lua: &Lua, value: &Value) -> Option<String> {
     Some(text.to_string_lossy())
 }
 
+/// Trims as Pascal's `Trim` does: spaces and control characters, but not
+/// other Unicode whitespace such as a no-break space.
+pub(crate) fn pascal_trim(text: &str) -> &str {
+    text.trim_matches(|c: char| c <= ' ')
+}
+
 /// Reports Lua truthiness: everything but `nil` and `false` is true.
 pub(crate) fn truthy(value: &Value) -> bool {
     !matches!(value, Value::Nil | Value::Boolean(false))

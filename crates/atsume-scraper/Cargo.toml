@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+atsume-txquery = { path = "../atsume-txquery", version = "0.1.0" }
 cookie.workspace = true
 cookie_store.workspace = true
 mlua.workspace = true

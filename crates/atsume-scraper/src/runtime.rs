@@ -12,7 +12,7 @@ use crate::http::{HttpObject, HttpSession};
 use crate::module::{self, Module, Storage};
 use crate::session::SessionConfig;
 use crate::site::Account;
-use crate::{directory, globals, libs, sandbox, series, task};
+use crate::{directory, globals, libs, query, sandbox, series, task};
 
 /// A sandboxed runtime holding the state a scrape keeps, with every call
 /// into it bounded by the CPU budget and the scrape's cancellation.
@@ -38,6 +38,7 @@ impl Runtime {
         lua.set_app_data(Account::default());
         lua.set_app_data(HttpSession::new(&config.http, cancel));
         lua.globals().set("HTTP", HttpObject)?;
+        query::register(&lua)?;
         series::register(&lua)?;
         task::register(&lua)?;
         directory::register(&lua)?;
