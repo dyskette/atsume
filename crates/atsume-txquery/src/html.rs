@@ -1,9 +1,9 @@
-//! Parsing a page into the tree expressions run against.
+//! Parses a page into the tree that expressions run against.
 //!
-//! html5ever parses the page as a browser would, repairing whatever the site
-//! got wrong, and this builder writes each node straight into the arena xee
-//! queries. Upstream's own parser repairs pages the same way for what modules
-//! rely on, such as the `tbody` a table always gets.
+//! html5ever parses the page the way a browser does and repairs whatever the
+//! site got wrong. The builder here writes each node straight into the arena
+//! that xee queries. Upstream's own parser repairs pages the same way wherever
+//! modules depend on it, for example by giving every table a `tbody`.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -16,9 +16,10 @@ use xot::Xot;
 
 /// Parses `html` into `xot` and returns the document node.
 ///
-/// Names are lowercase and in no namespace, so `//div` matches as modules
-/// expect, and whitespace is kept. Comments and processing instructions are
-/// left out, as upstream reads them. Invalid UTF-8 is replaced.
+/// Element and attribute names are lowercase and in no namespace, so `//div`
+/// matches as modules expect, and whitespace is kept. Comments and processing
+/// instructions are left out, as upstream leaves them out. Invalid UTF-8 is
+/// replaced with U+FFFD.
 pub(crate) fn parse(xot: &mut Xot, html: &[u8]) -> xot::Node {
     let document = xot.new_document();
     let sink = Sink {
@@ -32,20 +33,20 @@ pub(crate) fn parse(xot: &mut Xot, html: &[u8]) -> xot::Node {
         .one(html)
 }
 
-/// Builds the tree as html5ever parses.
+/// Builds the tree while html5ever parses.
 ///
-/// html5ever calls back through shared references, so the arena is behind a
+/// html5ever calls back through shared references, so the arena sits behind a
 /// `RefCell`.
 struct Sink<'x> {
     xot: RefCell<&'x mut Xot>,
     document: xot::Node,
-    /// The full name of each element, which html5ever asks back for.
+    /// The full name of each element. html5ever asks for it again later.
     names: RefCell<HashMap<xot::Node, QualName>>,
-    /// The detached node holding each `template` element's contents.
+    /// For each `template` element, the detached node that holds its contents.
     templates: RefCell<HashMap<xot::Node, xot::Node>>,
 }
 
-/// An element's name as html5ever asks for it.
+/// An element's name, in the form that html5ever asks for.
 #[derive(Debug)]
 struct ElementName(QualName);
 
@@ -60,7 +61,7 @@ impl ElemName for ElementName {
 }
 
 impl Sink<'_> {
-    /// Adds a node, skipping the kinds upstream leaves out of its tree.
+    /// Adds a node to the tree, unless it is a kind that upstream leaves out.
     fn attach(
         &self,
         place: impl FnOnce(&mut Xot, xot::Node) -> Result<(), xot::Error>,
@@ -90,8 +91,8 @@ impl TreeSink for Sink<'_> {
         self.document
     }
 
-    /// Pages from the web are rarely valid; html5ever repairs them, and the
-    /// repairs are expected rather than worth reporting.
+    /// Pages from the web are rarely valid. html5ever repairs them, and the
+    /// repairs are expected, so they are not reported.
     fn parse_error(&self, _: Cow<'static, str>) {}
 
     fn get_document(&self) -> xot::Node {
@@ -159,7 +160,7 @@ impl TreeSink for Sink<'_> {
         }
     }
 
-    /// The tree has no doctype node, as XPath has none.
+    /// The tree has no doctype node, because XPath has none.
     fn append_doctype_to_document(&self, _: StrTendril, _: StrTendril, _: StrTendril) {}
 
     fn get_template_contents(&self, target: &xot::Node) -> xot::Node {
@@ -211,9 +212,9 @@ impl TreeSink for Sink<'_> {
     }
 }
 
-/// Logs a repair the arena refused. html5ever's repairs are valid trees, so
-/// this is not expected; a refusal leaves that node out rather than failing
-/// the page.
+/// Logs a repair that the arena refused. html5ever's repairs always produce
+/// valid trees, so a refusal is not expected. If one happens, that node is
+/// left out instead of failing the whole page.
 fn log_if_refused(result: Result<(), xot::Error>) {
     if let Err(error) = result {
         tracing::debug!(%error, "a node was left out of the parsed page");
