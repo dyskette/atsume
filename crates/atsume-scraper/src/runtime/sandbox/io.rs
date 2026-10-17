@@ -1,9 +1,9 @@
-//! An `io` library that reads within the checkout and writes one file.
+//! An `io` library that reads inside the checkout and writes one file.
 //!
-//! Only `io.open` and `io.lines` exist, since those are all the modules use.
-//! Reads stay inside the checkout, except for the [`WritableFile`], which is
-//! also the only file that may be written. Any other write fails with `nil`
-//! and a message, as on a read-only filesystem.
+//! Only `io.open` and `io.lines` exist, because those are all that modules
+//! use. Reads stay inside the checkout, except for the [`WritableFile`], which
+//! is also the only file that may be written. Any other write fails with `nil`
+//! and a message, as it would on a read-only filesystem.
 
 use std::path::{Path, PathBuf};
 
@@ -38,7 +38,8 @@ pub(super) fn library(lua: &Lua, root: PathBuf) -> mlua::Result<Table> {
     Ok(io)
 }
 
-/// Converts a result into Lua's convention: the value, or `nil` and a message.
+/// Converts a result into Lua's convention, which returns the value, or `nil`
+/// and a message.
 fn value_or_nil_and_message<T: mlua::IntoLua>(
     lua: &Lua,
     result: Result<mlua::Result<T>, String>,
@@ -49,8 +50,8 @@ fn value_or_nil_and_message<T: mlua::IntoLua>(
     }
 }
 
-/// What a module may open: anything inside `root` for reading, and the
-/// writable file for reading or writing.
+/// What a module may open. It may read anything inside `root`, and it may read
+/// or write the writable file.
 struct Files<'a> {
     root: &'a Path,
     writable: Option<PathBuf>,
@@ -84,8 +85,9 @@ impl<'a> Files<'a> {
             .is_some_and(|target| normalize(Path::new(name)) == normalize(target))
     }
 
-    /// Opens the writable file: `w` replaces it and `a` appends to it. Modes
-    /// that both read and write are refused, since no module needs one.
+    /// Opens the writable file. Mode `w` replaces the file and mode `a`
+    /// appends to it. Modes that both read and write are refused, because no
+    /// module needs one.
     fn open_for_writing(&self, name: &str, mode: &str) -> Result<LuaFile, String> {
         if !self.is_writable(name) || mode.contains('+') {
             return Err(format!("{name}: read-only file system"));
@@ -106,7 +108,8 @@ impl<'a> Files<'a> {
     }
 }
 
-/// Reads a file to append to, treating a missing one as empty.
+/// Reads a file that is about to be appended to. A missing file reads as
+/// empty.
 fn read_existing(path: &Path) -> std::io::Result<Vec<u8>> {
     match std::fs::read(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
@@ -146,7 +149,7 @@ impl LuaFile {
 
     /// Reads one `file:read` format, returning `None` at the end of the file.
     ///
-    /// Accepts `a`, `l` and `L`, with or without Lua 5.1's `*` prefix.
+    /// It accepts `a`, `l` and `L`, with or without Lua 5.1's `*` prefix.
     fn read_format(&mut self, format: &str) -> mlua::Result<Option<Vec<u8>>> {
         let read = match format.trim_start_matches('*') {
             "a" | "all" => Some(self.read_rest()),
@@ -165,8 +168,8 @@ impl LuaFile {
 
     /// Returns the next line, or `None` at the end of the file.
     ///
-    /// Without the newline, a trailing `\r` goes too: FMD2 runs on Windows, so
-    /// its files may have CRLF line endings.
+    /// When the newline is dropped, a trailing `\r` is dropped too, because
+    /// FMD2 runs on Windows and its files may have CRLF line endings.
     fn read_line(&mut self, keep_newline: bool) -> Option<&[u8]> {
         if self.pos >= self.data.len() {
             return None;
@@ -183,7 +186,8 @@ impl LuaFile {
         Some(rest[..i].strip_suffix(b"\r").unwrap_or(&rest[..i]))
     }
 
-    /// Saves a file opened for writing, returning the error message on failure.
+    /// Saves a file that was opened for writing. On failure, it returns the
+    /// error message.
     fn save(&self) -> Result<(), String> {
         let Some(path) = &self.path else {
             return Ok(());
@@ -208,8 +212,8 @@ impl UserData for LuaFile {
     }
 }
 
-/// `file:read(...)`: one value per format, stopping at the first that finds
-/// nothing, as in Lua.
+/// Implements `file:read(...)`, which returns one value per format and stops at
+/// the first format that finds nothing, as in Lua.
 fn file_read(lua: &Lua, file: &mut LuaFile, formats: Variadic<Value>) -> mlua::Result<MultiValue> {
     file.check_open()?;
     let formats = if formats.is_empty() {
@@ -233,8 +237,8 @@ fn file_read(lua: &Lua, file: &mut LuaFile, formats: Variadic<Value>) -> mlua::R
     Ok(out)
 }
 
-/// `file:write(...)`: appends each string or number and returns the file, so
-/// calls can chain, as in Lua.
+/// Implements `file:write(...)`, which appends each string or number and
+/// returns the file so that calls can chain, as in Lua.
 fn file_write(
     lua: &Lua,
     (handle, args): (AnyUserData, Variadic<Value>),
