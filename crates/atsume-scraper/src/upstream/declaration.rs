@@ -1,9 +1,9 @@
-//! What a module declares about a website from its `Init()`.
+//! Reads what a module's `Init()` declares about each website.
 //!
-//! `Init()` calls `NewWebsiteModule()` once per website and fills in the
-//! table it returns: the site's name and address, the Lua functions handling
-//! each event, and the settings it offers. [`SiteDeclaration`] is that declaration,
-//! read back into Rust.
+//! `Init()` calls `NewWebsiteModule()` once per website and fills in the table
+//! that it returns. The table gives the site's name and address, the Lua
+//! functions that handle each event, and the settings the site offers.
+//! [`SiteDeclaration`] is that declaration, read back into Rust.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,7 +16,8 @@ use crate::runtime::convert::{lua_text, text_arg, truthy};
 use crate::string_list::split_lines;
 
 impl OptionValue {
-    /// Reads a Lua value, or `None` for `nil` and for values no setting holds.
+    /// Reads a Lua value. Returns `None` for `nil` and for any value that no
+    /// setting can hold.
     pub(crate) fn from_lua_value(value: &Value) -> Option<Self> {
         match value {
             Value::Boolean(b) => Some(Self::Bool(*b)),
@@ -48,19 +49,19 @@ fn whole_number(f: f64) -> Option<i64> {
     Some(n)
 }
 
-/// The declarations `NewWebsiteModule()` handed out while a file runs, kept
-/// in the runtime until the host reads them.
+/// The declarations that `NewWebsiteModule()` handed out while a file runs.
+/// They are kept in the runtime until the host reads them.
 #[derive(Default)]
 pub(crate) struct PendingDeclarations(Vec<PendingDeclaration>);
 
 struct PendingDeclaration {
     table: Table,
-    /// Each declaration collects its own options, so two sites in one file do
-    /// not show each other's settings.
+    /// The options that this declaration collected. Each declaration collects
+    /// its own, so two sites in one file do not show each other's settings.
     options: Vec<SiteOption>,
 }
 
-/// Sets the global `NewWebsiteModule`, which records each declaration it
+/// Sets the global `NewWebsiteModule`, which records each declaration that it
 /// returns.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     let new_website_module = lua.create_function(|lua, ()| {
@@ -78,11 +79,11 @@ pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set("NewWebsiteModule", new_website_module)
 }
 
-/// Reads every declaration the file made into a [`SiteDeclaration`], in order, or
-/// `None` if it made none.
+/// Reads every declaration that the file made into a [`SiteDeclaration`], in
+/// order. Returns `None` if the file made no declaration.
 ///
-/// Most modules fill the table and fall off the end of `Init()`; a few return
-/// it instead, which is the same single declaration.
+/// Most modules fill in the table and fall off the end of `Init()`. A few
+/// return the table instead, which counts as the same single declaration.
 pub(crate) fn take_declarations(
     lua: &Lua,
     init_result: Value,
@@ -108,10 +109,11 @@ pub(crate) fn take_declarations(
     Ok(Some(site_declarations))
 }
 
-/// Builds the table `NewWebsiteModule()` returns for declaration `index`.
+/// Builds the table that `NewWebsiteModule()` returns for declaration `index`.
 ///
-/// It holds the option setters and `Storage`. Modules call the setters with a
-/// dot, so the first argument is the option's name, not the table.
+/// The table holds the option setters and `Storage`. Modules call the setters
+/// with a dot, so the first argument is the option's name rather than the
+/// table.
 fn declaration_table(lua: &Lua, index: usize) -> mlua::Result<Table> {
     let table = lua.create_table()?;
     table.set("Storage", StorageObject)?;
@@ -134,8 +136,9 @@ fn declaration_table(lua: &Lua, index: usize) -> mlua::Result<Table> {
     Ok(table)
 }
 
-/// Reads a setter's arguments: name, caption, then the default, with a choice
-/// setting's choices between the caption and the default.
+/// Reads a setter's arguments, which are the name, the caption and the
+/// default. For a choice setting, the choices come between the caption and the
+/// default.
 fn option_from_setter_args(
     lua: &Lua,
     kind: OptionKind,
@@ -175,7 +178,8 @@ fn choice_list(lua: &Lua, value: &Value) -> Vec<String> {
 
 /// Reads a declaration table back into a [`SiteDeclaration`].
 ///
-/// Text fields accept a number, as Lua would; flags take Lua truthiness.
+/// A text field accepts a number, as Lua would, and a flag takes the value's
+/// Lua truthiness.
 fn read_declaration(
     lua: &Lua,
     table: &Table,
@@ -207,7 +211,7 @@ fn read_declaration(
     })
 }
 
-/// Reads a declared `TotalDirectory`, where anything below one means one.
+/// Reads a declared `TotalDirectory`, where any value below one means one.
 fn parse_listing_count(declared: Option<f64>) -> u32 {
     declared
         .and_then(|n| whole_number(n.trunc()))
@@ -216,15 +220,15 @@ fn parse_listing_count(declared: Option<f64>) -> u32 {
         .max(1)
 }
 
-/// The per-file key/value scratchpad modules reach as `Storage`, kept in the
-/// runtime.
+/// The key-value scratchpad that modules reach as `Storage`, kept in the
+/// runtime. Each module file has one.
 ///
-/// Every declaration in a file and `MODULE.Storage` share one, because some
-/// modules seed it from `Init()` and read it back from their handlers.
+/// Every declaration in a file shares it with `MODULE.Storage`, because some
+/// modules seed it in `Init()` and read it back in their handlers.
 #[derive(Debug, Default)]
 pub(crate) struct Storage(HashMap<String, String>);
 
-/// `Storage['key']`, where a missing key reads as `""`, because templates
+/// The `Storage` object. A missing key reads as `""`, because templates
 /// compare it with the empty string.
 pub(crate) struct StorageObject;
 
