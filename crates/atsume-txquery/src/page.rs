@@ -22,8 +22,8 @@ use crate::{html, json};
 /// error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Node {
-    page: u64,
-    node: xot::Node,
+    page_id: u64,
+    xot_node: xot::Node,
 }
 
 /// The number the next page is given, so its nodes can be told apart.
@@ -33,10 +33,10 @@ static NEXT_PAGE_ID: AtomicU64 = AtomicU64::new(0);
 pub struct Page {
     id: u64,
     documents: Documents,
-    root: xot::Node,
+    xot_root: xot::Node,
     /// The page as received, which `json(*)` falls back to when the parsed
     /// page's text is not JSON.
-    raw: String,
+    as_received: String,
     /// The tree `json()` built for each text, so a module calling it in a
     /// loop parses the text once.
     json_trees: HashMap<String, Vec<xot::Node>>,
@@ -48,13 +48,13 @@ impl Page {
     #[must_use]
     pub fn parse_html(html: &[u8]) -> Self {
         let mut documents = Documents::new();
-        let root = html::parse(documents.xot_mut(), html);
-        register(&documents, root);
+        let xot_root = html::parse(documents.xot_mut(), html);
+        register_document_root(&documents, xot_root);
         Self {
             id: NEXT_PAGE_ID.fetch_add(1, Ordering::Relaxed),
             documents,
-            root,
-            raw: String::from_utf8_lossy(html).into_owned(),
+            xot_root,
+            as_received: String::from_utf8_lossy(html).into_owned(),
             json_trees: HashMap::new(),
         }
     }
@@ -64,27 +64,28 @@ impl Page {
     /// The new page is parsed beside the old one, so nodes already read from
     /// the old page stay valid and keep reading from it.
     pub fn replace_html(&mut self, html: &[u8]) {
-        self.root = html::parse(self.documents.xot_mut(), html);
-        register(&self.documents, self.root);
-        self.raw = String::from_utf8_lossy(html).into_owned();
+        self.xot_root = html::parse(self.documents.xot_mut(), html);
+        register_document_root(&self.documents, self.xot_root);
+        self.as_received = String::from_utf8_lossy(html).into_owned();
     }
 
     /// Returns the document node, the context an expression starts from.
     #[must_use]
     pub fn root(&self) -> Node {
-        self.node(self.root)
+        self.wrap(self.xot_root)
     }
 
-    fn node(&self, node: xot::Node) -> Node {
+    /// Returns the public node for a tree node of this page.
+    fn wrap(&self, xot_node: xot::Node) -> Node {
         Node {
-            page: self.id,
-            node,
+            page_id: self.id,
+            xot_node,
         }
     }
 
     /// Returns the tree node behind `node`, if it belongs to this page.
-    fn own(&self, node: Node) -> Option<xot::Node> {
-        (node.page == self.id).then_some(node.node)
+    fn xot_node_of(&self, node: Node) -> Option<xot::Node> {
+        (node.page_id == self.id).then_some(node.xot_node)
     }
 
     /// Evaluates `expression`, starting from `context` or the document node.
@@ -104,7 +105,7 @@ impl Page {
         expression: &str,
         context: Option<Node>,
     ) -> Result<Sequence, Error> {
-        if context.is_some_and(|node| self.own(node).is_none()) {
+        if context.is_some_and(|node| self.xot_node_of(node).is_none()) {
             let message = "the context node belongs to another page".to_owned();
             return Err(evaluate_error(expression, message));
         }
@@ -112,9 +113,9 @@ impl Page {
         let trees = prepared
             .json_arguments
             .iter()
-            .map(|argument| self.json_tree(engine, argument, context))
+            .map(|argument| self.evaluate_json_argument(engine, argument, context))
             .collect::<Result<Vec<_>, _>>()?;
-        self.run(&prepared.query, expression, context, &trees)
+        self.execute(&prepared.query, expression, context, &trees)
     }
 
     /// Evaluates a `json()` argument and returns the tree of the JSON its text
@@ -125,7 +126,7 @@ impl Page {
     /// the whole page and that text is not JSON, the page as received is
     /// tried too: parsing it as HTML can swallow part of a JSON response, as a
     /// `<!--` inside one of its strings does.
-    fn json_tree(
+    fn evaluate_json_argument(
         &mut self,
         engine: &Engine,
         argument: &str,
@@ -133,11 +134,11 @@ impl Page {
     ) -> Result<Vec<xot::Node>, Error> {
         let value = self.evaluate(engine, argument, context)?;
         let text = self.joined_text(&value);
-        let parsed = match self.tree_of(&text) {
+        let parsed = match self.parse_json_tree(&text) {
             Err(_) if self.is_whole_page(argument, context) => {
-                let raw = std::mem::take(&mut self.raw);
-                let tree = self.tree_of(&raw);
-                self.raw = raw;
+                let as_received = std::mem::take(&mut self.as_received);
+                let tree = self.parse_json_tree(&as_received);
+                self.as_received = as_received;
                 tree
             }
             parsed => parsed,
@@ -148,27 +149,27 @@ impl Page {
     /// Reports whether a `json()` argument reads the whole page.
     fn is_whole_page(&self, argument: &str, context: Option<Node>) -> bool {
         matches!(argument.trim(), "*" | "." | "/" | "/*")
-            && context.is_none_or(|node| node.node == self.root)
+            && context.is_none_or(|node| node.xot_node == self.xot_root)
     }
 
     /// Parses `text` as JSON into a tree, reusing the tree of an earlier call
     /// with the same text.
-    fn tree_of(&mut self, text: &str) -> Result<Vec<xot::Node>, String> {
+    fn parse_json_tree(&mut self, text: &str) -> Result<Vec<xot::Node>, String> {
         if let Some(tree) = self.json_trees.get(text) {
             return Ok(tree.clone());
         }
         let values = json::parse(text)?;
         let tree = json::build(self.documents.xot_mut(), &values);
         for &document in &tree {
-            register(&self.documents, document);
+            register_document_root(&self.documents, document);
         }
         self.json_trees.insert(text.to_owned(), tree.clone());
         Ok(tree)
     }
 
-    /// Runs a prepared expression with each `$jsonN` bound to its tree.
+    /// Executes a compiled query with each `$jsonN` bound to its tree.
     /// `expression` is the text the module wrote, for error messages.
-    fn run(
+    fn execute(
         &mut self,
         query: &SequenceQuery,
         expression: &str,
@@ -181,28 +182,31 @@ impl Page {
             variables.insert(name, tree.iter().copied().collect());
         }
         let mut builder = query.dynamic_context_builder(&self.documents);
-        builder.context_node(context.map_or(self.root, |node| node.node));
+        builder.context_node(context.map_or(self.xot_root, |node| node.xot_node));
         builder.variables(variables);
-        let dynamic = builder.build();
+        let dynamic_context = builder.build();
         // xee panics on a few arithmetic edge cases, such as round() to a huge
         // negative precision, and a module's expression must not end the scrape.
         let documents = &mut self.documents;
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
-            query.execute_with_context(documents, &dynamic)
+        let outcome_or_panic = panic::catch_unwind(AssertUnwindSafe(|| {
+            query.execute_with_context(documents, &dynamic_context)
         }));
-        let Ok(result) = outcome else {
+        let Ok(executed) = outcome_or_panic else {
             return Err(evaluate_error(expression, "the engine panicked".to_owned()));
         };
-        let result = result.map_err(|e| evaluate_error(expression, e.to_string()))?;
-        let items = result.iter().map(|item| self.item(item)).collect();
+        let xee_sequence = executed.map_err(|e| evaluate_error(expression, e.to_string()))?;
+        let items = xee_sequence
+            .iter()
+            .map(|item| self.convert_item(item))
+            .collect();
         Ok(Sequence { items })
     }
 
     /// Converts a result. A map or array has no text in xee, and reads as
     /// `""`, as an object does upstream.
-    fn item(&self, item: XeeItem) -> Item {
+    fn convert_item(&self, item: XeeItem) -> Item {
         match item {
-            XeeItem::Node(node) => Item::Node(self.node(node)),
+            XeeItem::Node(xot_node) => Item::Node(self.wrap(xot_node)),
             other => Item::Atomic(other.string_value(self.documents.xot()).unwrap_or_default()),
         }
     }
@@ -212,8 +216,8 @@ impl Page {
     pub fn text(&self, item: &Item) -> String {
         match item {
             Item::Node(node) => self
-                .own(*node)
-                .map(|node| self.documents.xot().string_value(node))
+                .xot_node_of(*node)
+                .map(|xot_node| self.documents.xot().string_value(xot_node))
                 .unwrap_or_default(),
             Item::Atomic(text) => text.clone(),
         }
@@ -230,9 +234,9 @@ impl Page {
     /// ignored, as upstream's `GetAttribute` ignores it.
     #[must_use]
     pub fn attribute(&self, node: Node, name: &str) -> Option<String> {
-        let node = self.own(node)?;
+        let xot_node = self.xot_node_of(node)?;
         let xot = self.documents.xot();
-        let attributes = xot.attributes(node);
+        let attributes = xot.attributes(xot_node);
         let found = attributes
             .iter()
             .find(|(attribute, _)| xot.local_name_str(*attribute).eq_ignore_ascii_case(name));
@@ -243,20 +247,20 @@ impl Page {
     /// JSON object is read.
     #[must_use]
     pub fn property(&self, node: Node, name: &str) -> Option<Node> {
-        let node = self.own(node)?;
+        let xot_node = self.xot_node_of(node)?;
         let xot = self.documents.xot();
-        xot.children(node)
+        xot.children(xot_node)
             .find(|&child| {
                 xot.element(child)
                     .is_some_and(|element| xot.local_name_str(element.name()) == name)
             })
-            .map(|child| self.node(child))
+            .map(|child| self.wrap(child))
     }
 }
 
 /// Registers a document node, which paths through it need to resolve the
 /// root. A failure is logged and leaves the tree usable for plain steps.
-fn register(documents: &Documents, root: xot::Node) {
+fn register_document_root(documents: &Documents, root: xot::Node) {
     if let Err(error) = documents.documents().borrow_mut().add_root(None, root) {
         tracing::debug!(%error, "a parsed tree could not be registered");
     }
