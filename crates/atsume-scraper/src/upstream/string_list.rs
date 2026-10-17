@@ -1,5 +1,6 @@
-//! How modules see a [`StringList`]: indexed from 0, with `name=value` pairs,
-//! such as HTTP headers, read through `list.Values['name']`.
+//! Shows a [`StringList`] to modules. Modules index the list from 0, and they
+//! read `name=value` pairs, such as HTTP headers, through
+//! `list.Values['name']`.
 
 use mlua::{Function, Lua, MetaMethod, UserData, UserDataMethods, Value};
 
@@ -7,10 +8,10 @@ use crate::runtime::bind::{Place, borrow_state};
 use crate::runtime::convert::{int_arg, lua_int, text_arg};
 use crate::string_list::{StringList, split_lines};
 
-/// The Lua face of a list kept in the runtime's state `S`.
+/// The Lua object over a list that is kept in the runtime's state `S`.
 ///
-/// It holds only where the list lives, so the list itself stays a plain value
-/// that Rust code reads directly.
+/// The object holds only the place where the list lives, so the list itself
+/// stays a plain value that Rust code reads directly.
 pub(crate) struct ListObject<S> {
     place: Place<S, StringList>,
 }
@@ -52,8 +53,8 @@ impl<S: 'static> ListObject<S> {
         }
     }
 
-    /// Builds the method named `name`. Modules call them with a dot, so the
-    /// arguments start with the first real one.
+    /// Builds the method named `name`. Modules call these methods with a dot,
+    /// so the first argument is a real one rather than the list.
     fn method(self, lua: &Lua, name: &str) -> mlua::Result<Option<Function>> {
         let function = match name {
             "Add" => lua.create_function(move |lua, item: Value| {
@@ -117,7 +118,8 @@ impl<S: 'static> UserData for ListObject<S> {
     }
 }
 
-/// `list.Values`: the list's `name=value` pairs, read and written by name.
+/// The `list.Values` object, which reads and writes the list's `name=value`
+/// pairs by name.
 struct ValuesObject<S>(ListObject<S>);
 
 impl<S: 'static> UserData for ValuesObject<S> {
