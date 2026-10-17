@@ -25,6 +25,12 @@ impl Sequence {
         &self.items
     }
 
+    /// Returns the values, giving up the sequence.
+    #[must_use]
+    pub fn into_items(self) -> Vec<Item> {
+        self.items
+    }
+
     /// Returns how many values there are.
     #[must_use]
     pub fn len(&self) -> usize {

@@ -45,6 +45,16 @@ impl Document {
         }
     }
 
+    /// Replaces the page with another, as upstream's `ParseHTML` does.
+    ///
+    /// The new page is parsed beside the old one, so nodes already read from
+    /// the old page stay valid and keep reading from it.
+    pub fn replace_html(&mut self, html: &[u8]) {
+        self.root = html::parse(self.documents.xot_mut(), html);
+        register(&self.documents, self.root);
+        self.raw = String::from_utf8_lossy(html).into_owned();
+    }
+
     /// Returns the document node, the context an expression starts from.
     #[must_use]
     pub fn root(&self) -> Node {
@@ -169,12 +179,29 @@ impl Document {
         sequence.items.iter().map(|item| self.text(item)).collect()
     }
 
-    /// Returns an element's attribute, if it has one by that name.
+    /// Returns an element's attribute, if it has one by that name. Case is
+    /// ignored, as upstream's `GetAttribute` ignores it.
     #[must_use]
     pub fn attribute(&self, node: Node, name: &str) -> Option<String> {
         let xot = self.documents.xot();
-        let name = xot.name(name)?;
-        xot.attributes(node.0).get(name).cloned()
+        let attributes = xot.attributes(node.0);
+        let found = attributes
+            .iter()
+            .find(|(attribute, _)| xot.local_name_str(*attribute).eq_ignore_ascii_case(name));
+        found.map(|(_, value)| value.clone())
+    }
+
+    /// Returns the child element named `name`, which is how a property of a
+    /// JSON object is read.
+    #[must_use]
+    pub fn property(&self, node: Node, name: &str) -> Option<Node> {
+        let xot = self.documents.xot();
+        xot.children(node.0)
+            .find(|&child| {
+                xot.element(child)
+                    .is_some_and(|element| xot.local_name_str(element.name()) == name)
+            })
+            .map(Node)
     }
 }
 

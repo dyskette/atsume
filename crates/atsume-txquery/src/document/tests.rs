@@ -82,6 +82,10 @@ fn an_expression_may_start_from_a_node() {
         Some("wp-manga-chapter")
     );
     assert_eq!(page.attribute(second, "missing"), None);
+    assert_eq!(
+        page.attribute(second, "CLASS").as_deref(),
+        Some("wp-manga-chapter")
+    );
 }
 
 #[test]
@@ -269,4 +273,36 @@ fn a_property_xpath_cannot_name_is_still_read() {
         .evaluate(&engine, "json(*).image.1280x720.url", None)
         .unwrap();
     assert_eq!(page.text_of(&url), "/big.jpg");
+}
+
+/// Returns the first item of `expression`'s result, which must be a node.
+fn first_node(page: &mut Document, engine: &Engine, expression: &str) -> Node {
+    let result = page.evaluate(engine, expression, None).unwrap();
+    let Some(&Item::Node(node)) = result.items().first() else {
+        panic!("{expression} should select a node");
+    };
+    node
+}
+
+#[test]
+fn a_property_is_a_child_named_after_it() {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(br#"{"data": {"title": "One", "id": 7}}"#);
+    let data = first_node(&mut page, &engine, "json(*).data");
+    let title = page.property(data, "title").unwrap();
+    assert_eq!(page.text(&Item::Node(title)), "One");
+    assert_eq!(page.property(data, "missing"), None);
+}
+
+#[test]
+fn nodes_of_a_replaced_page_still_read_from_it() {
+    let engine = Engine::new();
+    let mut page = Document::parse_html(b"<p>old</p>");
+    let old = first_node(&mut page, &engine, "//p");
+    page.replace_html(b"<b>new</b>");
+    assert_eq!(page.text(&Item::Node(old)), "old");
+    let new = page.evaluate(&engine, "//b | //p", None).unwrap();
+    assert_eq!(page.text_of(&new), "new");
+    let from_old = page.evaluate(&engine, "text()", Some(old)).unwrap();
+    assert_eq!(page.text_of(&from_old), "old");
 }
