@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use url::Url;
 
-use super::client::{Client, Exchange, SendError};
+use super::client::{Client, Exchange, FetchError};
 use super::flaresolverr::{Flaresolverr, has_challenge_markers, looks_like_challenge};
 use super::transport::{Method, Request};
 use super::{DEFAULT_USER_AGENT, HttpConfig, LastRequest};
@@ -94,13 +94,18 @@ impl HttpSession {
             .client
             .cancel_token()
             .check()
-            .and_then(|()| self.request(method, url, body));
+            .and_then(|()| self.send_with_retries(method, url, body));
         self.cancelled |= sent.is_err();
         sent
     }
 
     /// Requests `url`, retrying a failure that a retry might fix.
-    fn request(&mut self, method: Method, url: &str, body: &str) -> Result<bool, Cancelled> {
+    fn send_with_retries(
+        &mut self,
+        method: Method,
+        url: &str,
+        body: &str,
+    ) -> Result<bool, Cancelled> {
         self.response_body.clear();
         self.last_request.status = 0;
         self.last_request.error = None;
@@ -111,11 +116,11 @@ impl HttpSession {
                 let pause = self.backoff * u32::try_from(attempt).unwrap_or(u32::MAX);
                 self.client.cancel_token().sleep(pause)?;
             }
-            match self.attempt(method, url, body) {
+            match self.send_once(method, url, body) {
                 Ok(true) => return Ok(true),
                 Ok(false) => {}
-                Err(SendError::Cancelled) => return Err(Cancelled),
-                Err(SendError::Failed(why)) => self.last_request.error = Some(why),
+                Err(FetchError::Cancelled) => return Err(Cancelled),
+                Err(FetchError::Failed(why)) => self.last_request.error = Some(why),
             }
             // An interstitial can be solved where an ordinary refusal cannot,
             // so it is tried before giving up on a 4xx.
@@ -132,8 +137,8 @@ impl HttpSession {
 
     /// Makes one request and records its outcome. Returns whether the status
     /// was a success, or why no response arrived.
-    fn attempt(&mut self, method: Method, url: &str, body: &str) -> Result<bool, SendError> {
-        let parsed = Url::parse(url).map_err(|e| SendError::Failed(format!("{url}: {e}")))?;
+    fn send_once(&mut self, method: Method, url: &str, body: &str) -> Result<bool, FetchError> {
+        let parsed = Url::parse(url).map_err(|e| FetchError::Failed(format!("{url}: {e}")))?;
         let request = Request {
             method,
             url: parsed.clone(),
@@ -188,8 +193,8 @@ impl HttpSession {
         tracing::info!(url, "anti-bot challenge; solving");
         let solution = match solver.solve(url, self.client.cancel_token()) {
             Ok(solution) => solution,
-            Err(SendError::Cancelled) => return Err(Cancelled),
-            Err(SendError::Failed(why)) => {
+            Err(FetchError::Cancelled) => return Err(Cancelled),
+            Err(FetchError::Failed(why)) => {
                 tracing::warn!(url, error = why, "flaresolverr failed");
                 return Ok(false);
             }
