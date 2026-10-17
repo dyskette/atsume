@@ -1,48 +1,55 @@
-//! The values a scrape returns and a module declares, free of Lua.
+//! The values that a scrape returns and that a module declares. None of them
+//! holds a Lua type.
 //!
-//! The objects modules write these through live in `upstream`.
+//! The Lua objects through which modules fill in these values live in
+//! `upstream`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// One setting a module declares. The settings page is generated from these.
+/// One setting that a module declares. The settings page is generated from
+/// these declarations.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SiteOption {
-    /// The widget to show.
+    /// The kind of value the setting holds, which decides the widget to show.
     pub kind: OptionKind,
-    /// The key the module reads it back by, through `MODULE.GetOption`.
+    /// The key by which the module reads the setting's value, through
+    /// `MODULE.GetOption`.
     pub name: String,
-    /// The label to show.
+    /// The label to show next to the setting.
     pub caption: String,
-    /// The value before the reader changes it, if the module gave one.
+    /// The value the setting has until the reader changes it, if the module
+    /// gave one.
     pub default: Option<OptionValue>,
-    /// The choices of a [`OptionKind::Choice`], and empty otherwise.
+    /// The choices of an [`OptionKind::Choice`] setting. Settings of other
+    /// kinds have none.
     pub choices: Vec<String>,
 }
 
 /// A website as a module declared it in `Init()`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SiteDeclaration {
-    /// The upstream identifier.
+    /// The website's identifier in FMD2.
     pub id: String,
     /// The name shown to readers. Mirrors of one site share it.
     pub name: String,
     /// The address the module builds its requests from.
     pub root_url: String,
-    /// The language or kind of site, as upstream groups them.
+    /// The language or kind of site, as FMD2 groups websites.
     pub category: String,
-    /// Maps each event the module handles to the Lua function handling it.
+    /// Maps each event the module handles to the name of the Lua function that
+    /// handles it.
     pub handlers: HashMap<Event, String>,
     /// The settings the site offers.
     pub options: Vec<SiteOption>,
-    /// Whether the site takes a login. Modules declare it as
-    /// `AccountSupport`.
+    /// Whether the site takes a login, as the declaration's `AccountSupport`
+    /// field says.
     pub takes_login: bool,
-    /// Whether the site lists its directory in a stable order. Modules
-    /// declare it as `SortedList`.
+    /// Whether the site lists its directory in a stable order, as the
+    /// declaration's `SortedList` field says.
     pub lists_in_stable_order: bool,
-    /// How many separate listings the directory is split into; at least one.
-    /// Modules declare it as `TotalDirectory`.
+    /// How many separate listings the directory is split into, which is at
+    /// least one. The declaration gives it in its `TotalDirectory` field.
     pub listing_count: u32,
     /// The file the module was loaded from.
     pub file: PathBuf,
@@ -56,29 +63,29 @@ impl SiteDeclaration {
     }
 }
 
-/// An event a module may handle, named after the work it asks for.
+/// An event that a module can handle.
 ///
-/// [`declaration_field`](Self::declaration_field) names the field a module
-/// assigns its handler to in `Init()`.
+/// Each variant is named after the job the module does for that event. A
+/// module assigns its handler to a field of its declaration in `Init()`, and
+/// [`declaration_field`](Self::declaration_field) returns that field's name.
+/// When the field's name differs from the variant's, the variant's
+/// documentation gives it in parentheses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Event {
-    /// Lists one page of the site's directory. Modules handle it in
-    /// `OnGetNameAndLink`.
+    /// Lists one page of the site's directory (`OnGetNameAndLink`).
     ListDirectoryPage,
-    /// Reads a series' details and chapter list. Modules handle it in
-    /// `OnGetInfo`.
+    /// Reads a series' details and chapter list (`OnGetInfo`).
     ReadSeries,
-    /// Lists a chapter's pages. Modules handle it in `OnGetPageNumber`.
+    /// Lists a chapter's pages (`OnGetPageNumber`).
     ListChapterPages,
-    /// Counts the pages of the site's directory. Modules handle it in
-    /// `OnGetDirectoryPageNumber`.
+    /// Counts the pages of the site's directory (`OnGetDirectoryPageNumber`).
     CountDirectoryPages,
-    /// Resolves a page to its image address. Modules handle it in
-    /// `OnGetImageURL`.
+    /// Finds the image address of one page of a chapter (`OnGetImageURL`).
     ResolvePageImage,
-    /// Prepares the request for a page image, usually by setting a `Referer`.
+    /// Prepares the request for a page image, usually by setting a `Referer`
+    /// header.
     BeforeDownloadImage,
-    /// Fetches a page image itself, possibly transforming it.
+    /// Fetches a page image itself, and may transform it.
     DownloadImage,
     /// Edits a saved page image in place.
     AfterImageSaved,
@@ -92,9 +99,9 @@ pub enum Event {
     CheckSite,
     /// Reports the account's state.
     AccountState,
-    /// Prepares a directory update. Modules handle it in `OnBeforeUpdateList`.
+    /// Prepares a directory update (`OnBeforeUpdateList`).
     BeforeDirectoryUpdate,
-    /// Finishes a directory update. Modules handle it in `OnAfterUpdateList`.
+    /// Finishes a directory update (`OnAfterUpdateList`).
     AfterDirectoryUpdate,
 }
 
@@ -118,7 +125,8 @@ impl Event {
         Self::AfterDirectoryUpdate,
     ];
 
-    /// Returns the declaration field a module assigns the handler to.
+    /// Returns the name of the declaration field to which a module assigns its
+    /// handler for this event.
     #[must_use]
     pub fn declaration_field(self) -> &'static str {
         match self {
@@ -147,30 +155,34 @@ impl std::fmt::Display for Event {
     }
 }
 
-/// The widget a module asks for when declaring a setting.
+/// The kind of value that a setting holds.
+///
+/// Each kind has its own widget, and modules declare each kind with its own
+/// setter. The variant's documentation names that setter in parentheses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptionKind {
-    /// A boolean switch. Modules add it with `AddOptionCheckBox`.
+    /// A boolean switch (`AddOptionCheckBox`).
     Toggle,
-    /// A number. Modules add it with `AddOptionSpinEdit`.
+    /// A number (`AddOptionSpinEdit`).
     Number,
-    /// A choice from a list; the value is the chosen item's index. Modules
-    /// add it with `AddOptionComboBox`.
+    /// A choice from a list (`AddOptionComboBox`). The setting's value is the
+    /// index of the chosen item.
     Choice,
-    /// Free text. Modules add it with `AddOptionEdit` or `AddOptionEditBox`.
+    /// Free text (`AddOptionEdit` or `AddOptionEditBox`).
     Text,
 }
 
-/// A setting's value, kept free of Lua types so callers never depend on them.
+/// A setting's value. It holds no Lua types, so callers never depend on them.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OptionValue {
     /// A toggle's state.
     Bool(bool),
-    /// A whole number. A whole float such as `1.0` is read as this.
+    /// A whole number. A float with no fractional part, such as `1.0`, is read
+    /// as this variant.
     Int(i64),
     /// A fractional number.
     Float(f64),
-    /// Text.
+    /// A text value.
     Text(String),
 }
 
@@ -203,9 +215,9 @@ pub struct SeriesInfo {
     pub artists: String,
     /// The genres, as the site lists them.
     pub genres: String,
-    /// Whether the series is still running, if the site says.
+    /// Whether the series is still running, if the site says so.
     pub status: Option<SeriesStatus>,
-    /// The description.
+    /// The series' description.
     pub summary: String,
     /// The chapters, in the order the module listed them.
     pub chapters: Vec<Chapter>,
@@ -216,13 +228,13 @@ pub struct SeriesInfo {
 pub struct Chapter {
     /// The link the module reads the chapter's pages from.
     pub url: String,
-    /// The name, unless the module gave none.
+    /// The chapter's name, unless the module gave none.
     pub name: Option<String>,
 }
 
 impl Chapter {
-    /// Returns the name to show: the chapter's name, or its link if it has
-    /// none.
+    /// Returns the name to show, which is the chapter's name or, if it has
+    /// none, its link.
     #[must_use]
     pub fn display_name(&self) -> &str {
         self.name.as_deref().unwrap_or(&self.url)
@@ -247,8 +259,8 @@ pub enum SeriesStatus {
 pub struct DirectoryPage {
     /// The series on the page, in the order the module listed them.
     pub entries: Vec<DirectoryEntry>,
-    /// How many pages the directory has, if the module said while reading
-    /// this one. Some modules say so here rather than in
+    /// How many pages the directory has, if the module reported it while
+    /// reading this page. Some modules report it here instead of in
     /// [`Session::directory_page_count`](crate::Session::directory_page_count).
     pub reported_page_count: Option<u32>,
 }
@@ -259,13 +271,13 @@ pub struct DirectoryEntry {
     /// The link to read the series from with
     /// [`Session::series_info`](crate::Session::series_info).
     pub url: String,
-    /// The title, unless the module gave none.
+    /// The series' title, unless the module gave none.
     pub name: Option<String>,
 }
 
 impl DirectoryEntry {
-    /// Returns the name to show: the entry's title, or its link if it has
-    /// none.
+    /// Returns the name to show, which is the entry's title or, if it has
+    /// none, its link.
     #[must_use]
     pub fn display_name(&self) -> &str {
         self.name.as_deref().unwrap_or(&self.url)
@@ -277,7 +289,7 @@ impl DirectoryEntry {
 pub enum ChapterPage {
     /// The page's image address.
     ImageUrl(String),
-    /// A page whose address the module finds only when asked, with
-    /// [`Session::resolve_page`](crate::Session::resolve_page).
+    /// A page whose image address the module finds only when asked.
+    /// [`Session::resolve_page`](crate::Session::resolve_page) asks for it.
     Unresolved,
 }
