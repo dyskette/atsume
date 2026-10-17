@@ -11,8 +11,9 @@ use crate::session::{Session, SessionConfig};
 /// Every website the modules in an FMD2 checkout declare.
 ///
 /// Loading runs each module's `Init()` once, without network access. The
-/// checkout is cloned at run time and never built in: the modules are
-/// GPL-2.0-only, which is incompatible with atsume. See `docs/MODULES.md`.
+/// checkout is cloned when atsume runs and never built in, because the modules
+/// are GPL-2.0-only, which is incompatible with atsume's license. See
+/// `docs/MODULES.md`.
 #[derive(Clone, Debug)]
 pub struct Catalog {
     sites: Vec<Site>,
@@ -32,17 +33,17 @@ pub struct LoadFailure {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Site {
     declaration: SiteDeclaration,
-    /// The position of this declaration among those its file makes.
+    /// The position of this declaration among the declarations its file makes.
     declaration_index: usize,
     lua_dir: PathBuf,
 }
 
 impl Catalog {
-    /// Loads every module in the `modules` directory under `lua_dir`, the
-    /// `lua` directory of an FMD2 checkout.
+    /// Loads every module in the `modules` directory under `lua_dir`, which is
+    /// the `lua` directory of an FMD2 checkout.
     ///
-    /// A module that fails to load is recorded in [`failures`](Self::failures)
-    /// rather than failing the whole catalog.
+    /// A module that fails to load is recorded in [`failures`](Self::failures),
+    /// and the rest of the catalog still loads.
     ///
     /// # Errors
     ///
@@ -66,8 +67,8 @@ impl Catalog {
     ///
     /// # Errors
     ///
-    /// Fails if the file does not load, `Init()` raises, or it declares
-    /// nothing.
+    /// Fails if the file does not load, if `Init()` raises an error, or if the
+    /// file declares nothing.
     pub fn load_file(lua_dir: &Path, file: &Path) -> Result<Vec<Site>> {
         let runtime = Runtime::new(lua_dir, &SessionConfig::offline(), CancelToken::new())?;
         let declarations = runtime.load_declarations(file)?;
@@ -96,9 +97,10 @@ impl Catalog {
 
     /// Returns the website named `name`, ignoring case.
     ///
-    /// Mirrors of a site share its name, so `root_url` picks between them. An
-    /// address no mirror declares is one the reader typed for a site that
-    /// moved: the first mirror is returned, pointed at that address.
+    /// Mirrors of a site share its name, so `root_url` chooses between them.
+    /// An address that no mirror declares is one the reader typed for a site
+    /// that has moved, so the first mirror is returned, pointed at that
+    /// address.
     #[must_use]
     pub fn site(&self, name: &str, root_url: Option<&str>) -> Option<Site> {
         select_site(&self.sites, name, root_url)
@@ -112,7 +114,7 @@ impl Site {
         &self.declaration
     }
 
-    /// Returns this website pointed at `root_url`, for a site that moved.
+    /// Returns this website pointed at `root_url`, for a site that has moved.
     #[must_use]
     pub fn with_root_url(mut self, root_url: &str) -> Self {
         root_url.clone_into(&mut self.declaration.root_url);
@@ -124,8 +126,8 @@ impl Site {
     ///
     /// # Errors
     ///
-    /// Fails if the module no longer loads, no longer declares this website,
-    /// or `cancel` is already cancelled.
+    /// Fails if the module no longer loads, if it no longer declares this
+    /// website, or if `cancel` is already cancelled.
     pub fn open(&self, config: &SessionConfig, cancel: CancelToken) -> Result<Session> {
         let runtime = Runtime::new(&self.lua_dir, config, cancel)?;
         let declared = runtime.load_declarations(&self.declaration.file)?;
@@ -155,7 +157,7 @@ impl Site {
     }
 }
 
-/// Picks a website by name, then by address among mirrors.
+/// Picks a website by name and then, among its mirrors, by address.
 pub(crate) fn select_site(sites: &[Site], name: &str, root_url: Option<&str>) -> Option<Site> {
     let mut matching = sites
         .iter()
