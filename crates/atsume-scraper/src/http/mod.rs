@@ -1,9 +1,9 @@
-//! Fetching pages for modules, free of Lua.
+//! Fetches pages for modules. Nothing in this module depends on Lua.
 //!
-//! A transport sends one request; a client adds redirects, cookies and rate
-//! limiting; the session behind one scrape adds retries and anti-bot
-//! solving. Modules reach the session through the `HTTP` object in
-//! `upstream::http`.
+//! Three layers take part. A transport sends one request. A client adds
+//! redirects, cookies and rate limiting on top of the transport. The session
+//! behind one scrape adds retries and anti-bot solving on top of the client.
+//! Modules reach the session through the `HTTP` object in `upstream::http`.
 
 mod client;
 mod flaresolverr;
@@ -36,7 +36,7 @@ pub struct HttpConfig {
     pub transport: Arc<dyn Transport>,
     /// Spaces out requests to each site.
     pub limiter: Arc<dyn Limiter>,
-    /// Gets past anti-bot interstitials, when configured.
+    /// Gets past anti-bot interstitials, if a solver is configured.
     pub solver: Option<Arc<Flaresolverr>>,
     /// How a request that got no usable answer is retried.
     pub retry: RetryPolicy,
@@ -44,19 +44,21 @@ pub struct HttpConfig {
 
 /// How a request that got no usable answer is retried.
 ///
-/// A refusal with a 4xx status is final and never retried; a server error or
-/// a request that got no answer is.
+/// A refusal with a 4xx status is final, so it is never retried. A server
+/// error, or a request that got no answer at all, is retried.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RetryPolicy {
     /// How many times a request is retried after its first attempt. A module
     /// may change this for its own requests through `HTTP.RetryCount`.
     pub max_retries: u32,
-    /// The pause before the first retry. Each later retry waits one more.
+    /// The pause before the first retry. Each later retry waits one step
+    /// longer than the one before it.
     pub backoff_step: Duration,
 }
 
 impl Default for RetryPolicy {
-    /// Two retries, the first after two seconds and the second after four.
+    /// Allows two retries, the first after two seconds and the second after
+    /// four.
     fn default() -> Self {
         Self {
             max_retries: 2,
@@ -85,8 +87,8 @@ impl Default for HttpConfig {
 }
 
 impl HttpConfig {
-    /// Returns a configuration that refuses every request, for loading the
-    /// catalog: declaring a website needs no network access.
+    /// Returns a configuration that refuses every request. Loading the catalog
+    /// uses it, because declaring a website needs no network access.
     pub(crate) fn offline() -> Self {
         Self {
             transport: Arc::new(Offline),
@@ -109,21 +111,21 @@ impl Transport for Offline {
     }
 }
 
-/// What the last request a module made got back, for explaining a failure.
+/// What the module's last request got back, which helps to explain a failure.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LastRequest {
     /// The address the request asked for.
     pub requested_url: String,
-    /// Where it ended up after redirects, once the site answered.
+    /// Where the request ended up after redirects, once the site answered.
     pub final_url: String,
     /// The HTTP status, or 0 when the site did not answer.
     pub status: i64,
-    /// Why the site did not answer at all, if it did not.
+    /// Why the site did not answer at all, if it did not answer.
     pub error: Option<String>,
     /// Whether any response so far carried an anti-bot interstitial.
     pub challenged: bool,
-    /// The first redirect to another host. A site that moved usually says so
-    /// this way.
+    /// The first redirect to another host. A site that has moved usually
+    /// announces it this way.
     pub moved: Option<Moved>,
 }
 
@@ -132,7 +134,7 @@ pub struct LastRequest {
 pub struct Moved {
     /// The host the request asked for.
     pub from_host: String,
-    /// The origin the redirects ended at, such as `https://new.example`.
+    /// The origin that the redirects ended at, such as `https://new.example`.
     pub to_origin: String,
 }
 
