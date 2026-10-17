@@ -271,7 +271,7 @@ fn register_document_root(documents: &Documents, root: xot::Node) {
 }
 
 fn evaluate_error(expression: &str, message: String) -> Error {
-    Error::Evaluate {
+    Error::EvaluateFailed {
         expression: expression.to_owned(),
         message,
     }

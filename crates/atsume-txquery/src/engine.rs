@@ -70,7 +70,7 @@ impl Engine {
         if let Some(prepared) = self.prepared.borrow().get(expression) {
             return Ok(Rc::clone(prepared));
         }
-        let compile_error = |message: String| Error::Compile {
+        let compile_error = |message: String| Error::CompileFailed {
             expression: expression.to_owned(),
             message,
         };

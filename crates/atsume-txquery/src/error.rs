@@ -3,7 +3,7 @@
 pub enum Error {
     /// The expression is not valid.
     #[error("cannot compile {expression:?}: {message}")]
-    Compile {
+    CompileFailed {
         /// The expression as given.
         expression: String,
         /// What the engine reported.
@@ -12,7 +12,7 @@ pub enum Error {
     /// The expression is valid but failed while running, for instance on a
     /// type error.
     #[error("evaluating {expression:?} failed: {message}")]
-    Evaluate {
+    EvaluateFailed {
         /// The expression as given.
         expression: String,
         /// What the engine reported.

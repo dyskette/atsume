@@ -97,9 +97,9 @@ fn failures_say_which_kind_they_are() {
     let engine = Engine::new();
     let mut page = page();
     let invalid = page.evaluate(&engine, "//a[", None).unwrap_err();
-    assert!(matches!(invalid, Error::Compile { .. }), "{invalid}");
+    assert!(matches!(invalid, Error::CompileFailed { .. }), "{invalid}");
     let failed = page.evaluate(&engine, "1 + 'a'", None).unwrap_err();
-    assert!(matches!(failed, Error::Evaluate { .. }), "{failed}");
+    assert!(matches!(failed, Error::EvaluateFailed { .. }), "{failed}");
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn a_panic_inside_the_engine_is_an_evaluation_error() {
     let failed = page
         .evaluate(&engine, "round(10.3, -5000)", None)
         .unwrap_err();
-    assert!(matches!(failed, Error::Evaluate { .. }), "{failed}");
+    assert!(matches!(failed, Error::EvaluateFailed { .. }), "{failed}");
 }
 
 #[test]
@@ -243,7 +243,7 @@ fn text_that_is_not_json_fails_naming_the_expression() {
     let mut page = page();
     let err = page.evaluate(&engine, "json(//h1)/a", None).unwrap_err();
     assert!(
-        matches!(&err, Error::Evaluate { expression, .. } if expression == "//h1"),
+        matches!(&err, Error::EvaluateFailed { expression, .. } if expression == "//h1"),
         "{err}"
     );
     assert!(err.to_string().contains("invalid JSON"), "{err}");
@@ -394,7 +394,7 @@ fn a_node_of_another_page_reads_as_nothing() {
     let failed = second
         .evaluate(&engine, "text()", Some(paragraph))
         .unwrap_err();
-    assert!(matches!(failed, Error::Evaluate { .. }), "{failed}");
+    assert!(matches!(failed, Error::EvaluateFailed { .. }), "{failed}");
     assert_eq!(first.item_text(&Item::Node(paragraph)), "first");
 }
 
@@ -404,7 +404,7 @@ fn check_compiles_an_expression_and_its_json_arguments() {
     assert_eq!(engine.check("json(//script).data.items()"), Ok(()));
     let failed = engine.check("json(//[).data").unwrap_err();
     assert!(
-        matches!(&failed, Error::Compile { expression, .. } if expression == "//["),
+        matches!(&failed, Error::CompileFailed { expression, .. } if expression == "//["),
         "{failed}"
     );
 }
