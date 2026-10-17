@@ -144,6 +144,36 @@ lookups, `jn:keys`, `jn:members`, `css()` and bare `true`/`false`/`null`.
 revision measured, 3602 of 3603 call sites compile; the corpus test in
 `src/corpus.rs` fails below 99%.
 
+Two readings follow upstream where it is easy to get wrong:
+
+- **`json(*)` reads the parsed page's text**, as upstream does, so markup
+  inside a JSON string is dropped and entities are decoded. The modules that
+  pass `HTMLEncode(HTTP.Document.ToString())` to `CreateTXQuery` rely on that
+  decoding. When the text is not JSON, as when a `<!--` inside a string
+  swallows the rest of the page, the response as received is tried; that can
+  only turn an upstream failure into a result.
+- **HTML names match in any case.** html5ever stores them in lowercase, and
+  JSON keys keep theirs, so a name test written with a capital, such as
+  `//TotalPage` or `@data-URL`, matches the name as written or in lowercase. A
+  JSON object holding both `Name` and `name` would match both for `Name`.
+
+#### Comparing with xidel
+
+`tests/xidel.rs` runs expressions on two pages written for it, a series page
+and a JSON response, in both atsume and
+[xidel](https://github.com/benibela/xidel), internettools' command-line front
+end, and requires the same items. FMD2 builds against internettools' latest
+revision with no pin, and xidel's last release is from 2018, so CI uses a
+development build, pinned by name and SHA-256 in `.github/workflows/ci.yml`.
+xidel changes three of the settings the engine FMD2 creates has; the test's
+XQuery prolog restores them: `true`, `false` and `null` as literals, path
+steps on JSON objects, and string literals without entities.
+
+Expressions that still differ are pinned: case-insensitive string comparison,
+and a JSON `false` used as a predicate, which is an element here and so true.
+To run it locally, point `ATSUME_XIDEL` at a xidel binary and run
+`make rust-xidel`.
+
 `tests/internettools.rs` ports cases from internettools' own XPath tests,
 which are GPL-3.0-or-later and so may be copied. Only cases for what the
 modules use are kept: `json()`, the string functions they call, sequences and
