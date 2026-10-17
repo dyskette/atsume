@@ -1,9 +1,11 @@
-//! The per-call CPU budget, which also enforces cancellation.
+//! The CPU budget for each call into a module, which also enforces
+//! cancellation.
 //!
-//! Every call into a module runs under an instruction budget and stops once
-//! the scrape is cancelled. A Lua count hook enforces both, so they also stop
-//! code that never calls back into Rust, such as `while true do end`. Time
-//! spent in Rust, such as waiting on HTTP, does not count.
+//! Every call into a module runs under an instruction budget, and it stops
+//! once the scrape is cancelled. A Lua count hook enforces both, so they also
+//! stop code that never calls back into Rust, such as `while true do end`.
+//! Time spent in Rust, such as waiting on HTTP, does not count against the
+//! budget.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -12,12 +14,14 @@ use mlua::{HookTriggers, Lua, VmState};
 
 use crate::cancel::CancelToken;
 
-/// The default budget for one call, in Lua VM instructions: several seconds
-/// of pure Lua, so a runaway loop stops soon. A calibration test keeps it well
-/// above decoding a large JSON response with upstream's pure-Lua decoder.
+/// The default budget for one call, in Lua VM instructions. It allows several
+/// seconds of pure Lua, so a runaway loop stops soon. A calibration test keeps
+/// it well above what upstream's pure-Lua decoder needs for a large JSON
+/// response.
 pub(crate) const DEFAULT_CPU_LIMIT: u64 = 1_000_000_000;
 
-/// How often the hook runs, in instructions, until it ends a call.
+/// How many instructions run between two runs of the hook, until the hook ends
+/// a call.
 const HOOK_INTERVAL: u32 = 1000;
 
 /// Why the hook ended a call.
@@ -27,15 +31,17 @@ pub(crate) enum Termination {
     Cancelled,
 }
 
-/// The state the hook reads and the runtime resets around each call.
+/// The state that the hook reads and that the runtime resets around each call.
 #[derive(Debug)]
 pub(crate) struct Budget {
     cancel: CancelToken,
-    /// The instructions the current call may use.
+    /// How many instructions the current call may use.
     limit: u64,
-    /// The instructions the current call has used, to the nearest interval.
+    /// How many instructions the current call has used, rounded to the hook's
+    /// interval.
     used: Cell<u64>,
-    /// The most any one call has used, for calibrating the limit.
+    /// The most instructions that any one call has used. Tests use it to
+    /// calibrate the limit.
     peak: Cell<u64>,
     /// Why the hook ended the current call, if it did.
     ended_by: Cell<Option<Termination>>,
@@ -54,8 +60,8 @@ impl Budget {
 
     /// Installs the hook on `lua`.
     ///
-    /// The hook is global because mlua's per-thread hook does not follow into
-    /// coroutines, where a module could otherwise run unbounded.
+    /// The hook is global, because mlua's per-thread hook does not follow into
+    /// coroutines, where a module could otherwise run without limit.
     pub(crate) fn install(self: &Rc<Self>, lua: &Lua) -> mlua::Result<()> {
         self.hook_every(lua, HOOK_INTERVAL)
     }
@@ -66,11 +72,11 @@ impl Budget {
         lua.set_global_hook(triggers, move |lua, _| budget.tick(lua))
     }
 
-    /// Counts an interval, and raises once the call must end.
+    /// Counts one interval, and raises an error once the call must end.
     ///
-    /// After ending a call the hook fires on every instruction of the running
-    /// thread, so a module that catches the error with `pcall` is ended by the
-    /// first instruction outside it.
+    /// After ending a call, the hook fires on every instruction of the running
+    /// thread. A module that catches the error with `pcall` is therefore ended
+    /// by its first instruction outside the `pcall`.
     fn tick(self: &Rc<Self>, lua: &Lua) -> mlua::Result<VmState> {
         if self.ended_by.get().is_none() {
             self.used.set(self.used.get() + u64::from(HOOK_INTERVAL));
@@ -93,8 +99,8 @@ impl Budget {
         (self.used.get() > self.limit).then_some(Termination::CpuLimit)
     }
 
-    /// Resets the count for a new call, restoring the normal interval if the
-    /// last call was ended.
+    /// Resets the count for a new call. If the hook ended the last call, this
+    /// also restores the normal interval.
     pub(crate) fn start(self: &Rc<Self>, lua: &Lua) -> mlua::Result<()> {
         self.used.set(0);
         if self.ended_by.take().is_some() {
@@ -103,7 +109,8 @@ impl Budget {
         Ok(())
     }
 
-    /// Ends a call, recording its usage, and reports whether the hook ended it.
+    /// Finishes a call, records how much it used, and reports whether the hook
+    /// ended it.
     pub(crate) fn finish(&self) -> Option<Termination> {
         self.peak.set(self.peak.get().max(self.used.get()));
         self.ended_by.get()
