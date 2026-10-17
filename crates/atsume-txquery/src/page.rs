@@ -159,7 +159,7 @@ impl Page {
             return Ok(tree.clone());
         }
         let values = json::parse(text)?;
-        let tree = json::build(self.documents.xot_mut(), &values);
+        let tree = json::build_trees(self.documents.xot_mut(), &values);
         for &document in &tree {
             register_document_root(&self.documents, document);
         }

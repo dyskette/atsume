@@ -17,7 +17,7 @@ use std::ops::Range;
 use xot::Xot;
 
 /// The element name for an array member, and for an empty key.
-pub(crate) const MEMBER: &str = "_";
+pub(crate) const MEMBER_ELEMENT: &str = "_";
 
 /// How deeply values may nest, so a hostile document cannot exhaust the
 /// stack.
@@ -118,12 +118,12 @@ impl Reader<'_> {
             match self.peek() {
                 Some('}') => break,
                 Some(quote @ ('"' | '\'')) => {
-                    properties.push((self.string(quote)?, self.after_key()?));
+                    properties.push((self.string(quote)?, self.colon_and_value()?));
                 }
-                Some(_) => properties.push((self.identifier(), self.after_key()?)),
+                Some(_) => properties.push((self.identifier(), self.colon_and_value()?)),
                 None => return Err("unterminated object".to_owned()),
             }
-            if !self.comma_before('}')? {
+            if !self.another_member_follows('}')? {
                 break;
             }
         }
@@ -131,7 +131,7 @@ impl Reader<'_> {
         Ok(Json::Object(properties))
     }
 
-    fn after_key(&mut self) -> Result<Json, String> {
+    fn colon_and_value(&mut self) -> Result<Json, String> {
         self.expect(':')?;
         self.value()
     }
@@ -145,7 +145,7 @@ impl Reader<'_> {
                 break;
             }
             members.push(self.value()?);
-            if !self.comma_before(']')? {
+            if !self.another_member_follows(']')? {
                 break;
             }
         }
@@ -155,7 +155,7 @@ impl Reader<'_> {
 
     /// Reads the comma after a member, and reports whether another member
     /// may follow. A comma right before `close` is allowed and ends the list.
-    fn comma_before(&mut self, close: char) -> Result<bool, String> {
+    fn another_member_follows(&mut self, close: char) -> Result<bool, String> {
         self.skip_whitespace();
         match self.peek() {
             Some(',') => {
@@ -335,25 +335,25 @@ fn number_text(lexeme: &str) -> Result<String, String> {
 /// Builds each value as a document of its own and returns the document
 /// nodes. A document's children are the value: an object's properties, an
 /// array's members, or a scalar's text.
-pub(crate) fn build(xot: &mut Xot, values: &[Json]) -> Vec<xot::Node> {
+pub(crate) fn build_trees(xot: &mut Xot, values: &[Json]) -> Vec<xot::Node> {
     values
         .iter()
         .map(|value| {
             let document = xot.new_document();
-            append(xot, document, value);
+            append_value(xot, document, value);
             document
         })
         .collect()
 }
 
-fn append(xot: &mut Xot, parent: xot::Node, value: &Json) {
+fn append_value(xot: &mut Xot, parent: xot::Node, value: &Json) {
     let text = match value {
         Json::Object(properties) => {
             for (key, property) in properties {
                 append_element(
                     xot,
                     parent,
-                    if key.is_empty() { MEMBER } else { key },
+                    if key.is_empty() { MEMBER_ELEMENT } else { key },
                     property,
                 );
             }
@@ -361,7 +361,7 @@ fn append(xot: &mut Xot, parent: xot::Node, value: &Json) {
         }
         Json::Array(members) => {
             for member in members {
-                append_element(xot, parent, MEMBER, member);
+                append_element(xot, parent, MEMBER_ELEMENT, member);
             }
             return;
         }
@@ -379,7 +379,7 @@ fn append(xot: &mut Xot, parent: xot::Node, value: &Json) {
 fn append_element(xot: &mut Xot, parent: xot::Node, name: &str, value: &Json) {
     let name = xot.add_name(name);
     let element = xot.new_element(name);
-    append(xot, element, value);
+    append_value(xot, element, value);
     log_if_refused(xot.append(parent, element));
 }
 
