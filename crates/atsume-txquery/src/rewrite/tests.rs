@@ -19,7 +19,8 @@ fn dots_after_a_value_read_properties() {
             "($json0)/props/pageProps/series",
         ),
         ("(//a)[1].href", "(//a)[1]/href"),
-        // A quoted name, or one XPath cannot write as a step, matches by name.
+        // A quoted name, or a name that XPath cannot write as a step, is
+        // matched with `name()`.
         (
             r#"($json0)."PH".slug"#,
             r#"($json0)/*[codepoint-equal(name(), "PH")]/slug"#,
@@ -114,7 +115,7 @@ fn json_literals_are_values_unless_they_are_steps() {
         ),
         ("a = null", "a = \"null\""),
         ("x = false", "x = false()"),
-        // A path step, a function, or text inside a string is left alone.
+        // A path step, a function name, or text inside a string is left alone.
         ("//true", "//true"),
         ("true()", "true()"),
         ("@data-show=\"false\"", "@data-show=\"false\""),

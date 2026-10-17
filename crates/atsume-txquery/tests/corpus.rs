@@ -1,8 +1,8 @@
-//! The expressions upstream's modules pass to TXQuery, for measuring how many
-//! this crate compiles.
+//! Measures how many of the expressions that upstream's modules pass to
+//! TXQuery this crate compiles.
 //!
-//! The modules are GPL-2.0-only and never committed, so the expressions are
-//! read from a checkout at test time, never stored.
+//! The modules are GPL-2.0-only and are never committed, so the test reads the
+//! expressions from a checkout when it runs and never stores them.
 
 use std::path::{Path, PathBuf};
 
@@ -19,8 +19,8 @@ const METHODS: [&str; 6] = [
     "XPath",
 ];
 
-/// Stands in for a Lua value spliced into an expression, so the expression
-/// is still one.
+/// Stands in for a Lua value that a module splices into an expression, so that
+/// the result is still a single expression.
 const PLACEHOLDER: &str = "PH";
 
 /// One expression a module passes to TXQuery.
@@ -125,9 +125,9 @@ fn skip_long_string(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>) 
     }
 }
 
-/// Collapses a Lua concatenation into one string: literals as written, and
-/// [`PLACEHOLDER`] for each other term. Returns `None` if no term is a
-/// literal.
+/// Collapses a Lua concatenation into one string. Literals are kept as
+/// written, and every other term becomes [`PLACEHOLDER`]. Returns `None` if no
+/// term is a literal.
 fn concatenation(expression: &str) -> Option<String> {
     let mut text = String::new();
     let mut saw_literal = false;
@@ -145,7 +145,8 @@ fn concatenation(expression: &str) -> Option<String> {
     saw_literal.then_some(text)
 }
 
-/// Splits at each `..` outside brackets and string literals.
+/// Splits a Lua expression at each `..` that is outside brackets and string
+/// literals.
 fn split_concatenation(expression: &str) -> Vec<&str> {
     let mut terms = Vec::new();
     let mut depth = 0;

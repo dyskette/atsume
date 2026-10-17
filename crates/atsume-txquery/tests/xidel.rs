@@ -1,9 +1,9 @@
 //! Compares atsume with xidel, the command-line front end of internettools,
-//! the engine FMD2 evaluates module expressions with.
+//! which is the engine that FMD2 evaluates module expressions with.
 //!
-//! Each expression runs on a page in both, and the results must match item
-//! for item. The test needs a xidel binary in `ATSUME_XIDEL`; `make
-//! rust-xidel` runs it, and CI pins the build. See `docs/MODULES.md`.
+//! Each expression runs on a page in both programs, and the results must match
+//! item for item. The test needs a xidel binary in `ATSUME_XIDEL`. `make
+//! rust-xidel` runs it, and CI pins the xidel build. See `docs/MODULES.md`.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -127,31 +127,32 @@ const JSON_EXPRESSIONS: &[&str] = &[
     r#"json(*).data.chapters()[name = "two"].id"#,
 ];
 
-/// Expressions atsume still evaluates differently from internettools, with
-/// the page each runs on.
+/// Expressions that atsume still evaluates differently from internettools,
+/// each with the page it runs on.
 const DIVERGENCES: &[(&str, &str)] = &[
-    // A JSON value is an element here, so a property that is false is still
-    // there, and true as a predicate.
+    // Here a JSON value is an element, so a property whose value is false
+    // still exists, and it counts as true in a predicate.
     (JSON_PAGE, "json(*).data.chapters()[free].name"),
 ];
 
-/// Restores the settings of the engine FMD2 creates, which xidel changes:
-/// `true`, `false` and `null` as literals, path steps on JSON objects, and
-/// string literals read without entities, as in XPath.
+/// Restores the settings of the engine that FMD2 creates, which xidel changes.
+/// FMD2 reads `true`, `false` and `null` as literals, allows path steps on JSON
+/// objects, and reads string literals without entities, as XPath does.
 const FMD2_ENGINE_OPTIONS: &str = r#"declare option jn:jsoniq-boolean-and-null-literals "yes";
 declare option pxp:extended-json "on";
 declare option pxp:string-entities "off";
 "#;
 
-/// What evaluating an expression gave: each item's text, or a failure.
+/// What evaluating an expression gave, which is either each item's text or a
+/// failure.
 #[derive(Debug, PartialEq)]
 enum Outcome {
     Items(Vec<String>),
     Failed,
 }
 
-/// Evaluates `expression` on `page` with xidel, parsing the page as HTML as
-/// FMD2 does. The options need a prolog, so the expression runs as XQuery.
+/// Evaluates `expression` on `page` with xidel, which parses the page as HTML
+/// as FMD2 does. The options need a prolog, so the expression runs as XQuery.
 fn run_xidel(program: &str, page: &str, expression: &str) -> std::io::Result<Outcome> {
     let mut child = Command::new(program)
         .args(["-", "--input-format=html", "--output-format=json-wrapped"])
@@ -171,8 +172,9 @@ fn run_xidel(program: &str, page: &str, expression: &str) -> std::io::Result<Out
     Ok(Outcome::Items(items_of(printed)))
 }
 
-/// Reads json-wrapped output: an array with one entry per input page, which
-/// is `null` for no items, an array for several, and the item itself for one.
+/// Reads xidel's json-wrapped output. The output is an array with one entry
+/// per input page. Each entry is `null` for no items, an array for several
+/// items, and the item itself for one.
 fn items_of(printed: Value) -> Vec<String> {
     let Value::Array(mut pages) = printed else {
         return Vec::new();

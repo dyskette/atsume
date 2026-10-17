@@ -1,23 +1,24 @@
-//! Cases from the tests of internettools, the engine FMD2 evaluates module
-//! expressions with.
+//! Cases from the tests of internettools, the engine that FMD2 evaluates
+//! module expressions with.
 //!
 //! Each case is copied from `data/tests/xpath2_tests.pas` or
 //! `data/tests/xpath3_tests.pas` of <https://github.com/benibela/internettools>
-//! at commit 2724779c, and starts with its line there. internettools is
-//! GPL-3.0-or-later, copyright Benito van der Zander. Only cases for what
-//! FMD2's modules use are kept; `docs/MODULES.md` says how they were chosen.
+//! at commit 2724779c, and starts with the line number it has there.
+//! internettools is GPL-3.0-or-later, copyright Benito van der Zander. Only
+//! cases that cover what FMD2's modules use are kept, and `docs/MODULES.md`
+//! explains how they were chosen.
 
 use atsume_txquery::{Engine, Page};
 
-/// A case: its line in internettools' file, the expression, and the text
-/// internettools gives.
+/// One case: its line number in internettools' file, the expression, and the
+/// text that internettools gives for it.
 type Case = (u32, &'static str, &'static str);
 
 /// Evaluates every case on `page` and checks the result's text.
 ///
-/// `xpath2_tests.pas` compares the whole result's text, items joined with
-/// nothing between. `xpath3_tests.pas` wraps each expression in `join()`, so
-/// those cases pass a space as `separator`.
+/// `xpath2_tests.pas` compares the text of the whole result, with the items
+/// joined and nothing between them. `xpath3_tests.pas` wraps each expression
+/// in `join()`, so its cases pass a space as `separator`.
 fn check(page: &str, cases: &[Case], separator: &str) {
     let engine = Engine::new();
     let mut document = Page::parse_html(page.as_bytes());
@@ -161,7 +162,7 @@ fn css_selects_what_internettools_selects() {
     }
 }
 
-/// Pages and the selector cases run on each.
+/// Pages, each with the selector cases that run on it.
 const CSS: &[(&str, &[Case])] = &[
     (
         r#"<x><a hreflang="en" class="warning">a1</a><a hreflang="de" id="myid">a2</a><a hreflang="fr-en-de">a3</a></x>"#,

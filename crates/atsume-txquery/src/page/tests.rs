@@ -35,7 +35,7 @@ fn paths_select_from_the_repaired_page() {
         texts("//li[@class='wp-manga-chapter']/a/@href"),
         ["/manga/solo/2/", "/manga/solo/1/"]
     );
-    // Unclosed <li> and <p> are closed, as a browser would.
+    // Unclosed <li> and <p> elements are closed, as a browser closes them.
     assert_eq!(texts("count(//li)"), ["2"]);
     assert_eq!(texts("//p[2]"), ["Second paragraph\n"]);
     assert_eq!(texts("//table/tbody/tr/td"), ["implied tbody"]);
@@ -51,7 +51,8 @@ fn names_are_lowercase_and_whitespace_is_kept() {
 
 #[test]
 fn functions_may_sit_in_a_path_step() {
-    // The expression shape XPath 1.0 engines compile and silently get wrong.
+    // XPath 1.0 engines compile this shape of expression but silently get it
+    // wrong.
     assert_eq!(texts("//li/a/substring-after(., ' ')"), ["2", "1"]);
     assert_eq!(
         texts("string-join((//title, //h1), '|')"),
@@ -370,7 +371,8 @@ fn comparisons_ignore_ascii_case_as_upstream_does() {
         "ONGOING"
     );
     assert_eq!(text(r#"contains(//p, "ongoing")"#), "true");
-    // Only ASCII letters fold, as with upstream's FPC string functions.
+    // Only ASCII letters are compared ignoring case, as upstream's Free Pascal
+    // string functions compare them.
     assert_eq!(text(r#""É" = "é""#), "false");
 }
 
