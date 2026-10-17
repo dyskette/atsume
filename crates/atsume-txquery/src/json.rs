@@ -1,29 +1,33 @@
-//! internettools' `json()`: reading JSON leniently, as a tree of nodes.
+//! Reads JSON leniently into a tree of nodes, as internettools' `json()` does.
 //!
 //! Upstream gives `json()` a liberal parser, because sites embed JavaScript
-//! object literals as page data: single-quoted strings, unquoted keys,
-//! trailing commas, `TRUE` in any case, `NaN`, and several values in a row.
+//! object literals as page data. The parser accepts single-quoted strings,
+//! unquoted keys, trailing commas, `TRUE` in any case, `NaN`, and several
+//! values in a row.
 //!
 //! The result is a node tree, so internettools' path steps on JSON work as
-//! ordinary steps: an object's property is a child element named after its
-//! key, so `obj/name` reads it and `obj/*` gives every value in order; an
-//! array's members are `_` children; a scalar is text, and `null` is the text
-//! `"null"`, as upstream renders it. A plain step through an array without
-//! unboxing it first (`?*`, `()` or `/*`) selects nothing here, where
-//! upstream applies it to each member.
+//! ordinary XPath steps. An object's property is a child element named after
+//! its key, so `obj/name` reads the property and `obj/*` gives every value in
+//! order. An array's members are `_` children. A scalar is text, and `null` is
+//! the text `"null"`, which is how upstream renders it. One difference
+//! remains: a plain step through an array that has not been unboxed first,
+//! with `?*`, `()` or `/*`, selects nothing here, while upstream applies the
+//! step to each member.
 
 use std::ops::Range;
 
 use xot::Xot;
 
-/// The element name for an array member, and for an empty key.
+/// The element name used for an array member, and for a property whose key is
+/// empty.
 pub(crate) const MEMBER_ELEMENT: &str = "_";
 
-/// How deeply values may nest, so a hostile document cannot exhaust the
-/// stack.
+/// How deeply values may nest. The limit keeps a hostile document from
+/// exhausting the stack.
 const MAX_DEPTH: usize = 256;
 
-/// A JSON value, with numbers kept as internettools prints them.
+/// A JSON value. Numbers are kept as the text that internettools prints for
+/// them.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Json {
     Object(Vec<(String, Json)>),
@@ -34,7 +38,8 @@ pub(crate) enum Json {
     Null,
 }
 
-/// Parses every value in `text`, which may hold none, one or several.
+/// Parses every value in `text`. The text may hold no values, one value, or
+/// several.
 pub(crate) fn parse(text: &str) -> Result<Vec<Json>, String> {
     let mut reader = Reader {
         chars: text.char_indices().peekable(),
@@ -68,7 +73,7 @@ impl Reader<'_> {
         }
     }
 
-    /// Skips what may separate top-level values: whitespace and commas.
+    /// Skips the whitespace and commas that may separate top-level values.
     fn skip_separators(&mut self) {
         while self
             .peek()
@@ -202,9 +207,9 @@ impl Reader<'_> {
     /// encode.
     ///
     /// JSON writes a character beyond the Basic Multilingual Plane as two
-    /// escapes, a high surrogate then a low one, and they are joined here. A
-    /// surrogate without its partner becomes U+FFFD, and whatever follows it
-    /// is read as usual.
+    /// escapes, a high surrogate followed by a low one, and this function joins
+    /// them. A surrogate without its partner becomes U+FFFD, and whatever
+    /// follows it is read normally.
     fn unicode_escape(&mut self, out: &mut String) -> Result<(), String> {
         let unit = self.hex_digits()?;
         if !HIGH_SURROGATES.contains(&unit) {
@@ -218,8 +223,8 @@ impl Reader<'_> {
         Ok(())
     }
 
-    /// Reads a `\uXXXX` escape holding a low surrogate if one comes next,
-    /// and otherwise reads nothing.
+    /// Reads the next `\uXXXX` escape and returns its low surrogate, if the
+    /// escape holds one. Otherwise it reads nothing.
     fn low_surrogate_next(&mut self) -> Option<u32> {
         let mut ahead = self.chars.clone();
         let starts_escape =
@@ -256,8 +261,8 @@ impl Reader<'_> {
         number_text(&self.text[start..end]).map(Json::Number)
     }
 
-    /// Reads a bare word: `true`, `false` or `null` in any case, or `NaN` or
-    /// `Infinity`.
+    /// Reads a bare word, which may be `true`, `false` or `null` in any case,
+    /// or `NaN` or `Infinity`.
     fn word(&mut self) -> Result<Json, String> {
         let word = self.identifier();
         match word.to_ascii_lowercase().as_str() {
@@ -296,8 +301,8 @@ const LOW_SURROGATES: Range<u32> = 0xDC00..0xE000;
 /// encodes a character as its distance from this one.
 const FIRST_SUPPLEMENTARY: u32 = 0x10000;
 
-/// How many bits of that distance each surrogate carries: the high one the
-/// top ten, the low one the bottom ten.
+/// How many bits of that distance each surrogate carries. The high surrogate
+/// carries the top ten bits and the low surrogate the bottom ten.
 const SURROGATE_BITS: u32 = 10;
 
 /// Joins a high and a low surrogate into the character they encode.
@@ -307,9 +312,9 @@ fn join_surrogates(high: u32, low: u32) -> char {
     char::from_u32(FIRST_SUPPLEMENTARY + (top | bottom)).unwrap_or(char::REPLACEMENT_CHARACTER)
 }
 
-/// Renders a number as internettools prints it: an integer as its digits, and
-/// anything else as the shortest decimal, switching to exponent form outside
-/// `[0.000001, 1000000)`.
+/// Renders a number as internettools prints it. An integer becomes its digits.
+/// Any other number becomes the shortest decimal that represents it, written
+/// in exponent form when it lies outside `[0.000001, 1000000)`.
 fn number_text(lexeme: &str) -> Result<String, String> {
     if !lexeme.contains(['.', 'e', 'E']) {
         if let Ok(n) = lexeme.parse::<i64>() {
@@ -332,8 +337,8 @@ fn number_text(lexeme: &str) -> Result<String, String> {
     }
 }
 
-/// Builds each value as a document of its own and returns the document
-/// nodes. A document's children are the value: an object's properties, an
+/// Builds each value as a separate document and returns the document nodes. A
+/// document's children are the value itself: an object's properties, an
 /// array's members, or a scalar's text.
 pub(crate) fn build_trees(xot: &mut Xot, values: &[Json]) -> Vec<xot::Node> {
     values
