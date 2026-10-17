@@ -1,4 +1,5 @@
-//! The selected website and its account, and the `MODULE` object over them.
+//! The selected website and its account, and the `MODULE` object that reads
+//! them.
 
 use std::collections::HashMap;
 
@@ -12,13 +13,15 @@ use crate::runtime::convert::lua_int;
 use crate::upstream::declaration::StorageObject;
 use crate::upstream::http::{add_server_cookies, clear_cookies};
 
-/// The website a session scrapes, kept in the runtime as `MODULE` exposes it.
+/// The website that a session scrapes, kept in the runtime in the form that
+/// `MODULE` exposes.
 pub(crate) struct SiteRecord {
     pub(crate) declaration: SiteDeclaration,
-    /// The value of each setting: the declared default until a caller sets it.
+    /// The value of each setting. A setting keeps its declared default until a
+    /// caller sets it.
     pub(crate) options: HashMap<String, OptionValue>,
-    /// Which listing a site with several walks next. Modules see it as
-    /// `MODULE.CurrentDirectoryIndex`.
+    /// Which listing a site with several listings walks next. Modules read it
+    /// through `MODULE.CurrentDirectoryIndex`.
     pub(crate) listing_index: i64,
 }
 
@@ -38,10 +41,10 @@ impl SiteRecord {
 }
 
 impl AccountStatus {
-    /// Every state, in the order upstream numbers them.
+    /// Every state, in the order in which upstream numbers them.
     pub(crate) const ALL: [Self; 4] = [Self::Unknown, Self::Checking, Self::Valid, Self::Invalid];
 
-    /// Returns the number upstream gives this state.
+    /// Returns the number that upstream gives this state.
     pub(crate) fn code(self) -> i64 {
         match self {
             Self::Unknown => -1,
@@ -59,19 +62,20 @@ impl AccountStatus {
     }
 }
 
-/// The credentials a module sees as `MODULE.Account`, kept in the runtime.
+/// The credentials that a module sees as `MODULE.Account`, kept in the
+/// runtime.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AccountRecord {
     /// Whether credentials were supplied. Login handlers check this first.
     pub(crate) enabled: bool,
     pub(crate) username: String,
     pub(crate) password: String,
-    /// Cookies the module saved for the session.
+    /// Cookies that the module saved for the session.
     pub(crate) cookies: String,
     pub(crate) status: AccountStatus,
 }
 
-/// `MODULE`. It holds nothing itself; every access reaches [`SiteRecord`].
+/// The `MODULE` global, which reads and writes [`SiteRecord`].
 pub(crate) struct ModuleObject;
 
 impl UserData for ModuleObject {
@@ -108,7 +112,7 @@ impl UserData for ModuleObject {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_function("GetOption", |lua, name: String| get_option(lua, &name));
-        // A few modules manage cookies through MODULE rather than HTTP.
+        // A few modules manage cookies through `MODULE` instead of `HTTP`.
         methods.add_function("ClearCookies", clear_cookies);
         methods.add_function("RemoveCookies", clear_cookies);
         methods.add_function("AddServerCookies", add_server_cookies);
@@ -116,7 +120,8 @@ impl UserData for ModuleObject {
     }
 }
 
-/// `MODULE.GetOption(name)`: the setting's value, or `nil` if it has none.
+/// Implements `MODULE.GetOption(name)`, which returns the setting's value, or
+/// `nil` if it has none.
 fn get_option(lua: &Lua, name: &str) -> mlua::Result<Value> {
     let site = borrow_state::<SiteRecord>(lua)?;
     site.options
@@ -124,7 +129,7 @@ fn get_option(lua: &Lua, name: &str) -> mlua::Result<Value> {
         .map_or(Ok(Value::Nil), |value| value.to_lua_value(lua))
 }
 
-/// `MODULE.Account`. It holds nothing itself; every access reaches [`AccountRecord`].
+/// The `MODULE.Account` object, which reads and writes [`AccountRecord`].
 struct AccountObject;
 
 impl UserData for AccountObject {
