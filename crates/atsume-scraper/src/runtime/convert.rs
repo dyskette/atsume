@@ -18,6 +18,15 @@ pub(crate) fn pascal_trim(text: &str) -> &str {
     text.trim_matches(|c: char| c <= ' ')
 }
 
+/// Trims the bytes of a Lua string as Pascal's `Trim` does. It removes each
+/// byte up to and including a space from both ends.
+pub(crate) fn pascal_trim_bytes(text: &[u8]) -> &[u8] {
+    let kept = |byte: &u8| *byte > b' ';
+    let start = text.iter().position(kept).unwrap_or(text.len());
+    let end = text.iter().rposition(kept).map_or(start, |last| last + 1);
+    &text[start..end]
+}
+
 /// Reports a value's Lua truthiness, in which everything except `nil` and
 /// `false` is true.
 pub(crate) fn truthy(value: &Value) -> bool {
@@ -45,6 +54,18 @@ pub(crate) fn lua_int(lua: &Lua, value: &Value) -> i64 {
 /// does.
 pub(crate) fn text_arg(lua: &Lua, value: &Value, position: usize) -> mlua::Result<String> {
     lua_text(lua, value).ok_or_else(|| bad_argument(position, "string", value))
+}
+
+/// Reads argument number `position` as the bytes of a string, accepting a
+/// number as Lua does.
+///
+/// A Lua string may hold a page in a legacy encoding or binary data, so its
+/// bytes are kept as they are instead of being read as UTF-8.
+pub(crate) fn bytes_arg(lua: &Lua, value: &Value, position: usize) -> mlua::Result<Vec<u8>> {
+    if let Value::String(text) = value {
+        return Ok(text.as_bytes().to_vec());
+    }
+    text_arg(lua, value, position).map(String::into_bytes)
 }
 
 /// Reads argument number `position` as an integer. A float or a numeric

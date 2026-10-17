@@ -1,5 +1,5 @@
 //! The globals that FMD2 gives modules. Each file defines one global, or a few
-//! related ones, and is named after the data they hold.
+//! related ones, and is named after the data they hold or the work they do.
 //!
 //! An object here keeps no state of its own. Everything it reads and writes is
 //! a plain Rust value kept in the runtime, so the host can read a handler's
@@ -21,6 +21,7 @@ pub(crate) mod libs;
 pub(crate) mod module;
 pub(crate) mod series;
 pub(crate) mod string_list;
+pub(crate) mod trim;
 pub(crate) mod txquery;
 
 use std::path::Path;
@@ -62,5 +63,6 @@ pub(crate) fn install(lua: &Lua, lua_dir: &Path, http: HttpSession) -> mlua::Res
     series::register(lua)?;
     chapter_pages::register(lua)?;
     directory::register(lua)?;
-    txquery::register(lua)
+    txquery::register(lua)?;
+    trim::register(lua)
 }

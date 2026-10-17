@@ -2,11 +2,13 @@
 
 use std::path::PathBuf;
 
+use mlua::{Lua, Value};
 use tempfile::TempDir;
 
 use crate::catalog::select_site;
 use crate::error::ErrorKind;
 use crate::http::HttpConfig;
+use crate::runtime::convert::lua_text;
 use crate::{CancelToken, Catalog, Error, Result, Session, SessionConfig, Site};
 
 /// A checkout laid out like FMD2's, in a temporary directory.
@@ -97,6 +99,22 @@ pub(crate) fn open_module_with(
         ..SessionConfig::default()
     };
     site.open(&config, cancel).unwrap()
+}
+
+/// Runs `source` in a plain Lua runtime after `register` has set its globals,
+/// and returns what `source` returns as text. A boolean reads as `true` or
+/// `false`, and any other value that has no text reads as its type name.
+pub(crate) fn eval_registered(
+    register: impl FnOnce(&Lua) -> mlua::Result<()>,
+    source: &str,
+) -> mlua::Result<String> {
+    let lua = Lua::new();
+    register(&lua)?;
+    let value: Value = lua.load(source).eval()?;
+    if let Value::Boolean(flag) = value {
+        return Ok(flag.to_string());
+    }
+    Ok(lua_text(&lua, &value).unwrap_or_else(|| value.type_name().to_owned()))
 }
 
 /// Returns the `lua` directory of the FMD2 checkout that `ATSUME_FMD2_DIR`
