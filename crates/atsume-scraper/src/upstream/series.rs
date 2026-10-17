@@ -64,7 +64,8 @@ pub(crate) struct SeriesRecord {
     url: String,
     title: String,
     alt_titles: String,
-    cover_link: String,
+    /// Modules see it as `MANGAINFO.CoverLink`.
+    cover_url: String,
     authors: String,
     artists: String,
     genres: String,
@@ -108,7 +109,7 @@ impl SeriesRecord {
         SeriesInfo {
             title: self.title,
             alt_titles: self.alt_titles,
-            cover_url: self.cover_link,
+            cover_url: self.cover_url,
             authors: self.authors,
             artists: self.artists,
             genres: self.genres,
@@ -129,9 +130,7 @@ impl UserData for SeriesObject {
         text_field(fields, "AltTitles", |m: &mut SeriesRecord| {
             &mut m.alt_titles
         });
-        text_field(fields, "CoverLink", |m: &mut SeriesRecord| {
-            &mut m.cover_link
-        });
+        text_field(fields, "CoverLink", |m: &mut SeriesRecord| &mut m.cover_url);
         text_field(fields, "Authors", |m: &mut SeriesRecord| &mut m.authors);
         text_field(fields, "Artists", |m: &mut SeriesRecord| &mut m.artists);
         text_field(fields, "Genres", |m: &mut SeriesRecord| &mut m.genres);
