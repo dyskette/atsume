@@ -8,7 +8,7 @@ use url::Url;
 use super::client::{Client, Exchange, FetchError};
 use super::flaresolverr::{Flaresolverr, has_challenge_markers, looks_like_challenge};
 use super::transport::{Method, Request};
-use super::{DEFAULT_USER_AGENT, HttpConfig, LastRequest};
+use super::{DEFAULT_USER_AGENT, HttpConfig, LastRequest, Moved};
 use crate::cancel::{CancelToken, Cancelled};
 use crate::string_list::StringList;
 
@@ -20,7 +20,7 @@ use crate::string_list::StringList;
 pub(crate) struct HttpSession {
     client: Client,
     solver: Option<Arc<Flaresolverr>>,
-    backoff: Duration,
+    backoff_step: Duration,
     /// Request headers the module set, as `name=value`.
     pub(crate) headers: StringList,
     /// Cookies the module set or a server issued, as `name=value`.
@@ -53,13 +53,13 @@ impl HttpSession {
         Self {
             client,
             solver: config.solver.clone(),
-            backoff: config.retry.backoff,
+            backoff_step: config.retry.backoff_step,
             headers: StringList::default(),
             cookies: StringList::default(),
             response_body: Vec::new(),
             request_content_type: String::new(),
             user_agent: DEFAULT_USER_AGENT.to_owned(),
-            max_retries: i64::from(config.retry.retries),
+            max_retries: i64::from(config.retry.max_retries),
             cancelled: false,
             last_request: LastRequest::default(),
         }
@@ -109,11 +109,11 @@ impl HttpSession {
         self.response_body.clear();
         self.last_request.status = 0;
         self.last_request.error = None;
-        url.clone_into(&mut self.last_request.requested);
+        url.clone_into(&mut self.last_request.requested_url);
 
         for attempt in 0..=self.max_retries {
             if attempt > 0 {
-                let pause = self.backoff * u32::try_from(attempt).unwrap_or(u32::MAX);
+                let pause = self.backoff_step * u32::try_from(attempt).unwrap_or(u32::MAX);
                 self.client.cancel_token().sleep(pause)?;
             }
             match self.send_once(method, url, body) {
@@ -151,10 +151,12 @@ impl HttpSession {
         } = self.client.fetch(request, self.cookies.items())?;
 
         self.last_request.status = i64::from(response.status);
-        self.last_request.url = final_url.to_string();
+        self.last_request.final_url = final_url.to_string();
         if self.last_request.moved.is_none() && final_url.host_str() != parsed.host_str() {
-            let from = parsed.host_str().unwrap_or_default().to_owned();
-            self.last_request.moved = Some((from, final_url.origin().ascii_serialization()));
+            self.last_request.moved = Some(Moved {
+                from_host: parsed.host_str().unwrap_or_default().to_owned(),
+                to_origin: final_url.origin().ascii_serialization(),
+            });
         }
         // Modules read the cookies after a login, to see whether the server
         // issued the session cookie they need.

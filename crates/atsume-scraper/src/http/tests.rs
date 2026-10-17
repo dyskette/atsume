@@ -54,7 +54,7 @@ fn with_headers(mut response: Response, headers: &[(&str, &str)]) -> Response {
 
 fn config(transport: Arc<dyn Transport>) -> HttpConfig {
     let retry = RetryPolicy {
-        backoff: Duration::ZERO,
+        backoff_step: Duration::ZERO,
         ..RetryPolicy::default()
     };
     HttpConfig {
@@ -164,7 +164,7 @@ fn no_answer_is_recorded_and_retried() {
     let last = session.last_request();
     assert_eq!(last.status, 0);
     assert_eq!(last.error.as_deref(), Some("connection refused"));
-    assert_eq!(last.requested, "https://a.example/p");
+    assert_eq!(last.requested_url, "https://a.example/p");
 }
 
 #[test]
@@ -189,7 +189,10 @@ fn redirects_are_followed_and_a_move_is_recorded() {
     let moved = session.last_request().moved;
     assert_eq!(
         moved,
-        Some(("old.example".to_owned(), "https://new.example".to_owned()))
+        Some(Moved {
+            from_host: "old.example".to_owned(),
+            to_origin: "https://new.example".to_owned(),
+        })
     );
 
     let seen = transport.seen.lock().unwrap();
@@ -460,7 +463,7 @@ fn a_reported_network_problem_carries_the_last_request() {
     assert_eq!(err.kind(), ErrorKind::Network);
     let request = err.last_request().unwrap();
     assert_eq!(
-        (request.status, request.requested.as_str()),
+        (request.status, request.requested_url.as_str()),
         (404, "https://a.example/series/x")
     );
     assert_eq!(

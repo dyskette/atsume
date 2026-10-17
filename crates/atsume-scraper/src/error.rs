@@ -53,10 +53,10 @@ impl Error {
     /// Reports a network problem the module ran into while doing `action`,
     /// with what its last request got back.
     pub(crate) fn network(site_name: &str, action: &str, last: LastRequest) -> Self {
-        let from = if last.requested.is_empty() {
+        let from = if last.requested_url.is_empty() {
             String::new()
         } else {
-            format!(" from {}", last.requested)
+            format!(" from {}", last.requested_url)
         };
         let cause = last
             .error

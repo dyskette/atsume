@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// How often a blocking wait checks whether the scrape was cancelled.
-pub(crate) const CANCEL_POLL: Duration = Duration::from_millis(20);
+pub(crate) const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Cancels a scrape from any thread.
 ///
@@ -65,7 +65,7 @@ impl CancelToken {
             if left.is_zero() {
                 return Ok(());
             }
-            std::thread::sleep(left.min(CANCEL_POLL));
+            std::thread::sleep(left.min(CANCEL_POLL_INTERVAL));
         }
     }
 }

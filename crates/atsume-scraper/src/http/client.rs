@@ -7,7 +7,7 @@ use url::Url;
 
 use super::limiter::Limiter;
 use super::transport::{Method, Request, Response, Transport};
-use crate::cancel::{CANCEL_POLL, CancelToken, Cancelled};
+use crate::cancel::{CANCEL_POLL_INTERVAL, CancelToken, Cancelled};
 
 /// How many redirects one request may follow, as browsers allow.
 const MAX_REDIRECTS: usize = 10;
@@ -186,7 +186,7 @@ pub(crate) fn send_cancellable(
         let _ = sender.send(transport.send(&request));
     });
     loop {
-        match receiver.recv_timeout(CANCEL_POLL) {
+        match receiver.recv_timeout(CANCEL_POLL_INTERVAL) {
             Ok(result) => return result.map_err(|e| FetchError::Failed(e.0)),
             Err(mpsc::RecvTimeoutError::Timeout) => cancel.check()?,
             Err(mpsc::RecvTimeoutError::Disconnected) => {

@@ -50,17 +50,17 @@ pub struct HttpConfig {
 pub struct RetryPolicy {
     /// How many times a request is retried after its first attempt. A module
     /// may change this for its own requests through `HTTP.RetryCount`.
-    pub retries: u32,
+    pub max_retries: u32,
     /// The pause before the first retry. Each later retry waits one more.
-    pub backoff: Duration,
+    pub backoff_step: Duration,
 }
 
 impl Default for RetryPolicy {
     /// Two retries, the first after two seconds and the second after four.
     fn default() -> Self {
         Self {
-            retries: 2,
-            backoff: Duration::from_secs(2),
+            max_retries: 2,
+            backoff_step: Duration::from_secs(2),
         }
     }
 }
@@ -68,8 +68,8 @@ impl Default for RetryPolicy {
 impl RetryPolicy {
     /// A policy that tries each request once.
     pub const NONE: Self = Self {
-        retries: 0,
-        backoff: Duration::ZERO,
+        max_retries: 0,
+        backoff_step: Duration::ZERO,
     };
 }
 
@@ -113,18 +113,27 @@ impl Transport for Offline {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LastRequest {
     /// The address the request asked for.
-    pub requested: String,
+    pub requested_url: String,
     /// Where it ended up after redirects, once the site answered.
-    pub url: String,
+    pub final_url: String,
     /// The HTTP status, or 0 when the site did not answer.
     pub status: i64,
     /// Why the site did not answer at all, if it did not.
     pub error: Option<String>,
     /// Whether any response so far carried an anti-bot interstitial.
     pub challenged: bool,
-    /// The first redirect to another host: the host asked for, and the
-    /// address it ended at. A site that moved usually says so this way.
-    pub moved: Option<(String, String)>,
+    /// The first redirect to another host. A site that moved usually says so
+    /// this way.
+    pub moved: Option<Moved>,
+}
+
+/// A redirect from one host to another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Moved {
+    /// The host the request asked for.
+    pub from_host: String,
+    /// The origin the redirects ended at, such as `https://new.example`.
+    pub to_origin: String,
 }
 
 #[cfg(test)]

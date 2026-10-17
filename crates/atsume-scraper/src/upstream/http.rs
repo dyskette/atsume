@@ -18,7 +18,7 @@ impl UserData for HttpObject {
         });
         text_field(fields, "UserAgent", |h: &mut HttpSession| &mut h.user_agent);
         text_field(fields, "LastURL", |h: &mut HttpSession| {
-            &mut h.last_request.url
+            &mut h.last_request.final_url
         });
         int_field(fields, "RetryCount", |h: &mut HttpSession| {
             &mut h.max_retries
