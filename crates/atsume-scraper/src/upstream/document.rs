@@ -10,7 +10,8 @@ use mlua::{Lua, MetaMethod, UserData, UserDataMethods, Value};
 
 use crate::runtime::bind::{Place, borrow_state};
 
-/// The Lua object over a body that is kept in the runtime's state `S`.
+/// The Lua object for a body that is kept in the runtime's state `S`. It holds
+/// only the place where the body lives.
 pub(crate) struct DocumentObject<S> {
     place: Place<S, Vec<u8>>,
 }

@@ -8,7 +8,7 @@ use crate::runtime::bind::{Place, borrow_state};
 use crate::runtime::convert::{int_arg, lua_int, text_arg};
 use crate::string_list::{StringList, split_lines};
 
-/// The Lua object over a list that is kept in the runtime's state `S`.
+/// The Lua object for a list that is kept in the runtime's state `S`.
 ///
 /// The object holds only the place where the list lives, so the list itself
 /// stays a plain value that Rust code reads directly.

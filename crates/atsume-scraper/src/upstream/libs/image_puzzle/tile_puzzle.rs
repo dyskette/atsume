@@ -46,19 +46,21 @@ pub(super) enum TilePuzzleError {
 /// puts them back.
 ///
 /// Tiles are numbered from 0, left to right and then top to bottom. Modules
-/// build one with `fmd.imagepuzzle.Create`.
+/// build one with `fmd.imagepuzzle.Create`, and each field's doc comment gives,
+/// in parentheses, the name through which modules reach it.
 #[derive(Debug)]
 pub(super) struct TilePuzzle {
-    /// How many tiles each row has. Modules read it as `HorBlock`.
+    /// How many tiles each row has (`HorBlock`).
     pub(super) columns: i64,
-    /// How many rows of tiles there are. Modules read it as `VerBlock`.
+    /// How many rows of tiles there are (`VerBlock`).
     pub(super) rows: i64,
-    /// The number that each tile's width and height are rounded down to a
-    /// multiple of, when it is above 1. Some sites cut on a coarser grid than
-    /// the image's size implies. Modules set it through `Multiply`.
+    /// The step that tile sizes are rounded down to (`Multiply`). When the
+    /// step is above 1, each tile's width and height become the largest
+    /// multiple of the step that fits. Some sites cut on a coarser grid than
+    /// the image's size implies.
     pub(super) tile_size_multiple: i64,
-    /// The destination of each scrambled tile, by the tile's number. Modules
-    /// set it through `Matrix`.
+    /// The destination of each scrambled tile, by the tile's number
+    /// (`Matrix`).
     pub(super) destinations: Vec<i64>,
 }
 
@@ -202,7 +204,9 @@ pub(super) fn tile_length(length: u32, tiles: u32, multiple: i64) -> u32 {
 
 /// Returns the top-left pixel of tile number `tile`.
 ///
-/// The grid fits inside the image, so the coordinates fit in a `u32`.
+/// The grid fits inside the image, so the coordinates always fit in a `u32`.
+/// The fallbacks in the conversions never apply; they are there because the
+/// types alone cannot show that.
 fn tile_corner(tile: usize, columns: u32, tile_width: u32, tile_height: u32) -> (u32, u32) {
     let columns = columns as usize;
     let column = u32::try_from(tile % columns).unwrap_or(u32::MAX);

@@ -19,8 +19,9 @@ ctr = "0.10.1"
 flate2 = "1.1.10"
 hmac = "0.13.0"
 html5ever = "0.40.1"
-# Decodes the formats a site serves scrambled pages in, and encodes PNG and
-# JPEG.
+# Decodes the formats that sites serve scrambled pages in, and encodes the
+# descrambled page as PNG or JPEG. GIF is decoded too, because a site may serve
+# one, and it comes back as a JPEG.
 image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 # The IRI type xee takes a collation as.
 iri-string = "0.7.14"

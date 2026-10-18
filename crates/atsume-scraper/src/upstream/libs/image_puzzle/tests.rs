@@ -8,7 +8,7 @@ use super::*;
 use crate::CancelToken;
 use crate::http::HttpConfig;
 
-/// Builds an image whose tiles each have a different flat colour, so a tile
+/// Builds an image whose tiles each have a different flat color, so a tile
 /// in the wrong place shows up as differing pixels.
 fn grid_image(columns: u32, rows: u32, tile_width: u32, tile_height: u32) -> RgbaImage {
     RgbaImage::from_fn(columns * tile_width, rows * tile_height, |x, y| {

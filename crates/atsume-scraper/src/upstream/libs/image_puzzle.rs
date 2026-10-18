@@ -38,8 +38,8 @@ pub(super) fn build(lua: &Lua) -> mlua::Result<Table> {
     Ok(library)
 }
 
-/// The object that `Create` returns, over a [`TilePuzzle`] that it shares
-/// with the `Matrix` objects it hands out.
+/// The object that `Create` returns. It shares its [`TilePuzzle`] with every
+/// `Matrix` object it hands out.
 #[derive(Clone)]
 struct TilePuzzleObject {
     puzzle: Rc<RefCell<TilePuzzle>>,
