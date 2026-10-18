@@ -42,14 +42,13 @@ const REQUIRE_SOURCE: &str = "(function (readHelper, cryptoModule) {
         name = String(name);
         if (name === 'crypto') return cryptoModule();
         var helper = readHelper(name);
-        var path = helper[0];
-        if (!(path in loaded)) {
+        if (!(helper.path in loaded)) {
             var module = { exports: {} };
-            makeFunction('exports', 'module', 'require', helper[1])
+            makeFunction('exports', 'module', 'require', helper.source)
                 .call(undefined, module.exports, module, require);
-            loaded[path] = module.exports;
+            loaded[helper.path] = module.exports;
         }
-        return loaded[path];
+        return loaded[helper.path];
     };
 })";
 
@@ -69,18 +68,21 @@ pub(super) fn install<'js>(ctx: &Ctx<'js>, lua_dir: PathBuf) -> rquickjs::Result
     ctx.globals().set("require", require)
 }
 
-/// Returns the canonical path and the source of the helper `name`, as two
-/// strings.
+/// Returns the helper `name` as an object with two properties: `path`, its
+/// canonical path, and `source`, its text.
 ///
 /// # Errors
 ///
 /// Throws when the helper lies outside `lua_dir`, or cannot be read.
-fn read_helper(ctx: &Ctx<'_>, lua_dir: &Path, name: &str) -> rquickjs::Result<Vec<String>> {
+fn read_helper<'js>(ctx: &Ctx<'js>, lua_dir: &Path, name: &str) -> rquickjs::Result<Object<'js>> {
     let failure =
         |message: &str| Exception::throw_message(ctx, &format!("require({name:?}): {message}"));
     let path = resolve_in_root(lua_dir, &helper_path(name)).map_err(|message| failure(&message))?;
     let source = std::fs::read_to_string(&path).map_err(|error| failure(&error.to_string()))?;
-    Ok(vec![path.to_string_lossy().into_owned(), source])
+    let helper = Object::new(ctx.clone())?;
+    helper.set("path", path.to_string_lossy().into_owned())?;
+    helper.set("source", source)?;
+    Ok(helper)
 }
 
 /// Returns the path, relative to the `lua` directory, that a `require` name
