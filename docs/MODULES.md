@@ -267,9 +267,12 @@ loaded helpers kept in Rust would keep every runtime alive. `require` resolves
 helpers with the same rule that `io` uses, so a symbolic link that leads out of
 the `lua` directory is refused too.
 
-`getRandomValues` fills at most 65,536 values per call, as a browser does, and
+`getRandomValues` fills at most 65,536 bytes per call, the quota that browsers
+enforce, so a `Uint32Array` takes at most 16,384 elements. A typed array is
+measured by its `byteLength`, and a plain object with a `length` counts four
+bytes per element, because each element receives a 32-bit number.
 `randomBytes` returns at most 1 MiB. Both loops run in Rust, where the
-interrupt cannot stop them.
+interrupt cannot stop them, and the limits bound them.
 
 ## Image descrambling
 

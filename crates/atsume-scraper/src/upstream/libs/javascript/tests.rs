@@ -181,6 +181,38 @@ fn require_crypto_serves_random_numbers() {
 }
 
 #[test]
+fn get_random_values_fills_at_most_65536_bytes_whatever_the_element_size() {
+    check(&[
+        (
+            "require('crypto').getRandomValues(new Uint32Array(16384)).length",
+            "16384",
+        ),
+        (
+            "require('crypto').getRandomValues(new Uint8Array(65536)).length",
+            "65536",
+        ),
+        // An object without a byteLength counts four bytes per element.
+        (
+            "require('crypto').getRandomValues({length: 16384}).length",
+            "16384",
+        ),
+    ]);
+    for source in [
+        "require('crypto').getRandomValues(new Uint32Array(16385))",
+        "require('crypto').getRandomValues(new Uint8Array(65537))",
+        "require('crypto').getRandomValues({length: 16385})",
+        // A small byteLength does not let a long array through.
+        "require('crypto').getRandomValues({length: 1e9, byteLength: 1})",
+    ] {
+        let error = run(source).unwrap_err();
+        assert!(
+            error.to_string().contains("at most 65536 bytes"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[test]
 fn modules_run_scripts_through_exec_js() {
     let session = open_module("NewWebsiteModule()", "");
     let exec = |source: &str| session.eval(&format!("require('fmd.duktape').ExecJS({source:?})"));

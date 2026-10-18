@@ -11,10 +11,15 @@ use rquickjs::{Coerced, Ctx, Exception, Function, Object, Value};
 use super::script_runner::sloppy_script;
 use crate::runtime::sandbox::resolve_in_root;
 
-/// The most values that one `getRandomValues` call fills. Browsers refuse
-/// more than 65,536 bytes, and the limit keeps a script from holding the
-/// engine in a loop that its time limit cannot interrupt.
-const MAX_RANDOM_VALUES: u32 = 1 << 16;
+/// The most bytes that one `getRandomValues` call fills, the quota that the
+/// Web Crypto standard sets. The filling loop runs in Rust, where a script's
+/// time limit cannot stop it, so the quota also bounds that loop.
+const MAX_RANDOM_VALUE_BYTES: u32 = 1 << 16;
+
+/// The bytes that each element counts for in an array without a
+/// `byteLength`, such as a plain object with a `length`. Each element receives
+/// a 32-bit number.
+const BYTES_PER_UNTYPED_ELEMENT: i64 = 4;
 
 /// The most bytes that one `randomBytes` call returns.
 const MAX_RANDOM_BYTES: u32 = 1 << 20;
@@ -112,6 +117,11 @@ fn crypto_module<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
 
 /// Fills each index of `array` with a random 32-bit number and returns
 /// `array` (`crypto.getRandomValues`). crypto-js passes a `Uint32Array`.
+///
+/// A typed array is measured by its `byteLength`, as a browser measures it,
+/// so a `Uint32Array` takes at most 16,384 elements. Every element takes at
+/// least one byte, so no array takes more elements than the quota has bytes,
+/// even one that claims a smaller `byteLength`.
 fn fill_with_random_values<'js>(ctx: &Ctx<'js>, array: Value<'js>) -> rquickjs::Result<Value<'js>> {
     let Some(object) = array.as_object() else {
         return Err(Exception::throw_type(
@@ -122,14 +132,31 @@ fn fill_with_random_values<'js>(ctx: &Ctx<'js>, array: Value<'js>) -> rquickjs::
     // A length that is missing or negative fills nothing, as it would in a
     // browser.
     let length = object.get::<_, Coerced<i64>>("length")?.0.max(0);
-    let Some(length) = within_limit(length, MAX_RANDOM_VALUES) else {
-        let message = format!("getRandomValues fills at most {MAX_RANDOM_VALUES} values");
+    let byte_length = requested_byte_length(object, length)?;
+    let quota = i64::from(MAX_RANDOM_VALUE_BYTES);
+    let Some(length) =
+        within_limit(length, MAX_RANDOM_VALUE_BYTES).filter(|_| byte_length <= quota)
+    else {
+        let message = format!(
+            "getRandomValues fills at most {MAX_RANDOM_VALUE_BYTES} bytes, and the array holds {byte_length}"
+        );
         return Err(Exception::throw_range(ctx, &message));
     };
     for index in 0..length {
         object.set(index, random_u32(ctx)?)?;
     }
     Ok(array)
+}
+
+/// Returns how many bytes `array`, which has `length` elements, holds. An
+/// array without a `byteLength` counts [`BYTES_PER_UNTYPED_ELEMENT`] bytes for
+/// each element.
+fn requested_byte_length(array: &Object<'_>, length: i64) -> rquickjs::Result<i64> {
+    let byte_length: Value = array.get("byteLength")?;
+    if byte_length.is_undefined() {
+        return Ok(length.saturating_mul(BYTES_PER_UNTYPED_ELEMENT));
+    }
+    Ok(byte_length.get::<Coerced<i64>>()?.0)
 }
 
 /// Returns an object holding `length` random bytes by index, with a
