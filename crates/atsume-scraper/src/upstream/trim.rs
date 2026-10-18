@@ -3,7 +3,7 @@
 
 use mlua::{Lua, Value};
 
-use crate::runtime::convert::{bytes_arg, pascal_trim_bytes};
+use crate::runtime::convert::{bytes_arg, trim_spaces_and_controls_bytes};
 
 /// Sets the global `Trim`.
 ///
@@ -12,7 +12,7 @@ use crate::runtime::convert::{bytes_arg, pascal_trim_bytes};
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     let trim = lua.create_function(|lua, text: Value| {
         let text = bytes_arg(lua, &text, 1)?;
-        lua.create_string(pascal_trim_bytes(&text))
+        lua.create_string(trim_spaces_and_controls_bytes(&text))
     })?;
     lua.globals().set("Trim", trim)
 }

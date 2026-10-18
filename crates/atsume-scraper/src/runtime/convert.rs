@@ -14,13 +14,13 @@ pub(crate) fn lua_text(lua: &Lua, value: &Value) -> Option<String> {
 
 /// Trims text as Pascal's `Trim` does. It removes spaces and control
 /// characters, but not other Unicode whitespace such as a no-break space.
-pub(crate) fn pascal_trim(text: &str) -> &str {
+pub(crate) fn trim_spaces_and_controls(text: &str) -> &str {
     text.trim_matches(|c: char| c <= ' ')
 }
 
 /// Trims the bytes of a Lua string as Pascal's `Trim` does. It removes each
 /// byte up to and including a space from both ends.
-pub(crate) fn pascal_trim_bytes(text: &[u8]) -> &[u8] {
+pub(crate) fn trim_spaces_and_controls_bytes(text: &[u8]) -> &[u8] {
     let kept = |byte: &u8| *byte > b' ';
     let start = text.iter().position(kept).unwrap_or(text.len());
     let end = text.iter().rposition(kept).map_or(start, |last| last + 1);

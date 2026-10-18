@@ -15,7 +15,7 @@ use mlua::{
 };
 
 use crate::http::HttpSession;
-use crate::runtime::convert::{lua_text, pascal_trim};
+use crate::runtime::convert::{lua_text, trim_spaces_and_controls};
 use crate::upstream::document::DocumentObject;
 
 mod xpath_result;
@@ -198,7 +198,9 @@ impl QueryObject {
             let texts = result.texts()?;
             add_all(
                 &second,
-                texts.iter().map(|text| pascal_trim(text).to_owned()),
+                texts
+                    .iter()
+                    .map(|text| trim_spaces_and_controls(text).to_owned()),
             )?;
             return Ok(None);
         }
@@ -258,7 +260,7 @@ impl LinkNameSource {
     /// is where those sites put the name. The fallback only ever replaces an
     /// empty name.
     fn read(self, result: &XPathResultObject, item: &Item) -> mlua::Result<String> {
-        let text = pascal_trim(&result.item_text(item)?).to_owned();
+        let text = trim_spaces_and_controls(&result.item_text(item)?).to_owned();
         let title = result.attribute_of(item, "title")?;
         let preferred = match self {
             Self::Text => text.clone(),
@@ -271,7 +273,7 @@ impl LinkNameSource {
             Self::Text => title,
             Self::Title => text,
         };
-        Ok(pascal_trim(&fallback).to_owned())
+        Ok(trim_spaces_and_controls(&fallback).to_owned())
     }
 }
 
@@ -281,7 +283,7 @@ fn joined(lua: &Lua, result: &XPathResultObject, separator: &str) -> mlua::Resul
     let texts = result.texts()?;
     let values: Vec<&str> = texts
         .iter()
-        .map(|text| pascal_trim(text))
+        .map(|text| trim_spaces_and_controls(text))
         .filter(|text| !text.is_empty())
         .collect();
     lua.create_string(values.join(separator))
