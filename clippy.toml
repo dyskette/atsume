@@ -17,4 +17,4 @@ allow-panic-in-tests = true
 allow-print-in-tests = true
 
 # Product names that doc comments spell as their makers do.
-doc-valid-idents = ["FlareSolverr", "JSONiq", "TXQuery", "XPath", "XQuery", ".."]
+doc-valid-idents = ["FlareSolverr", "MangaFox", "JSONiq", "TXQuery", "XPath", "XQuery", ".."]

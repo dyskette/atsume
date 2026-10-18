@@ -295,6 +295,33 @@ Modules such as Comix, MangaGo and PlusComico use `fmd.imagepuzzle`. Which
 modules use it changes as FMD2 adds and drops sites, so this document keeps no
 list; searching an FMD2 checkout for `fmd.imagepuzzle` gives the current one.
 
+## Watermark removal
+
+MangaFox stamps a banner across the bottom of its pages, below the artwork.
+`fmd.mangafoxwatermark` cuts it off. A module calls `LoadTemplate(directory)`
+in `Init`, which reads upstream's images of the banner and returns how many it
+read, and `RemoveWatermark(FILENAME, asPNG)` in `OnAfterImageSaved`.
+
+atsume reimplements the behaviour from its observable contract rather than
+translating upstream's code. The templates and the bottom strip of the page are
+reduced to black and white by Otsu's method and compared by peak
+signal-to-noise ratio. A strip counts as the banner when it scores at least
+9 dB, upstream's value, and its top four rows are white, because a white gap
+separates the banner from the artwork. The banner's height is then cut off the
+page. A page with no banner, or one that matches over its whole height, is left
+untouched.
+
+A PNG stays a PNG and anything else is saved as a JPEG at quality 95. With
+`asPNG` set, the page is saved as a `.png` beside the original, which is
+deleted, so the download pipeline reads back whatever file the hook left.
+
+`RemoveWatermark` may change only the page that `OnAfterImageSaved` is editing,
+the same file that `io.open` may write. A directory's templates are read once
+for the life of the process, because `Init` runs for every scrape. A directory
+that cannot be read gives 0, as upstream does, and a warning is logged, because
+otherwise the failure looks like a page without a banner. The Rust runtime also
+reads templates only from inside the checkout, as its `io` does.
+
 ## Unimplemented capabilities
 
 These raise a named error rather than failing quietly:

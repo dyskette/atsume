@@ -10,12 +10,14 @@ mod gzip;
 mod image_codec;
 mod image_puzzle;
 mod logging;
+mod watermark;
 
 use std::path::Path;
 
 use mlua::{Function, Lua, Table, Value};
 
 use crate::runtime::convert::bytes_arg;
+use crate::runtime::sandbox::checkout_root;
 
 /// Registers each library in `package.preload`, so that `require` builds it on
 /// first use.
@@ -42,6 +44,11 @@ pub(crate) fn preload(lua: &Lua, lua_dir: &Path) -> mlua::Result<()> {
     preload.set(
         "fmd.imagepuzzle",
         lua.create_function(|lua, ()| image_puzzle::build(lua))?,
+    )?;
+    let root = checkout_root(lua_dir)?;
+    preload.set(
+        "fmd.mangafoxwatermark",
+        lua.create_function(move |lua, ()| watermark::build(lua, root.clone()))?,
     )
 }
 
@@ -81,6 +88,7 @@ mod tests {
             "fmd.fileutil",
             "fmd.gzip",
             "fmd.imagepuzzle",
+            "fmd.mangafoxwatermark",
         ] {
             assert_eq!(
                 session.eval(&format!("type(require '{name}')")),
