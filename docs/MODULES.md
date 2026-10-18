@@ -251,6 +251,26 @@ One deliberate divergence: upstream catches a JavaScript error, logs it, and
 returns `nil` to Lua. atsume raises instead, so a broken script surfaces as a
 failed job rather than a chapter that silently yields zero pages.
 
+### In the Rust port
+
+The Rust runtime runs scripts in [QuickJS](https://github.com/quickjs-ng/quickjs)
+through the `rquickjs` crate, and keeps every rule above. Each `ExecJS` call
+gets a fresh runtime, in sloppy mode, because page scripts assign undeclared
+variables. An interrupt handler stops a script after 15 seconds, and a script
+cannot catch that interrupt. The runtime may allocate no more than the Lua
+sandbox's memory limit.
+
+`require` is written in JavaScript, around a Rust function that checks a name
+and returns the file. QuickJS frees a runtime only once nothing holds its
+objects, and it cannot see an object that a Rust closure holds, so a cache of
+loaded helpers kept in Rust would keep every runtime alive. `require` resolves
+helpers with the same rule that `io` uses, so a symbolic link that leads out of
+the `lua` directory is refused too.
+
+`getRandomValues` fills at most 65,536 values per call, as a browser does, and
+`randomBytes` returns at most 1 MiB. Both loops run in Rust, where the
+interrupt cannot stop them.
+
 ## Image descrambling
 
 Some sites serve a page cut into a grid with the tiles permuted, shipping the

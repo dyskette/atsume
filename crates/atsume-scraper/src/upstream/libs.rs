@@ -10,6 +10,7 @@ mod file_stem;
 mod gzip;
 mod image_codec;
 mod image_puzzle;
+mod javascript;
 mod logging;
 
 use std::path::Path;
@@ -44,6 +45,11 @@ pub(crate) fn preload(lua: &Lua, lua_dir: &Path) -> mlua::Result<()> {
     preload.set(
         "fmd.imagepuzzle",
         lua.create_function(|lua, ()| image_puzzle::build(lua))?,
+    )?;
+    let script_dir = lua_dir.to_path_buf();
+    preload.set(
+        "fmd.duktape",
+        lua.create_function(move |lua, ()| javascript::build(lua, &script_dir))?,
     )?;
     let root = checkout_root(lua_dir)?;
     preload.set(
@@ -89,6 +95,7 @@ mod tests {
             "fmd.gzip",
             "fmd.imagepuzzle",
             "fmd.mangafoxwatermark",
+            "fmd.duktape",
         ] {
             assert_eq!(
                 session.eval(&format!("type(require '{name}')")),

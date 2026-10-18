@@ -17,6 +17,8 @@ cookie = "0.18.2"
 cookie_store = "0.22.1"
 ctr = "0.10.1"
 flate2 = "1.1.10"
+# The randomness that scripts in fmd.duktape ask for through require("crypto").
+getrandom = "0.3.4"
 hmac = "0.13.0"
 html5ever = "0.40.1"
 # Decodes the formats that sites serve scrambled pages in, and encodes the
@@ -29,6 +31,9 @@ iri-string = "0.7.14"
 markup5ever = "=0.40.0"
 mlua = { version = "0.12.2", features = ["lua54", "vendored"] }
 percent-encoding = "2.3.2"
+# The JavaScript engine behind fmd.duktape. It builds QuickJS from bundled C
+# source, as mlua builds Lua.
+rquickjs = "0.14.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
