@@ -21,7 +21,9 @@ const MAX_RANDOM_VALUE_BYTES: u32 = 1 << 16;
 /// a 32-bit number.
 const BYTES_PER_UNTYPED_ELEMENT: i64 = 4;
 
-/// The most bytes that one `randomBytes` call returns.
+/// The most bytes that one `randomBytes` call returns. The copying loop runs
+/// in Rust, where a script's time limit cannot stop it, so the limit also
+/// bounds that loop. One MiB is far more than any key needs.
 const MAX_RANDOM_BYTES: u32 = 1 << 20;
 
 /// The JavaScript that builds `require` from two functions that Rust defines.
@@ -31,11 +33,15 @@ const MAX_RANDOM_BYTES: u32 = 1 << 20;
 /// objects, and it cannot see an object that a Rust closure holds, so a cache
 /// kept in Rust would keep the whole runtime alive.
 ///
-/// A helper runs once per runtime as a CommonJS module, with `this` as the
-/// global object. The helpers are UMD bundles, which detect CommonJS by the
-/// `exports`, `module` and `require` they receive and assign their API to
-/// `module.exports`.
+/// A helper runs once per runtime as a CommonJS module. It is called with
+/// `undefined` as `this`, which sloppy mode turns into the global object, as
+/// the helpers expect. The helpers are UMD (Universal Module Definition)
+/// bundles, which work either as CommonJS modules or as browser globals. They
+/// detect CommonJS by the `exports`, `module` and `require` they receive, and
+/// then assign their API to `module.exports`.
 const REQUIRE_SOURCE: &str = "(function (readHelper, cryptoModule) {
+    // Captured before any page script runs, so that a script that replaces
+    // the global Function cannot change how helpers are built.
     var makeFunction = Function;
     var loaded = Object.create(null);
     return function require(name) {

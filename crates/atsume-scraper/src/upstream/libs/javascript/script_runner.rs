@@ -51,9 +51,11 @@ impl ScriptRunner {
     ///
     /// The completion value is the value of the last expression statement,
     /// which modules use to return a result. It reads as text the way
-    /// upstream's `duk_safe_to_string` reads it. `undefined` reads as an
-    /// empty string, `null` reads as `null`, and an array reads as its
-    /// elements joined by commas.
+    /// upstream's `duk_safe_to_string` reads it, so `null` reads as `null` and
+    /// an array reads as its elements joined by commas. The one difference is
+    /// `undefined`, which upstream reads as the word `undefined` and atsume
+    /// reads as an empty string, so a script that returns nothing gives no
+    /// text.
     ///
     /// # Errors
     ///
@@ -87,8 +89,8 @@ pub(super) fn sloppy_eval_options() -> EvalOptions {
     options
 }
 
-/// Makes `runtime` stop any script once `limit` has passed, and returns a
-/// flag that reports whether it did.
+/// Makes `runtime` stop any script once `limit` has passed. Returns a flag
+/// that is set when a script is stopped for that reason.
 fn stop_after(runtime: &Runtime, limit: Duration) -> Rc<Cell<bool>> {
     let deadline = Instant::now() + limit;
     let timed_out = Rc::new(Cell::new(false));
