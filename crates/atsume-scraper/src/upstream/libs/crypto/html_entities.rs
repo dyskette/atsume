@@ -42,8 +42,9 @@ fn reference_for(byte: u8) -> Option<&'static [u8]> {
 /// Replaces each character reference with the characters it stands for.
 /// Modules call it as `HTMLDecode`.
 ///
-/// It reads references as Go's `html.UnescapeString` does, which the Go
-/// implementation uses. A reference that names nothing is kept as written.
+/// A numeric reference may leave out its semicolon, and so may a legacy named
+/// reference such as `&amp`. A reference that names nothing is kept as
+/// written. `decode_numeric` and `decode_named` give the details.
 pub(super) fn decode(text: &[u8]) -> Vec<u8> {
     let mut decoded = Vec::with_capacity(text.len());
     let mut rest = text;
@@ -71,9 +72,9 @@ fn decode_reference(reference: &[u8]) -> Option<(String, usize)> {
 
 /// Reads a numeric reference such as `&#60;` or `&#x3C;`.
 ///
-/// The semicolon is optional. As in Go, a reference needs at least four bytes
-/// to be read, and one whose digits are missing or out of range stands for
-/// U+FFFD.
+/// The semicolon is optional. A reference shorter than four bytes, such as
+/// `&#1`, is kept as written. A reference whose digits are missing or out of
+/// range stands for U+FFFD.
 fn decode_numeric(reference: &[u8]) -> Option<(char, usize)> {
     if reference.len() <= 3 {
         return None;
@@ -210,9 +211,10 @@ mod tests {
         );
     }
 
-    /// These follow Go's reading, which the Go implementation's modules saw.
+    /// These references sit at the edge of the four-byte minimum that
+    /// `decode_numeric` applies.
     #[test]
-    fn short_numeric_references_follow_go() {
+    fn a_numeric_reference_needs_four_bytes() {
         assert_eq!(decoded("&#5x"), "&#5x");
         assert_eq!(decoded("&#5;"), "\u{5}");
         assert_eq!(decoded("&#x;"), "\u{fffd}");
