@@ -1,16 +1,8 @@
 //! Puts the tiles of a scrambled image back in place.
 
-use std::io::Cursor;
+use image::{DynamicImage, ImageError, ImageFormat, Rgba, RgbaImage, imageops};
 
-use image::codecs::jpeg::JpegEncoder;
-use image::{DynamicImage, ImageError, ImageFormat, ImageReader, Rgba, RgbaImage, imageops};
-
-/// The JPEG quality that a descrambled JPEG is saved at.
-///
-/// Moving tiles happens in pixel space, so a JPEG loses one generation of
-/// quality. At 95 the loss stays below what a reader notices. Upstream saves
-/// at its toolkit's default, which is visibly worse.
-const JPEG_QUALITY: u8 = 95;
+use crate::upstream::libs::image_codec::{decode_with_format, encode_jpeg, encode_png};
 
 /// The most tiles a grid may have. Real sites cut a page into a few dozen
 /// tiles, and the limit keeps a mistaken grid size from exhausting memory.
@@ -162,11 +154,7 @@ impl TilePuzzle {
 
 /// Decodes an image, whatever its format, and reports which format it was.
 fn decode(bytes: &[u8]) -> Result<(Option<ImageFormat>, RgbaImage), TilePuzzleError> {
-    let reader = ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|error| TilePuzzleError::Decode(ImageError::IoError(error)))?;
-    let format = reader.format();
-    let image = reader.decode().map_err(TilePuzzleError::Decode)?;
+    let (format, image) = decode_with_format(bytes).map_err(TilePuzzleError::Decode)?;
     Ok((format, image.into_rgba8()))
 }
 
@@ -176,19 +164,12 @@ fn encode(
     image: RgbaImage,
     scrambled_format: Option<ImageFormat>,
 ) -> Result<Vec<u8>, TilePuzzleError> {
-    let mut encoded = Vec::new();
-    if let Some(ImageFormat::Png | ImageFormat::WebP) = scrambled_format {
-        image
-            .write_to(&mut Cursor::new(&mut encoded), ImageFormat::Png)
-            .map_err(TilePuzzleError::Encode)?;
-        return Ok(encoded);
-    }
-    // JPEG has no alpha channel.
-    let opaque = DynamicImage::ImageRgba8(image).into_rgb8();
-    JpegEncoder::new_with_quality(&mut encoded, JPEG_QUALITY)
-        .encode_image(&opaque)
-        .map_err(TilePuzzleError::Encode)?;
-    Ok(encoded)
+    let image = DynamicImage::ImageRgba8(image);
+    let encoded = match scrambled_format {
+        Some(ImageFormat::Png | ImageFormat::WebP) => encode_png(&image),
+        _ => encode_jpeg(&image),
+    };
+    encoded.map_err(TilePuzzleError::Encode)
 }
 
 /// Splits `length` pixels into `tiles` equal tiles and returns one tile's

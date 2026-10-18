@@ -31,8 +31,30 @@ pub(crate) const MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 /// The session sets it to the page that `OnAfterImageSaved` is editing,
 /// because upstream lets that hook rewrite the page in place. The session
 /// clears it afterwards.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct WritableFile(pub(crate) Option<PathBuf>);
+
+impl WritableFile {
+    /// Reports whether `name` is a path to the writable file. Paths are
+    /// compared after `.` and `..` are resolved.
+    pub(crate) fn allows(&self, name: &str) -> bool {
+        self.0
+            .as_deref()
+            .is_some_and(|target| normalize(Path::new(name)) == normalize(target))
+    }
+}
+
+/// Returns the checkout's root, the parent of its `lua` directory `lua_dir`.
+/// Relative file paths in modules resolve against it, because it is FMD2's
+/// working directory.
+///
+/// # Errors
+///
+/// Fails if `lua_dir` cannot be made absolute.
+pub(crate) fn checkout_root(lua_dir: &Path) -> mlua::Result<PathBuf> {
+    let lua_dir = std::path::absolute(lua_dir).map_err(mlua::Error::external)?;
+    Ok(lua_dir.parent().unwrap_or(&lua_dir).to_path_buf())
+}
 
 /// Builds the sandboxed runtime for a module from the checkout at `lua_dir`.
 ///
@@ -45,8 +67,8 @@ pub(crate) struct WritableFile(pub(crate) Option<PathBuf>);
 /// Fails if `lua_dir` cannot be made absolute, or if the runtime cannot be
 /// built.
 pub(crate) fn new_sandboxed_lua(lua_dir: &Path) -> mlua::Result<Lua> {
+    let root = checkout_root(lua_dir)?;
     let lua_dir = std::path::absolute(lua_dir).map_err(mlua::Error::external)?;
-    let root = lua_dir.parent().unwrap_or(&lua_dir).to_path_buf();
 
     let libs = StdLib::COROUTINE
         | StdLib::TABLE
@@ -201,13 +223,24 @@ fn narrow_os(lua: &Lua, os: &Table) -> mlua::Result<()> {
 }
 
 /// Reads the file `name`, resolved against `root` when it is relative, and
-/// refuses any path that leads outside `root`.
+/// refuses any path that leads outside `root`. Errors read the way Lua's `io`
+/// reports them.
+pub(crate) fn read_in_root(root: &Path, name: &str) -> Result<Vec<u8>, String> {
+    let resolved = resolve_in_root(root, name)?;
+    if !resolved.is_file() {
+        return Err(format!("{name}: permission denied"));
+    }
+    std::fs::read(&resolved).map_err(|e| format!("{name}: {e}"))
+}
+
+/// Returns the canonical path of `name`, resolved against `root` when it is
+/// relative, and refuses any path that leads outside `root`.
 ///
 /// The path is checked lexically before the filesystem is touched, so a module
 /// cannot probe which files exist outside the checkout. It is checked again
 /// once resolved, which refuses a symbolic link that leads outside. Errors
 /// read the way Lua's `io` reports them.
-pub(crate) fn read_in_root(root: &Path, name: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn resolve_in_root(root: &Path, name: &str) -> Result<PathBuf, String> {
     let denied = || format!("{name}: permission denied");
     let candidate = normalize(&root.join(name));
     if !candidate.starts_with(normalize(root)) {
@@ -221,10 +254,10 @@ pub(crate) fn read_in_root(root: &Path, name: &str) -> Result<Vec<u8>, String> {
         Err(_) => return Err(denied()),
     };
     let root = root.canonicalize().map_err(|_| denied())?;
-    if !resolved.starts_with(&root) || !resolved.is_file() {
+    if !resolved.starts_with(&root) {
         return Err(denied());
     }
-    std::fs::read(&resolved).map_err(|e| format!("{name}: {e}"))
+    Ok(resolved)
 }
 
 /// Resolves `.` and `..` in a path without touching the filesystem.

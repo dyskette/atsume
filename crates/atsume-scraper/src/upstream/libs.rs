@@ -7,6 +7,7 @@ mod crypto;
 mod encoding;
 mod file_stem;
 mod gzip;
+mod image_codec;
 mod image_puzzle;
 mod logging;
 

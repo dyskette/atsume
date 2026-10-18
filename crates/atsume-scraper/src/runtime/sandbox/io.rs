@@ -54,13 +54,13 @@ fn value_or_nil_and_message<T: mlua::IntoLua>(
 /// or write the writable file.
 struct Files<'a> {
     root: &'a Path,
-    writable: Option<PathBuf>,
+    writable: WritableFile,
 }
 
 impl<'a> Files<'a> {
     /// Returns what may be opened at this moment.
     fn openable_now(lua: &Lua, root: &'a Path) -> mlua::Result<Self> {
-        let writable = borrow_state::<WritableFile>(lua)?.0.clone();
+        let writable = borrow_state::<WritableFile>(lua)?.clone();
         Ok(Self { root, writable })
     }
 
@@ -73,23 +73,17 @@ impl<'a> Files<'a> {
     }
 
     fn read(&self, name: &str) -> Result<Vec<u8>, String> {
-        if self.is_writable(name) {
+        if self.writable.allows(name) {
             return std::fs::read(name).map_err(|e| format!("{name}: {e}"));
         }
         read_in_root(self.root, name)
-    }
-
-    fn is_writable(&self, name: &str) -> bool {
-        self.writable
-            .as_deref()
-            .is_some_and(|target| normalize(Path::new(name)) == normalize(target))
     }
 
     /// Opens the writable file. Mode `w` replaces the file and mode `a`
     /// appends to it. Modes that both read and write are refused, because no
     /// module needs one.
     fn open_for_writing(&self, name: &str, mode: &str) -> Result<LuaFile, String> {
-        if !self.is_writable(name) || mode.contains('+') {
+        if !self.writable.allows(name) || mode.contains('+') {
             return Err(format!("{name}: read-only file system"));
         }
         let path = normalize(Path::new(name));
