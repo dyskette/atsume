@@ -18,7 +18,8 @@ pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
 }
 
 /// Returns the text after the first `left` and before the first `right` that
-/// follows it. The result is empty when either is missing.
+/// follows it. The result is empty when `left` does not occur, or when no
+/// `right` follows it.
 fn text_between<'a>(left: &[u8], right: &[u8], text: &'a [u8]) -> &'a [u8] {
     let Some((_, after_left)) = split_once(text, left) else {
         return &[];

@@ -1,5 +1,5 @@
-//! `Trim`, which removes the spaces and line breaks around a value that a
-//! module read from a page.
+//! `Trim`, which removes spaces, line breaks and other control characters
+//! from both ends of a value that a module read from a page.
 
 use mlua::{Lua, Value};
 
@@ -7,8 +7,8 @@ use crate::runtime::convert::{bytes_arg, trim_spaces_and_controls_bytes};
 
 /// Sets the global `Trim`.
 ///
-/// It trims as Pascal does, so a no-break space at either end stays, as it
-/// does upstream.
+/// It trims the way Pascal's `Trim` does, which removes only spaces and
+/// control characters. A no-break space at either end therefore stays.
 pub(crate) fn register(lua: &Lua) -> mlua::Result<()> {
     let trim = lua.create_function(|lua, text: Value| {
         let text = bytes_arg(lua, &text, 1)?;

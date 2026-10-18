@@ -1,4 +1,7 @@
 //! The `fmd.*` libraries that modules load with `require`.
+//!
+//! A library function's doc comment gives, in parentheses, the name that
+//! modules call it by.
 
 mod crypto;
 mod encoding;
@@ -45,7 +48,8 @@ fn env(lua: &Lua, lua_directory: &str) -> mlua::Result<Table> {
     Ok(env)
 }
 
-/// A library function that makes new bytes out of the bytes of one string.
+/// A library function that takes the bytes of one string and returns new
+/// bytes.
 type BytesTransform = fn(&[u8]) -> Vec<u8>;
 
 /// Wraps `transform` as a Lua function that takes one string, or a number

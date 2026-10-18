@@ -31,21 +31,20 @@ pub(super) fn build(lua: &Lua) -> mlua::Result<Table> {
     Ok(crypto)
 }
 
-/// Returns the 32 bytes of the SHA-256 digest of `bytes`. Modules call it as
-/// `SHA256`.
+/// Returns the 32 bytes of the SHA-256 digest of `bytes` (`SHA256`).
 fn sha256(bytes: &[u8]) -> Vec<u8> {
     Sha256::digest(bytes).to_vec()
 }
 
-/// Returns the SHA-256 digest of `bytes` as lowercase hexadecimal. Modules
-/// call it as `SHA256Hex`.
+/// Returns the SHA-256 digest of `bytes` as lowercase hexadecimal
+/// (`SHA256Hex`).
 fn sha256_hex(bytes: &[u8]) -> Vec<u8> {
     hex::encode(&sha256(bytes))
 }
 
 /// Builds a function `(data, key)` that returns the HMAC-SHA256 of `data`
-/// under `key`, written by `encode`. Modules call the two forms
-/// `HMAC_SHA256` and `HMAC_SHA256Hex`.
+/// under `key`, in the form that `encode` writes. `build` registers it twice,
+/// raw (`HMAC_SHA256`) and as hexadecimal (`HMAC_SHA256Hex`).
 fn hmac_function(lua: &Lua, encode: BytesTransform) -> mlua::Result<Function> {
     lua.create_function(move |lua, (data, key): (Value, Value)| {
         let data = bytes_arg(lua, &data, 1)?;
@@ -84,8 +83,8 @@ fn aes_ctr(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-/// XORs `data` with the keystream of the cipher `C`, which encrypts plain
-/// text and decrypts cipher text alike.
+/// XORs `data` with the keystream of the cipher `C`. The same operation
+/// encrypts plain text and decrypts cipher text.
 fn apply_keystream<C: KeyIvInit + StreamCipher>(
     data: &[u8],
     key: &[u8],

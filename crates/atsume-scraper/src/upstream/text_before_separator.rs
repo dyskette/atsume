@@ -1,4 +1,5 @@
-//! `SeparateLeft`, which reads the key of a `key=value` pair.
+//! `SeparateLeft`, which returns the text before the first separator, such as
+//! the key of a `key=value` pair.
 
 use mlua::{Lua, Value};
 

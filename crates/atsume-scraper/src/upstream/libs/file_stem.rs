@@ -1,4 +1,4 @@
-//! `fmd.fileutil`, which takes paths apart for modules.
+//! `fmd.fileutil`, which reads the parts of a path for modules.
 
 use mlua::{Lua, Table};
 
@@ -11,10 +11,10 @@ pub(super) fn build(lua: &Lua) -> mlua::Result<Table> {
     Ok(fileutil)
 }
 
-/// Returns the last part of a path without its extension. Modules call it as
-/// `ExtractFileNameOnly`.
+/// Returns the last part of a path without its extension
+/// (`ExtractFileNameOnly`).
 ///
-/// Both `/` and `\` separate the parts, as upstream runs on Windows. A name
+/// Both `/` and `\` separate the parts, because upstream runs on Windows. A name
 /// that only starts with a dot, such as `.hidden`, has no extension.
 fn file_stem(path: &[u8]) -> Vec<u8> {
     let name_start = path

@@ -28,14 +28,13 @@ pub(super) const FUNCTIONS: [(&str, BytesTransform); 9] = [
     ("HexToStr", hex::decode),
 ];
 
-/// Writes bytes as standard Base64 with padding. Modules call it as
-/// `EncodeBase64`.
+/// Writes bytes as standard Base64 with padding (`EncodeBase64`).
 fn encode_base64(bytes: &[u8]) -> Vec<u8> {
     general_purpose::STANDARD.encode(bytes).into_bytes()
 }
 
-/// The Base64 that sites send. Some pad it and some do not, and some leave
-/// stray bits set in the last character.
+/// The Base64 engine for reading what sites send. Some sites pad their Base64
+/// and some do not, and some leave stray bits set in the last character.
 const LENIENT_BASE64: GeneralPurpose = GeneralPurpose::new(
     &STANDARD,
     GeneralPurposeConfig::new()
@@ -43,8 +42,8 @@ const LENIENT_BASE64: GeneralPurpose = GeneralPurpose::new(
         .with_decode_allow_trailing_bits(true),
 );
 
-/// Reads standard Base64, padded or not, and skips line breaks. Modules call
-/// it as `DecodeBase64`. Text that is not Base64 reads as an empty string.
+/// Reads standard Base64, padded or not, and skips line breaks
+/// (`DecodeBase64`). Text that is not Base64 reads as an empty string.
 fn decode_base64(text: &[u8]) -> Vec<u8> {
     let without_line_breaks: Vec<u8> = text
         .iter()

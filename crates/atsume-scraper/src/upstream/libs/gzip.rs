@@ -20,7 +20,7 @@ pub(super) fn build(lua: &Lua) -> mlua::Result<Table> {
     Ok(gzip)
 }
 
-/// Inflates gzip data. Modules call it as `Decompress`.
+/// Inflates gzip data (`Decompress`).
 ///
 /// Several gzip members written one after another inflate to their contents
 /// joined together.

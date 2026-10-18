@@ -3,8 +3,7 @@
 /// The digits of lowercase hexadecimal.
 const DIGITS: &[u8; 16] = b"0123456789abcdef";
 
-/// Writes each byte as two lowercase hexadecimal digits. Modules call it as
-/// `StrToHex`.
+/// Writes each byte as two lowercase hexadecimal digits (`StrToHex`).
 pub(crate) fn encode(bytes: &[u8]) -> Vec<u8> {
     bytes
         .iter()
@@ -17,8 +16,7 @@ pub(crate) fn encode(bytes: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// Reads pairs of hexadecimal digits, in either case, as bytes. Modules call
-/// it as `HexToStr`.
+/// Reads pairs of hexadecimal digits, in either case, as bytes (`HexToStr`).
 ///
 /// Reading stops at the first pair that is not hexadecimal, and a lone digit
 /// at the end is ignored. The bytes read up to that point are returned.

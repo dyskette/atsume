@@ -4,15 +4,16 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_encode};
 
 use super::hex::byte_from_digits;
 
-/// The bytes that a query value escapes: all but letters, digits and `-_.~`.
+/// The bytes escaped in a query value, which are all bytes except letters,
+/// digits and `-_.~`.
 const QUERY_VALUE_ESCAPES: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'_')
     .remove(b'.')
     .remove(b'~');
 
-/// The bytes that a path escapes. A path keeps the separators `/`, `;` and
-/// `,` and the sub-delimiters `:@&=+$`, so only `?` among them is escaped.
+/// The bytes escaped in a path. A path keeps the separators `/`, `;` and `,`
+/// and the sub-delimiters `:@&=+$` unescaped.
 const PATH_ESCAPES: &AsciiSet = &QUERY_VALUE_ESCAPES
     .remove(b'$')
     .remove(b'&')
@@ -24,8 +25,8 @@ const PATH_ESCAPES: &AsciiSet = &QUERY_VALUE_ESCAPES
     .remove(b'=')
     .remove(b'@');
 
-/// Percent-encodes text to be one value in a query string. Modules call it as
-/// `EncodeURLElement` when they put a title into a search address.
+/// Percent-encodes text as one value in a query string (`EncodeURLElement`).
+/// Modules use it to put a title into a search address.
 ///
 /// A space becomes `%20`, never `+`, and every reserved character is escaped.
 pub(super) fn encode_query_value(text: &[u8]) -> Vec<u8> {
@@ -34,19 +35,18 @@ pub(super) fn encode_query_value(text: &[u8]) -> Vec<u8> {
         .into_bytes()
 }
 
-/// Percent-encodes text to be the path of an address. Modules call it as
-/// `EncodeURL`.
+/// Percent-encodes text as the path of an address (`EncodeURL`).
 pub(super) fn encode_path(text: &[u8]) -> Vec<u8> {
     percent_encode(text, PATH_ESCAPES)
         .collect::<String>()
         .into_bytes()
 }
 
-/// Decodes a query string value, in which `+` stands for a space. Modules call
-/// it as `DecodeURL`.
+/// Decodes a query string value, in which `+` stands for a space
+/// (`DecodeURL`).
 ///
-/// A `%` that two hexadecimal digits do not follow makes the whole value
-/// unreadable, and it decodes to an empty string.
+/// A `%` that is not followed by two hexadecimal digits makes the whole value
+/// unreadable, so the value decodes to an empty string.
 pub(super) fn decode_query_value(text: &[u8]) -> Vec<u8> {
     let mut decoded = Vec::with_capacity(text.len());
     let mut rest = text;

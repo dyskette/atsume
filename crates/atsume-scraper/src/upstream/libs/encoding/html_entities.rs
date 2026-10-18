@@ -1,19 +1,18 @@
 //! HTML character references, which modules write to keep a response from
 //! being read as markup, and read to recover text from a page.
 //!
-//! Modules depend on encoding in one pattern above all. They encode a JSON
+//! Modules rely on encoding most often in one pattern. They encode a JSON
 //! response, pass it to `CreateTXQuery`, and read it with `json(*)`. The HTML
 //! parser turns the references back into characters, so the page's text is the
 //! JSON again, and a `<` inside a JSON string is not taken for a tag.
 
 use markup5ever::data::{C1_REPLACEMENTS, NAMED_ENTITIES};
 
-/// The longest named reference that is still recognised without its closing
+/// The longest named reference that is still recognized without its closing
 /// semicolon, such as `&frac34`.
 const LONGEST_NAME_WITHOUT_SEMICOLON: usize = 6;
 
-/// Escapes the five characters that HTML gives meaning to. Modules call it as
-/// `HTMLEncode`.
+/// Escapes the five characters that HTML gives meaning to (`HTMLEncode`).
 ///
 /// Every other byte is kept, so the result is still UTF-8 when the input was.
 pub(super) fn encode(text: &[u8]) -> Vec<u8> {
@@ -39,8 +38,8 @@ fn reference_for(byte: u8) -> Option<&'static [u8]> {
     }
 }
 
-/// Replaces each character reference with the characters it stands for.
-/// Modules call it as `HTMLDecode`.
+/// Replaces each character reference with the characters it stands for
+/// (`HTMLDecode`).
 ///
 /// A numeric reference may leave out its semicolon, and so may a legacy named
 /// reference such as `&amp`. A reference that names nothing is kept as
