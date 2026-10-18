@@ -19,6 +19,10 @@ use std::path::Path;
 use mlua::{Function, Lua, Table, Value};
 
 use crate::runtime::convert::bytes_arg;
+
+/// Why `fmd.subprocess` is unavailable, as its functions report it.
+const SUBPROCESS_UNAVAILABLE: &str =
+    "requires external process execution, which atsume does not implement yet";
 use crate::runtime::sandbox::checkout_root;
 
 /// Registers each library in `package.preload`, so that `require` builds it on
@@ -60,11 +64,7 @@ pub(crate) fn preload(lua: &Lua, lua_dir: &Path) -> mlua::Result<()> {
     preload.set(
         "fmd.subprocess",
         lua.create_function(|lua, ()| {
-            unavailable_library::unavailable_library(
-                lua,
-                "fmd.subprocess",
-                "requires external process execution, which atsume does not implement yet",
-            )
+            unavailable_library::build(lua, "fmd.subprocess", SUBPROCESS_UNAVAILABLE)
         })?,
     )
 }
