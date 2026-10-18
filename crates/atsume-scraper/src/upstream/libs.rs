@@ -7,6 +7,7 @@ mod crypto;
 mod encoding;
 mod file_stem;
 mod gzip;
+mod image_puzzle;
 mod logging;
 
 use std::path::Path;
@@ -36,7 +37,11 @@ pub(crate) fn preload(lua: &Lua, lua_dir: &Path) -> mlua::Result<()> {
         "fmd.fileutil",
         lua.create_function(|lua, ()| file_stem::build(lua))?,
     )?;
-    preload.set("fmd.gzip", lua.create_function(|lua, ()| gzip::build(lua))?)
+    preload.set("fmd.gzip", lua.create_function(|lua, ()| gzip::build(lua))?)?;
+    preload.set(
+        "fmd.imagepuzzle",
+        lua.create_function(|lua, ()| image_puzzle::build(lua))?,
+    )
 }
 
 /// Builds `fmd.env`, which describes the installation that modules run in.
@@ -74,6 +79,7 @@ mod tests {
             "fmd.logger",
             "fmd.fileutil",
             "fmd.gzip",
+            "fmd.imagepuzzle",
         ] {
             assert_eq!(
                 session.eval(&format!("type(require '{name}')")),

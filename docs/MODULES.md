@@ -271,6 +271,10 @@ Tile copies are clipped at the image edge, and any area no tile covers is left
 opaque white, matching upstream. An image whose dimensions are not a multiple of
 the grid leaves such a margin.
 
+The Rust runtime's `Create` refuses a grid of more than 2^20 tiles. Real sites
+cut a page into a few dozen, and the limit keeps a mistaken size from
+allocating a permutation that exhausts memory.
+
 ### The image hooks
 
 Descrambling happens inside `OnDownloadImage`, so it only works if the download

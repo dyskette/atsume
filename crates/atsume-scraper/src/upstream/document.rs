@@ -28,10 +28,26 @@ impl<S: 'static> DocumentObject<S> {
         Self { place }
     }
 
+    /// Returns the document that `value` holds, or `None` when `value` is
+    /// anything else.
+    pub(crate) fn from_value(value: &Value) -> Option<Self> {
+        let Value::UserData(data) = value else {
+            return None;
+        };
+        data.borrow::<Self>().ok().map(|document| *document)
+    }
+
     /// Returns a copy of the body.
     pub(crate) fn bytes(self, lua: &Lua) -> mlua::Result<Vec<u8>> {
         let mut owner = borrow_state::<S>(lua)?;
         Ok((self.place)(&mut *owner).clone())
+    }
+
+    /// Replaces the body with `body`.
+    pub(crate) fn replace(self, lua: &Lua, body: Vec<u8>) -> mlua::Result<()> {
+        let mut owner = borrow_state::<S>(lua)?;
+        *(self.place)(&mut *owner) = body;
+        Ok(())
     }
 
     fn text(self, lua: &Lua) -> mlua::Result<mlua::LuaString> {

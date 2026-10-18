@@ -17,6 +17,7 @@ cookie_store.workspace = true
 ctr.workspace = true
 flate2.workspace = true
 hmac.workspace = true
+image.workspace = true
 markup5ever.workspace = true
 mlua.workspace = true
 percent-encoding.workspace = true
