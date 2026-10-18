@@ -291,9 +291,9 @@ produces a PNG, and trusting the URL there would misname it.
 
 ### Reach
 
-Seven modules use `fmd.imagepuzzle` — Comix, MangaGo, NexusScanlation,
-PhiliaScans, PlusComico, TonarinoYoungJump and WolfManga — and all of them
-load.
+Modules such as Comix, MangaGo and PlusComico use `fmd.imagepuzzle`. Which
+modules use it changes as FMD2 adds and drops sites, so this document keeps no
+list; searching an FMD2 checkout for `fmd.imagepuzzle` gives the current one.
 
 ## Unimplemented capabilities
 
