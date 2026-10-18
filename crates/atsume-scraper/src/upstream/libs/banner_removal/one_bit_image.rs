@@ -3,6 +3,40 @@
 
 use image::{Rgba, RgbaImage};
 
+/// The value of a black pixel.
+const BLACK: u8 = 0;
+
+/// The value of a white pixel.
+const WHITE: u8 = u8::MAX;
+
+/// How many gray levels an 8-bit pixel can take.
+const GRAY_LEVELS: usize = 256;
+
+/// The score of two identical images. A peak signal-to-noise ratio is infinite
+/// for identical images, and this finite value stands for that.
+const IDENTICAL_SCORE: f64 = 1e6;
+
+/// The root mean squared error below which two images count as identical.
+const IDENTICAL_ERROR: f64 = 0.0001;
+
+/// The Rec. 601 weights of red, green and blue in a pixel's brightness, which
+/// are 0.299, 0.587 and 0.114, written as fractions of 2^[`WEIGHT_BITS`]. They
+/// sum to exactly 2^16, so a white pixel stays white.
+const REC_601_WEIGHTS: [u32; 3] = [19_595, 38_470, 7_471];
+
+/// How many fractional bits the color weights carry.
+const WEIGHT_BITS: u32 = 16;
+
+/// Widens an 8-bit channel to 16 bits, so that 255 becomes 65535.
+const WIDEN_TO_16_BITS: u32 = 257;
+
+/// How many bits a 16-bit channel drops to become an 8-bit one.
+const NARROW_TO_8_BITS: u32 = 8;
+
+/// The rounding term that upstream's brightness arithmetic adds before it
+/// shifts the result down.
+const BRIGHTNESS_ROUNDING: u32 = 1 << 15;
+
 /// A rectangle of an image, given by its top-left pixel and its size.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Area {
@@ -25,7 +59,7 @@ impl Area {
 }
 
 /// A grayscale image reduced to black and white by Otsu's method. Each pixel
-/// is 0 for black or 255 for white.
+/// is [`BLACK`] or [`WHITE`].
 #[derive(Debug)]
 pub(super) struct OneBitImage {
     pub(super) width: u32,
@@ -43,7 +77,7 @@ impl OneBitImage {
     /// white too.
     pub(super) fn threshold_area(image: &RgbaImage, area: Area) -> Self {
         let width = area.width as usize;
-        let mut pixels = vec![u8::MAX; width * area.height as usize];
+        let mut pixels = vec![WHITE; width * area.height as usize];
         let padding = area.width.saturating_sub(image.width()) / 2;
         for (row, target) in (area.top..image.height()).zip(pixels.chunks_exact_mut(width)) {
             let target = &mut target[padding as usize..];
@@ -60,14 +94,14 @@ impl OneBitImage {
     /// Reports whether the top `rows` rows hold only white pixels.
     pub(super) fn top_rows_are_white(&self, rows: u32) -> bool {
         let pixels = (rows as usize * self.width as usize).min(self.pixels.len());
-        self.pixels[..pixels].iter().all(|&pixel| pixel != 0)
+        self.pixels[..pixels].iter().all(|&pixel| pixel == WHITE)
     }
 
     /// Measures how alike this image and `other` are, as a peak
     /// signal-to-noise ratio in decibels. Higher is more alike.
     ///
     /// Two images of different sizes, or two empty images, score 0. Two
-    /// identical images score 1,000,000, which stands for infinity.
+    /// identical images score [`IDENTICAL_SCORE`].
     pub(super) fn peak_signal_to_noise_ratio(&self, other: &Self) -> f64 {
         if self.pixels.len() != other.pixels.len() || self.pixels.is_empty() {
             return 0.0;
@@ -82,10 +116,12 @@ impl OneBitImage {
             })
             .sum();
         let mean_squared_error = squared_error / pixel_count(self.pixels.len());
-        if mean_squared_error.sqrt() < 0.0001 {
-            return 1e6;
+        if mean_squared_error.sqrt() < IDENTICAL_ERROR {
+            return IDENTICAL_SCORE;
         }
-        10.0 * (255.0 * 255.0 / mean_squared_error).log10()
+        let peak = f64::from(WHITE);
+        // Ten times the base-10 logarithm turns a power ratio into decibels.
+        10.0 * (peak * peak / mean_squared_error).log10()
     }
 }
 
@@ -93,8 +129,8 @@ impl OneBitImage {
 /// grayscale. The copy stops at the end of `target` or of the image's row,
 /// whichever comes first.
 fn copy_row_as_gray(image: &RgbaImage, row: u32, left: u32, target: &mut [u8]) {
-    for (column, grey) in (left..image.width()).zip(target) {
-        *grey = luma(*image.get_pixel(column, row));
+    for (column, gray) in (left..image.width()).zip(target) {
+        *gray = luma(*image.get_pixel(column, row));
     }
 }
 
@@ -106,13 +142,14 @@ fn copy_row_as_gray(image: &RgbaImage, row: u32, left: u32, target: &mut [u8]) {
 /// is that a transparent pixel reads as black.
 fn luma(pixel: Rgba<u8>) -> u8 {
     let [red, green, blue, alpha] = pixel.0;
-    let premultiplied = |channel: u8| u32::from(channel) * 257 * u32::from(alpha) / 255;
-    let luma = (19595 * premultiplied(red)
-        + 38470 * premultiplied(green)
-        + 7471 * premultiplied(blue)
-        + (1 << 15))
-        >> 24;
-    u8::try_from(luma).unwrap_or(u8::MAX)
+    let premultiplied =
+        |channel: u8| u32::from(channel) * WIDEN_TO_16_BITS * u32::from(alpha) / u32::from(WHITE);
+    let [red_weight, green_weight, blue_weight] = REC_601_WEIGHTS;
+    let weighted = red_weight * premultiplied(red)
+        + green_weight * premultiplied(green)
+        + blue_weight * premultiplied(blue);
+    let luma = (weighted + BRIGHTNESS_ROUNDING) >> (WEIGHT_BITS + NARROW_TO_8_BITS);
+    u8::try_from(luma).unwrap_or(WHITE)
 }
 
 /// Turns each pixel black or white at the threshold that Otsu's method picks.
@@ -124,20 +161,20 @@ fn apply_otsu_threshold(pixels: &mut [u8]) {
     if pixels.is_empty() {
         return;
     }
-    let mut histogram = [0.0_f64; 256];
+    let mut histogram = [0.0_f64; GRAY_LEVELS];
     for &pixel in pixels.iter() {
         histogram[usize::from(pixel)] += 1.0;
     }
     let threshold = otsu_threshold(&histogram);
     for pixel in pixels {
-        *pixel = if *pixel > threshold { u8::MAX } else { 0 };
+        *pixel = if *pixel > threshold { WHITE } else { BLACK };
     }
 }
 
 /// Picks the gray level that maximizes the variance between the pixels at or
 /// below it and the pixels above it. `histogram` counts the pixels at each
 /// level.
-fn otsu_threshold(histogram: &[f64; 256]) -> u8 {
+fn otsu_threshold(histogram: &[f64; GRAY_LEVELS]) -> u8 {
     let total: f64 = histogram.iter().sum();
     let mean: f64 = (0..=u8::MAX)
         .zip(histogram)
