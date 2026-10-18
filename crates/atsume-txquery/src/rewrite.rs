@@ -419,7 +419,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
     /// Upstream reads both functions' results through the same lookups, so
     /// both become trees. A `parse-json` call with a second argument, the
     /// options map of standard XPath, is left as written.
-    fn json_call(&mut self, name: &str) -> Result<bool, String> {
+    fn json_call(&mut self, function_name: &str) -> Result<bool, String> {
         let Some((offset, open)) = self.next_significant() else {
             return Ok(false);
         };
@@ -428,20 +428,18 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         }
         let open_index = self.pos + offset;
         let close = self.closing_parenthesis_from(open_index)?;
-        let arguments = &self.tokens[open_index + 1..close];
-        if name == "parse-json" && has_top_level_comma(arguments) {
+        let argument_tokens = &self.tokens[open_index + 1..close];
+        if function_name == "parse-json" && has_several_arguments(argument_tokens) {
             return Ok(false);
         }
         if self.out.trim_end().ends_with(STEP_MARKERS) {
-            return Err(format!("{name}() inside a path step is not supported"));
+            return Err(format!(
+                "{function_name}() inside a path step is not supported"
+            ));
         }
-        self.pos = open_index;
-        let argument = self.tokens[self.pos + 1..close]
-            .iter()
-            .map(|t| t.text)
-            .collect();
+        let argument_text: String = argument_tokens.iter().map(|t| t.text).collect();
         let variable = json_variable_name(self.json_arguments.len());
-        self.json_arguments.push(argument);
+        self.json_arguments.push(argument_text);
         // The variable is parenthesized so that a dot after it reads a
         // property, instead of becoming part of the variable's name.
         self.out.push_str("($");
@@ -518,7 +516,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
 
 /// Reports whether `tokens`, the arguments of a call, hold more than one
 /// argument, that is a comma outside any nested bracket.
-fn has_top_level_comma(tokens: &[Token<'_>]) -> bool {
+fn has_several_arguments(tokens: &[Token<'_>]) -> bool {
     let mut depth = 0_i32;
     for token in tokens
         .iter()
