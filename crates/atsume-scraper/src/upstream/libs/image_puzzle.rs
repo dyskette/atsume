@@ -55,7 +55,7 @@ impl TilePuzzleObject {
     fn borrow_puzzle(&self) -> mlua::Result<Ref<'_, TilePuzzle>> {
         self.puzzle
             .try_borrow()
-            .map_err(|_| mlua::Error::runtime("the image puzzle is being changed"))
+            .map_err(|_| mlua::Error::runtime("the image puzzle is already in use"))
     }
 
     fn borrow_puzzle_mut(&self) -> mlua::Result<RefMut<'_, TilePuzzle>> {
@@ -75,7 +75,7 @@ impl TilePuzzleObject {
             DocumentObject::<HttpSession>::from_lua_value(output),
         ) else {
             return Err(mlua::Error::runtime(
-                "fmd.imagepuzzle.DeScramble: expects two streams",
+                "fmd.imagepuzzle.DeScramble: expects two documents, such as HTTP.Document",
             ));
         };
         let scrambled = input.bytes(lua)?;
@@ -142,7 +142,7 @@ impl MatrixObject {
             permutation_index(index).and_then(|index| puzzle.destinations.get_mut(index))
         else {
             return Err(mlua::Error::runtime(format!(
-                "fmd.imagepuzzle: Matrix[{index}] is outside a {columns}x{rows} grid"
+                "fmd.imagepuzzle.Matrix[{index}]: the index is outside a {columns}x{rows} grid"
             )));
         };
         *slot = int_arg(lua, destination, 3)?;

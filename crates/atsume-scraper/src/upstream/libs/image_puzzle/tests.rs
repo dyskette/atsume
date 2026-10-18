@@ -283,8 +283,14 @@ fn modules_change_the_permutation_and_the_tile_size_multiple() {
 #[test]
 fn bad_values_from_modules_are_errors() {
     check_errors(&[
-        ("p.Matrix[4] = 1", "Matrix[4] is outside a 2x2 grid"),
-        ("p.Matrix[-1] = 1", "Matrix[-1] is outside a 2x2 grid"),
+        (
+            "p.Matrix[4] = 1",
+            "fmd.imagepuzzle.Matrix[4]: the index is outside a 2x2 grid",
+        ),
+        (
+            "p.Matrix[-1] = 1",
+            "fmd.imagepuzzle.Matrix[-1]: the index is outside a 2x2 grid",
+        ),
         (
             "p.Matrix[0] = 'x'",
             "bad argument #3 (number expected, got string)",
@@ -305,8 +311,8 @@ fn bad_values_from_modules_are_errors() {
             "imagepuzzle.Create(2^40, 2^40)",
             "fmd.imagepuzzle.Create: a",
         ),
-        ("p.DeScramble(DOC)", "expects two streams"),
-        ("p.DeScramble(p, p)", "expects two streams"),
+        ("p.DeScramble(DOC)", "expects two documents"),
+        ("p.DeScramble(p, p)", "expects two documents"),
         (
             "p.DeScramble(DOC, DOC)",
             "fmd.imagepuzzle.DeScramble: decode",

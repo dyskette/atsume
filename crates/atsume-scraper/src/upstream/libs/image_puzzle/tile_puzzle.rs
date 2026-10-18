@@ -21,9 +21,9 @@ pub(super) const MAX_TILES: i64 = 1 << 20;
 pub(super) enum TilePuzzleError {
     #[error("a {columns}x{rows} grid has more than {MAX_TILES} tiles")]
     TooManyTiles { columns: i64, rows: i64 },
-    #[error("the grid is {columns}x{rows}")]
+    #[error("the grid is {columns}x{rows}, so it has no tiles")]
     EmptyGrid { columns: i64, rows: i64 },
-    #[error("matrix[{tile}] = {destination} is out of range 0..{last}")]
+    #[error("Matrix[{tile}] = {destination} is not a tile; the grid has tiles 0 to {last}")]
     DestinationOutOfRange {
         tile: usize,
         destination: i64,
