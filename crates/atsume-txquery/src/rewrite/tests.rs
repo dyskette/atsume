@@ -157,14 +157,37 @@ fn a_capitalized_name_matches_either_case() {
 
 #[test]
 fn json_calls_become_variables_and_keep_their_arguments() {
-    let expression =
-        r#"json(*).a, parse-json('x'), 'json(no)', myjson(1), json( //script[@id="d"] )"#;
+    let expression = r#"json(*).a, 'json(no)', myjson(1), json-x(2), json( //script[@id="d"] )"#;
     let rewritten = to_xpath(expression).unwrap();
     assert_eq!(
         rewritten.xpath,
-        "($json0)/a, parse-json('x'), 'json(no)', myjson(1), ($json1)"
+        "($json0)/a, 'json(no)', myjson(1), json-x(2), ($json1)"
     );
     assert_eq!(rewritten.json_arguments, ["*", r#" //script[@id="d"] "#]);
+}
+
+#[test]
+fn parse_json_calls_become_variables_as_json_calls_do() {
+    let rewritten = to_xpath("parse-json(.)?post?slug, parse-json(.).chapters?*").unwrap();
+    assert_eq!(rewritten.xpath, "($json0)/post/slug, ($json1)/chapters/*");
+    assert_eq!(rewritten.json_arguments, [".", "."]);
+
+    let nested = to_xpath(r#"parse-json(//script[@id="d"])?props"#).unwrap();
+    assert_eq!(nested.xpath, "($json0)/props");
+    assert_eq!(nested.json_arguments, [r#"//script[@id="d"]"#]);
+}
+
+#[test]
+fn parse_json_with_options_is_left_as_written() {
+    for expression in [
+        r#"parse-json($s, map{"liberal": true()})"#,
+        r#"parse-json(concat("[", "1", "]"), map{})"#,
+    ] {
+        let rewritten = to_xpath(expression).unwrap();
+        assert_eq!(rewritten.xpath, expression);
+        assert_eq!(rewritten.json_arguments, [] as [String; 0]);
+    }
+    assert!(to_xpath("//script/parse-json(.)").is_err());
 }
 
 #[test]

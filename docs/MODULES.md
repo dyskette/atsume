@@ -140,7 +140,12 @@ hoisted or folded: sequences, functions in step position and `replace()` are
 evaluated as written. What remains of internettools' dialect is rewritten
 token by token into standard XPath: dots and calls on JSON values, `?`
 lookups, `jn:keys`, `jn:members`, `css()` and bare `true`/`false`/`null`.
-`json(…)` is evaluated first and its tree bound to a variable. As of the
+`json(…)` is evaluated first and its tree bound to a variable, and so is
+`parse-json(…)` with one argument, because upstream reads both results through
+the same lookups. A native `parse-json` returns an XPath map, on which the
+rewritten lookups select nothing, and VTheme's fields all came back blank that
+way. A `parse-json` call with an options map is standard XPath and is left as
+written. As of the
 revision measured, 3602 of 3603 call sites compile; the corpus test in
 `tests/corpus.rs` fails below 99%.
 

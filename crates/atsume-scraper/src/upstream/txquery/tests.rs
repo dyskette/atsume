@@ -247,6 +247,32 @@ fn json_reads_through_the_query() {
 }
 
 #[test]
+fn parse_json_reads_through_lookups_and_as_a_context_value() {
+    // Templates parse a JSON response whose text they HTML-encoded first, so
+    // that the page's HTML parser keeps it whole.
+    let encoded = JSON.replace('"', "&quot;");
+    let query = format!("local q = CreateTXQuery('{encoded}')");
+    check(&[
+        (
+            &format!("{query} return q.XPathString('parse-json(.)?data?title')"),
+            "From JSON",
+        ),
+        (
+            &format!(
+                "{query} local data = q.XPath('parse-json(.)?data')
+                return q.XPathString('title', data) .. q.XPathCount('chapters?*', data)
+                    .. q.XPathString('?chapters?2?name', data)"
+            ),
+            "From JSON2Two",
+        ),
+        (
+            &format!("{query} return q.XPathStringAll('parse-json(.).data.chapters?*?name')"),
+            "One, Two",
+        ),
+    ]);
+}
+
+#[test]
 fn a_value_is_iterated_or_read_by_position() {
     check(&[
         ("return x.XPath('//li').Count", "3"),

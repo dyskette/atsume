@@ -13,7 +13,7 @@
 //! | `jn:keys(X)`, `jn:members(X)` | `((X)/*/name())`, `((X)/*)`       |
 //! | `css("sel")`                  | the selector as a path            |
 //! | `true`, `false`, `null`       | `true()`, `false()`, `"null"`     |
-//! | `json(X)`                     | `($json0)`, with `X` evaluated first |
+//! | `json(X)`, `parse-json(X)`    | `($json0)`, with `X` evaluated first |
 //! | `TotalPage`, a capital in a name test | `TotalPage` or `totalpage`, compared exactly |
 //!
 //! The last row is needed because upstream matches HTML names ignoring case,
@@ -258,7 +258,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
             (TokenKind::Symbol, ".") => self.property_chain(),
             (TokenKind::Symbol, "?") => self.lookup(),
             (TokenKind::Symbol, "(") => self.call_on_value()?,
-            (TokenKind::Name, "json") => self.json_call()?,
+            (TokenKind::Name, name @ ("json" | "parse-json")) => self.json_call(name)?,
             (TokenKind::Name, "jn:keys" | "jn:members" | "css") => {
                 self.jsoniq_or_css_call(token.text)?
             }
@@ -412,21 +412,30 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         Ok(true)
     }
 
-    /// Rewrites `json(X)`. The argument is evaluated before the expression
-    /// runs, and the call is replaced by the variable that holds the tree of
-    /// the JSON it read.
-    fn json_call(&mut self) -> Result<bool, String> {
+    /// Rewrites `json(X)` or `parse-json(X)`, the function `name`. The
+    /// argument is evaluated before the expression runs, and the call is
+    /// replaced by the variable that holds the tree of the JSON it read.
+    ///
+    /// Upstream reads both functions' results through the same lookups, so
+    /// both become trees. A `parse-json` call with a second argument, the
+    /// options map of standard XPath, is left as written.
+    fn json_call(&mut self, name: &str) -> Result<bool, String> {
         let Some((offset, open)) = self.next_significant() else {
             return Ok(false);
         };
         if open.text != "(" {
             return Ok(false);
         }
-        if self.out.trim_end().ends_with(STEP_MARKERS) {
-            return Err("json() inside a path step is not supported".to_owned());
+        let open_index = self.pos + offset;
+        let close = self.closing_parenthesis_from(open_index)?;
+        let arguments = &self.tokens[open_index + 1..close];
+        if name == "parse-json" && has_top_level_comma(arguments) {
+            return Ok(false);
         }
-        self.pos += offset;
-        let close = self.closing_parenthesis()?;
+        if self.out.trim_end().ends_with(STEP_MARKERS) {
+            return Err(format!("{name}() inside a path step is not supported"));
+        }
+        self.pos = open_index;
         let argument = self.tokens[self.pos + 1..close]
             .iter()
             .map(|t| t.text)
@@ -486,8 +495,13 @@ impl<'t, 'e> Rewriter<'t, 'e> {
 
     /// Returns the index of the `)` closing the `(` at the current token.
     fn closing_parenthesis(&self) -> Result<usize, String> {
+        self.closing_parenthesis_from(self.pos)
+    }
+
+    /// Returns the index of the `)` closing the `(` at index `open`.
+    fn closing_parenthesis_from(&self, open: usize) -> Result<usize, String> {
         let mut depth = 0;
-        for (index, token) in self.tokens.iter().enumerate().skip(self.pos) {
+        for (index, token) in self.tokens.iter().enumerate().skip(open) {
             let change = match (token.kind, token.text) {
                 (TokenKind::Symbol, "(") => 1,
                 (TokenKind::Symbol, ")") => -1,
@@ -500,6 +514,24 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         }
         Err("unclosed parenthesis".to_owned())
     }
+}
+
+/// Reports whether `tokens`, the arguments of a call, hold more than one
+/// argument, that is a comma outside any nested bracket.
+fn has_top_level_comma(tokens: &[Token<'_>]) -> bool {
+    let mut depth = 0_i32;
+    for token in tokens
+        .iter()
+        .filter(|token| token.kind == TokenKind::Symbol)
+    {
+        match token.text {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" => depth -= 1,
+            "," if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Returns the step that reads the property `name`. Some names, such as one
