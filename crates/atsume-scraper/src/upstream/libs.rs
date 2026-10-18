@@ -1,6 +1,7 @@
 //! The `fmd.*` libraries that modules load with `require`.
 
 mod crypto;
+mod encoding;
 mod file_names;
 mod gzip;
 mod logging;

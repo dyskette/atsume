@@ -5,7 +5,7 @@ const DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 /// Writes each byte as two lowercase hexadecimal digits. Modules call it as
 /// `StrToHex`.
-pub(super) fn encode(bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn encode(bytes: &[u8]) -> Vec<u8> {
     bytes
         .iter()
         .flat_map(|&byte| {
@@ -22,7 +22,7 @@ pub(super) fn encode(bytes: &[u8]) -> Vec<u8> {
 ///
 /// Reading stops at the first pair that is not hexadecimal, and a lone digit
 /// at the end is ignored. The bytes read up to that point are returned.
-pub(super) fn decode(text: &[u8]) -> Vec<u8> {
+pub(crate) fn decode(text: &[u8]) -> Vec<u8> {
     let (pairs, _) = text.as_chunks::<2>();
     pairs
         .iter()
@@ -32,7 +32,7 @@ pub(super) fn decode(text: &[u8]) -> Vec<u8> {
 
 /// Returns the byte that two hexadecimal digits write, or `None` when either
 /// is not a hexadecimal digit.
-pub(super) fn byte_from_digits(high: u8, low: u8) -> Option<u8> {
+pub(crate) fn byte_from_digits(high: u8, low: u8) -> Option<u8> {
     Some(digit_value(high)? << 4 | digit_value(low)?)
 }
 

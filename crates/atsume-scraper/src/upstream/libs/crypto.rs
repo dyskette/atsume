@@ -1,80 +1,34 @@
-//! `fmd.crypto`, which encodes, hashes and encrypts strings for modules.
+//! `fmd.crypto`, which hashes and encrypts strings for modules. The table also
+//! holds the encoders in [`super::encoding`], because FMD2 puts them there.
 //!
 //! Every function works on the bytes of a Lua string. A hash, a decrypted body
 //! or a page in a legacy encoding therefore reaches the module unchanged. A
 //! number passed in place of a string is read as its text.
 
-mod hex;
-mod html_entities;
-mod url_encoding;
-
 use aes::{Aes128, Aes192, Aes256};
-use base64::Engine as _;
-use base64::alphabet::STANDARD;
-use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
-use base64::engine::{DecodePaddingMode, general_purpose};
 use ctr::Ctr128BE;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use hmac::{Hmac, KeyInit, Mac};
 use mlua::{Function, Lua, Table, Value};
 use sha2::{Digest, Sha256};
 
+use super::encoding::{self, hex};
 use super::{BytesTransform, bytes_function};
 use crate::runtime::convert::bytes_arg;
 
-/// The functions of one string, each under the name modules call it by.
-const BYTES_FUNCTIONS: [(&str, BytesTransform); 11] = [
-    ("EncodeURLElement", url_encoding::encode_query_value),
-    ("EncodeURL", url_encoding::encode_path),
-    ("DecodeURL", url_encoding::decode_query_value),
-    ("HTMLEncode", html_entities::encode),
-    ("HTMLDecode", html_entities::decode),
-    ("EncodeBase64", encode_base64),
-    ("DecodeBase64", decode_base64),
-    ("StrToHex", hex::encode),
-    ("HexToStr", hex::decode),
-    ("SHA256", sha256),
-    ("SHA256Hex", sha256_hex),
-];
+/// The hashes of one string, each under the name modules call it by.
+const HASH_FUNCTIONS: [(&str, BytesTransform); 2] = [("SHA256", sha256), ("SHA256Hex", sha256_hex)];
 
-/// Builds the `fmd.crypto` table.
+/// Builds the `fmd.crypto` table, with the encoders, the hashes and the cipher.
 pub(super) fn build(lua: &Lua) -> mlua::Result<Table> {
     let crypto = lua.create_table()?;
-    for (name, transform) in BYTES_FUNCTIONS {
+    for (name, transform) in encoding::FUNCTIONS.into_iter().chain(HASH_FUNCTIONS) {
         crypto.set(name, bytes_function(lua, transform)?)?;
     }
     crypto.set("HMAC_SHA256", hmac_function(lua, <[u8]>::to_vec)?)?;
     crypto.set("HMAC_SHA256Hex", hmac_function(lua, hex::encode)?)?;
     crypto.set("AESCTR", aes_ctr_function(lua)?)?;
     Ok(crypto)
-}
-
-/// Writes bytes as standard Base64 with padding. Modules call it as
-/// `EncodeBase64`.
-fn encode_base64(bytes: &[u8]) -> Vec<u8> {
-    general_purpose::STANDARD.encode(bytes).into_bytes()
-}
-
-/// The Base64 that sites send. Some pad it and some do not, and some leave
-/// stray bits set in the last character.
-const LENIENT_BASE64: GeneralPurpose = GeneralPurpose::new(
-    &STANDARD,
-    GeneralPurposeConfig::new()
-        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
-        .with_decode_allow_trailing_bits(true),
-);
-
-/// Reads standard Base64, padded or not, and skips line breaks. Modules call
-/// it as `DecodeBase64`. Text that is not Base64 reads as an empty string.
-fn decode_base64(text: &[u8]) -> Vec<u8> {
-    let without_line_breaks: Vec<u8> = text
-        .iter()
-        .copied()
-        .filter(|byte| !matches!(byte, b'\r' | b'\n'))
-        .collect();
-    LENIENT_BASE64
-        .decode(without_line_breaks)
-        .unwrap_or_default()
 }
 
 /// Returns the 32 bytes of the SHA-256 digest of `bytes`. Modules call it as
