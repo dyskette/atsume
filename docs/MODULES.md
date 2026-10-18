@@ -351,8 +351,8 @@ These raise a named error rather than failing quietly:
 
 | Library | Modules affected | Needs |
 |---|---|---|
-| `utils.nodejs` | Comix, RaijinScans, and GourmetScans, through a fallback in the Madara template | Puppeteer |
-| `fmd.subprocess` | None directly. `utils.nodejs` calls it, as does upstream's Cloudflare bypass, which atsume does not load | Running external processes |
+| `utils.nodejs` | Comix and RaijinScans directly, and GourmetScans through a fallback in the Madara template | Puppeteer |
+| `fmd.subprocess` | No module directly; `utils.nodejs` calls it, as does upstream's Cloudflare bypass, which atsume does not load | Running external processes |
 
 `fmd.subprocess` still loads, and every field of it is a function that raises
 `fmd.subprocess.<name> requires external process execution`, so a module that

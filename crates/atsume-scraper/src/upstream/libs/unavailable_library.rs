@@ -1,5 +1,6 @@
-//! Libraries that atsume does not provide, such as `fmd.subprocess`, which
-//! still load so that calling them fails with an error that names them.
+//! Stand-ins for libraries that atsume does not provide, such as
+//! `fmd.subprocess`. A stand-in still loads, so calling one of its functions
+//! fails with an error that names the function.
 //!
 //! Without such a library, a module that calls one of its functions fails
 //! with "attempt to call a nil value", which says nothing about what is
@@ -9,8 +10,14 @@ use mlua::{Lua, MetaMethod, Table, Value};
 
 use crate::runtime::convert::lua_text;
 
-/// Builds a library named `library` in which every field reads as a function
-/// that raises "`library`.`field` `reason`".
+/// Builds a stand-in for the library `library_name`, in which every field
+/// reads as a function that raises an error.
+///
+/// The error is the library's name, the field's name and `reason`, as in
+/// `fmd.subprocess.RunCommand requires external process execution`. `reason`
+/// therefore completes a sentence whose subject is the function, so it starts
+/// with a verb. A field whose name is neither text nor a number reads with an
+/// empty name.
 pub(super) fn build(
     lua: &Lua,
     library_name: &'static str,
