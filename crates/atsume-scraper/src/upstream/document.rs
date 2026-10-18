@@ -63,6 +63,8 @@ impl<S: 'static> DocumentObject<S> {
 }
 
 impl<S: 'static> UserData for DocumentObject<S> {
+    /// Lets modules call `ToString()`, read `Size`, and use `tostring` and `#`,
+    /// each on the body as it is at that moment. Any other key reads as `nil`.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |lua, document, key: Value| {
             let Value::String(key) = key else {

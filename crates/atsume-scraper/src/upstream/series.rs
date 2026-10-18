@@ -127,6 +127,8 @@ impl SeriesRecord {
 pub(crate) struct SeriesObject;
 
 impl UserData for SeriesObject {
+    /// Exposes the series' details as text fields, and its chapter links and
+    /// names as [`ListObject`]s that modules fill in.
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         text_field(fields, "URL", |m: &mut SeriesRecord| &mut m.url);
         text_field(fields, "Title", |m: &mut SeriesRecord| &mut m.title);
@@ -147,6 +149,8 @@ impl UserData for SeriesObject {
         });
     }
 
+    /// Gives `MANGAINFO` no methods, and makes its unknown fields read as
+    /// `nil`.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         ignore_unknown_fields(methods);
     }

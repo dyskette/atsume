@@ -233,6 +233,9 @@ pub(crate) struct Storage(HashMap<String, String>);
 pub(crate) struct StorageObject;
 
 impl UserData for StorageObject {
+    /// Reads `Storage[key]` from the file's shared [`Storage`], or `""` for a
+    /// missing key, and writes `Storage[key] = value` into it. Keys and values
+    /// are text, and a number is read as its text.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_function(MetaMethod::Index, |lua, (_, key): (AnyUserData, Value)| {
             let key = text_arg(lua, &key, 2)?;

@@ -104,6 +104,9 @@ impl<S: 'static> ListObject<S> {
 }
 
 impl<S: 'static> UserData for ListObject<S> {
+    /// Sends indexing, assignment and `#` to the list. A number reads or writes
+    /// the item at that position, and a name such as `Count` or `CommaText`
+    /// reads a property or builds a method.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |lua, list, key: Value| {
             list.index(lua, &key)
@@ -123,6 +126,9 @@ impl<S: 'static> UserData for ListObject<S> {
 struct ValuesObject<S>(ListObject<S>);
 
 impl<S: 'static> UserData for ValuesObject<S> {
+    /// Reads `list.Values[name]` as the value of the pair named `name`, or `""`
+    /// if there is none, and writes `list.Values[name] = value` as that pair. An
+    /// empty value removes the pair.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |lua, values, name: Value| {
             let name = text_arg(lua, &name, 2)?;

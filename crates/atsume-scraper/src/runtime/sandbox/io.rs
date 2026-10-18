@@ -191,6 +191,8 @@ impl LuaFile {
 }
 
 impl UserData for LuaFile {
+    /// Gives a file opened by `io.open` the methods `read`, `lines`, `write`
+    /// and `close`. Each of them fails once the file is closed.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method_mut("read", file_read);
         methods.add_function("lines", |lua, file: AnyUserData| {

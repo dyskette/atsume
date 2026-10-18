@@ -65,6 +65,8 @@ pub(crate) struct StatusSink(pub(crate) Option<StatusReport>);
 struct UpdateListObject;
 
 impl UserData for UpdateListObject {
+    /// Exposes the page count that the module reports while it reads a
+    /// directory page (`CurrentDirectoryPageNumber`).
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         int_field(
             fields,
@@ -73,6 +75,8 @@ impl UserData for UpdateListObject {
         );
     }
 
+    /// Adds `UpdateStatusText`, which passes a progress message to the
+    /// session's status reporter, if one is set. Unknown fields read as `nil`.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_function("UpdateStatusText", |lua, text: Value| {
             let text = text_arg(lua, &text, 1)?;

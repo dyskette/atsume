@@ -157,6 +157,8 @@ impl XPathResultObject {
 }
 
 impl UserData for XPathResultObject {
+    /// Reads `Count` as the number of items, and any other name as the method
+    /// of that name, or `nil` if there is none.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |lua, result, key: Value| {
             let Value::String(key) = key else {

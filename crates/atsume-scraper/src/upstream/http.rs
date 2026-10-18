@@ -15,6 +15,9 @@ use crate::upstream::string_list::ListObject;
 pub(crate) struct HttpObject;
 
 impl UserData for HttpObject {
+    /// Exposes the request settings (`MimeType`, `UserAgent`, `RetryCount`),
+    /// what the last request got back (`LastURL`, `ResultCode`, `Terminated`),
+    /// and the `Headers`, `Cookies` and `Document` objects.
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         text_field(fields, "MimeType", |h: &mut HttpSession| {
             &mut h.request_content_type
@@ -41,6 +44,9 @@ impl UserData for HttpObject {
         });
     }
 
+    /// Adds the request functions `GET`, `HEAD`, `POST` and `XHR`, which return
+    /// whether the request succeeded, and the functions that reset the session
+    /// or manage its cookies. `SetProxy` is accepted and ignored.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_function("GET", |lua, (url, _): (Value, Value)| {
             send(lua, Method::Get, &url, None, |_| {})

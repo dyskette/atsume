@@ -83,6 +83,8 @@ struct QueryObject {
 }
 
 impl UserData for QueryObject {
+    /// Reads each name as the method of that name, such as `XPath` or
+    /// `ParseHTML`, or as `nil` if there is none.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |lua, query, key: Value| {
             let Value::String(key) = key else {

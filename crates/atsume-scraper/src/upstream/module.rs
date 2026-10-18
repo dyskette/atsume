@@ -79,6 +79,10 @@ pub(crate) struct AccountRecord {
 pub(crate) struct ModuleObject;
 
 impl UserData for ModuleObject {
+    /// Exposes the declaration's fields that modules read or change while they
+    /// run, the selected listing, `Storage` and `Account`. Writing
+    /// `TotalDirectory` keeps it at least 1, and `ActiveConnectionCount` always
+    /// reads as 1, because a session makes one request at a time.
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         text_field(fields, "ID", |s: &mut SiteRecord| &mut s.declaration.id);
         text_field(fields, "Name", |s: &mut SiteRecord| &mut s.declaration.name);
@@ -110,6 +114,8 @@ impl UserData for ModuleObject {
         fields.add_field_function_get("ActiveConnectionCount", |_, _: AnyUserData| Ok(1));
     }
 
+    /// Adds `GetOption`, and the cookie functions that a few modules call
+    /// through `MODULE`. Unknown fields read as `nil`.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_function("GetOption", |lua, name: String| get_option(lua, &name));
         // A few modules manage cookies through `MODULE` instead of `HTTP`.
@@ -133,6 +139,8 @@ fn get_option(lua: &Lua, name: &str) -> mlua::Result<Value> {
 struct AccountObject;
 
 impl UserData for AccountObject {
+    /// Exposes the credentials and the login state. `Status` reads and writes
+    /// the number that upstream gives each [`AccountStatus`].
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         bool_field(fields, "Enabled", |a: &mut AccountRecord| &mut a.enabled);
         text_field(fields, "Username", |a: &mut AccountRecord| &mut a.username);
@@ -148,6 +156,8 @@ impl UserData for AccountObject {
         });
     }
 
+    /// Gives `MODULE.Account` no methods, and makes its unknown fields read
+    /// as `nil`.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         ignore_unknown_fields(methods);
     }

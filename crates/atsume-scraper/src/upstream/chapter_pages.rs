@@ -83,6 +83,9 @@ impl ChapterPagesRecord {
 pub(crate) struct ChapterPagesObject;
 
 impl UserData for ChapterPagesObject {
+    /// Exposes the chapter's address, its page count and the index of the
+    /// downloading chapter as fields, and the record's five lists as
+    /// [`ListObject`]s that modules fill in.
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         text_field(fields, "Link", |t: &mut ChapterPagesRecord| {
             &mut t.chapter_url
@@ -109,6 +112,7 @@ impl UserData for ChapterPagesObject {
         }
     }
 
+    /// Gives `TASK` no methods, and makes its unknown fields read as `nil`.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         ignore_unknown_fields(methods);
     }
