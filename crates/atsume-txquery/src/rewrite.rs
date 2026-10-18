@@ -43,8 +43,9 @@ pub(crate) struct RewrittenExpression {
     /// The expression in standard XPath. The `n`th `json()` call in it has
     /// become the variable that [`json_variable_name`]`(n)` names.
     pub(crate) xpath: String,
-    /// Each `json()` call's argument as the module wrote it. Every argument is
-    /// evaluated before the expression runs.
+    /// The argument of each `json()` call, and of each `parse-json()` call
+    /// with one argument, as the module wrote it. Every argument is evaluated
+    /// before the expression runs.
     pub(crate) json_arguments: Vec<String>,
 }
 
@@ -214,8 +215,9 @@ struct Rewriter<'t, 'e> {
     pos: usize,
     out: String,
     previous: PreviousToken,
-    /// The `json()` arguments found so far. Nested rewrites share this list,
-    /// so the variables are numbered across the whole expression.
+    /// The `json()` and `parse-json()` arguments found so far. Nested rewrites
+    /// share this list, so the variables are numbered across the whole
+    /// expression.
     json_arguments: Vec<String>,
 }
 
@@ -412,9 +414,10 @@ impl<'t, 'e> Rewriter<'t, 'e> {
         Ok(true)
     }
 
-    /// Rewrites `json(X)` or `parse-json(X)`, the function `name`. The
-    /// argument is evaluated before the expression runs, and the call is
-    /// replaced by the variable that holds the tree of the JSON it read.
+    /// Rewrites a call to `function_name`, which is `json` or `parse-json`, as
+    /// in `json(X)`. The argument is evaluated before the expression runs, and
+    /// the call is replaced by the variable that holds the tree of the JSON it
+    /// read.
     ///
     /// Upstream reads both functions' results through the same lookups, so
     /// both become trees. A `parse-json` call with a second argument, the
@@ -515,7 +518,7 @@ impl<'t, 'e> Rewriter<'t, 'e> {
 }
 
 /// Reports whether `tokens`, the arguments of a call, hold more than one
-/// argument, that is a comma outside any nested bracket.
+/// argument, which they do when a comma appears outside every nested bracket.
 fn has_several_arguments(tokens: &[Token<'_>]) -> bool {
     let mut depth = 0_i32;
     for token in tokens
