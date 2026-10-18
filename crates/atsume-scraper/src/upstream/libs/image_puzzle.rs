@@ -46,18 +46,24 @@ struct TilePuzzleObject {
 }
 
 impl TilePuzzleObject {
+    /// Wraps `puzzle`, so that this object and the `Matrix` objects it hands
+    /// out can share it.
     fn new(puzzle: TilePuzzle) -> Self {
         Self {
             puzzle: Rc::new(RefCell::new(puzzle)),
         }
     }
 
+    /// Borrows the puzzle to read it. Fails with a Lua error, instead of
+    /// panicking, if the puzzle is being changed.
     fn borrow_puzzle(&self) -> mlua::Result<Ref<'_, TilePuzzle>> {
         self.puzzle
             .try_borrow()
             .map_err(|_| mlua::Error::runtime("the image puzzle is already in use"))
     }
 
+    /// Borrows the puzzle to change it. Fails with a Lua error, instead of
+    /// panicking, if the puzzle is already borrowed.
     fn borrow_puzzle_mut(&self) -> mlua::Result<RefMut<'_, TilePuzzle>> {
         self.puzzle
             .try_borrow_mut()
@@ -90,6 +96,10 @@ impl TilePuzzleObject {
 }
 
 impl UserData for TilePuzzleObject {
+    /// Exposes the grid's size (`HorBlock` and `VerBlock`), the tile size step
+    /// (`Multiply`), the permutation (`Matrix`) and `DeScramble`. Only
+    /// `Multiply` can be written; a write to another field is ignored, as
+    /// upstream ignores it.
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("HorBlock", |_, object| Ok(object.borrow_puzzle()?.columns));
         fields.add_field_method_get("VerBlock", |_, object| Ok(object.borrow_puzzle()?.rows));
@@ -113,6 +123,7 @@ impl UserData for TilePuzzleObject {
         });
     }
 
+    /// Makes unknown fields read as `nil` and ignores writes to them.
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         ignore_unknown_fields(methods);
     }
@@ -128,12 +139,21 @@ struct MatrixObject {
 }
 
 impl MatrixObject {
+    /// Returns the destination of the tile at `index` (`Matrix[index]`), or
+    /// `nil` when `index` is outside the grid. A fractional index is truncated
+    /// toward zero.
     fn get(&self, lua: &Lua, index: &Value) -> mlua::Result<Option<i64>> {
         let index = int_arg(lua, index, 2)?;
         let puzzle = self.puzzle.borrow_puzzle()?;
         Ok(permutation_index(index).and_then(|index| puzzle.destinations.get(index).copied()))
     }
 
+    /// Sets the destination of the tile at `index`
+    /// (`Matrix[index] = destination`).
+    ///
+    /// Fails when `index` is outside the grid, or when either value is not a
+    /// number. The destination itself is checked only when the image is
+    /// descrambled.
     fn set(&self, lua: &Lua, index: &Value, destination: &Value) -> mlua::Result<()> {
         let index = int_arg(lua, index, 2)?;
         let mut puzzle = self.puzzle.borrow_puzzle_mut()?;
@@ -149,12 +169,15 @@ impl MatrixObject {
         Ok(())
     }
 
+    /// Returns how many tiles the grid has (`#Matrix`).
     fn len(&self) -> mlua::Result<usize> {
         Ok(self.puzzle.borrow_puzzle()?.destinations.len())
     }
 }
 
 impl UserData for MatrixObject {
+    /// Sends indexing, assignment and `#` to [`get`](Self::get),
+    /// [`set`](Self::set) and [`len`](Self::len).
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::Index, |lua, matrix, index: Value| {
             matrix.get(lua, &index)
