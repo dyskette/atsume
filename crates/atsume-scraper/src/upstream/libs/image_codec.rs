@@ -31,7 +31,8 @@ pub(super) fn decode_with_format(
 ///
 /// # Errors
 ///
-/// Fails when the encoder fails.
+/// Fails if the PNG encoder reports an error, which in practice means an image
+/// too large to encode.
 pub(super) fn encode_png(image: &DynamicImage) -> Result<Vec<u8>, ImageError> {
     let mut encoded = Vec::new();
     image.write_to(&mut Cursor::new(&mut encoded), ImageFormat::Png)?;
@@ -40,13 +41,14 @@ pub(super) fn encode_png(image: &DynamicImage) -> Result<Vec<u8>, ImageError> {
 
 /// Encodes `image` as a JPEG at [`JPEG_QUALITY`].
 ///
-/// A greyscale image stays greyscale, which keeps it a third of the size of
-/// the same image in colour. Any other image is saved as 8-bit colour,
-/// because JPEG has no alpha channel.
+/// A grayscale image stays grayscale, which keeps the file smaller and the
+/// page gray. Any other image is saved as 8-bit color, because JPEG has no
+/// alpha channel.
 ///
 /// # Errors
 ///
-/// Fails when the encoder fails.
+/// Fails if the JPEG encoder reports an error, which in practice means an image
+/// larger than JPEG allows.
 pub(super) fn encode_jpeg(image: &DynamicImage) -> Result<Vec<u8>, ImageError> {
     let mut encoded = Vec::new();
     let mut jpeg = JpegEncoder::new_with_quality(&mut encoded, JPEG_QUALITY);

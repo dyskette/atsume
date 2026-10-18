@@ -222,9 +222,9 @@ fn narrow_os(lua: &Lua, os: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Reads the file `name`, resolved against `root` when it is relative, and
-/// refuses any path that leads outside `root`. Errors read the way Lua's `io`
-/// reports them.
+/// Reads the file `name`, resolved against `root` when it is relative. It
+/// refuses any path that leads outside `root`, and any path that is not a
+/// file, such as a directory. Errors read the way Lua's `io` reports them.
 pub(crate) fn read_in_root(root: &Path, name: &str) -> Result<Vec<u8>, String> {
     let resolved = resolve_in_root(root, name)?;
     if !resolved.is_file() {

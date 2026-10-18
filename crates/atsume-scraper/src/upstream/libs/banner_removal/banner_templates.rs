@@ -1,7 +1,7 @@
 //! The banner templates that a page is matched against, and the crop that
 //! removes a matched banner.
 //!
-//! One site stamps a banner across the bottom of every page, below the
+//! MangaFox stamps a banner across the bottom of every page, below the
 //! artwork. Upstream ships images of that banner. A page whose bottom strip
 //! matches one of them has the banner's height cut off its bottom.
 
@@ -101,9 +101,9 @@ impl BannerTemplates {
     /// Cuts the banner off the bottom of the image file at `path`, and
     /// reports whether there was one (`RemoveWatermark`).
     ///
-    /// The file is rewritten in place. When `as_png` is set, the result is
-    /// saved as a PNG beside it under the extension `.png`, and the original
-    /// is deleted. Otherwise a PNG stays a PNG and any other image becomes a
+    /// Rewrites the file at `path`. When `as_png` is set, it writes a `.png`
+    /// beside the original instead, and deletes the original. Otherwise a PNG
+    /// stays a PNG and any other image becomes a
     /// JPEG. A page without a banner is left untouched.
     ///
     /// # Errors
@@ -203,7 +203,7 @@ fn read_template(dir: &Path, path: &Path) -> Option<OneBitImage> {
 /// when the page is shorter than the template or the strip has ink in its
 /// top rows.
 ///
-/// The strip is as wide as the template and centred on the page.
+/// The strip is as wide as the template and centered on the page.
 fn score_bottom_strip(page: &RgbaImage, template: &OneBitImage) -> Option<f64> {
     let top = page.height().checked_sub(template.height)?;
     let strip = Area {

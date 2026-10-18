@@ -24,7 +24,7 @@ impl Area {
     }
 }
 
-/// A greyscale image reduced to black and white by Otsu's method. Each pixel
+/// A grayscale image reduced to black and white by Otsu's method. Each pixel
 /// is 0 for black or 255 for white.
 #[derive(Debug)]
 pub(super) struct OneBitImage {
@@ -38,7 +38,7 @@ impl OneBitImage {
     /// Reduces `area` of `image` to black and white.
     ///
     /// An area wider than the image is padded with white, with the image
-    /// centred in it, so that a page narrower than a template can still be
+    /// centered in it, so that a page narrower than a template can still be
     /// compared with the template. Any part of the area below the image is
     /// white too.
     pub(super) fn threshold_area(image: &RgbaImage, area: Area) -> Self {
@@ -90,7 +90,7 @@ impl OneBitImage {
 }
 
 /// Copies row `row` of `image`, from column `left` on, into `target` as
-/// greyscale. The copy stops at the end of `target` or of the image's row,
+/// grayscale. The copy stops at the end of `target` or of the image's row,
 /// whichever comes first.
 fn copy_row_as_gray(image: &RgbaImage, row: u32, left: u32, target: &mut [u8]) {
     for (column, grey) in (left..image.width()).zip(target) {
@@ -100,9 +100,10 @@ fn copy_row_as_gray(image: &RgbaImage, row: u32, left: u32, target: &mut [u8]) {
 
 /// Returns a pixel's brightness by the Rec. 601 weights.
 ///
-/// The arithmetic runs on 16-bit channels whose colour is premultiplied by
-/// alpha, and then drops to 8 bits. Upstream's templates were matched by that
-/// arithmetic, so a transparent pixel reads as black.
+/// The arithmetic runs on 16-bit channels whose color is premultiplied by
+/// alpha, and then drops to 8 bits. Upstream computes brightness this way, and
+/// its templates are matched against brightness computed so. One consequence
+/// is that a transparent pixel reads as black.
 fn luma(pixel: Rgba<u8>) -> u8 {
     let [red, green, blue, alpha] = pixel.0;
     let premultiplied = |channel: u8| u32::from(channel) * 257 * u32::from(alpha) / 255;
@@ -116,7 +117,7 @@ fn luma(pixel: Rgba<u8>) -> u8 {
 
 /// Turns each pixel black or white at the threshold that Otsu's method picks.
 ///
-/// The method tries every grey level and keeps the one that best separates
+/// The method tries every gray level and keeps the one that best separates
 /// the pixels into a dark class and a light class. A pixel above the
 /// threshold becomes white, and every other pixel becomes black.
 fn apply_otsu_threshold(pixels: &mut [u8]) {
@@ -133,7 +134,7 @@ fn apply_otsu_threshold(pixels: &mut [u8]) {
     }
 }
 
-/// Picks the grey level that maximises the variance between the pixels at or
+/// Picks the gray level that maximizes the variance between the pixels at or
 /// below it and the pixels above it. `histogram` counts the pixels at each
 /// level.
 fn otsu_threshold(histogram: &[f64; 256]) -> u8 {

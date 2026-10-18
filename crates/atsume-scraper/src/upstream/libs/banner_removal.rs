@@ -1,5 +1,6 @@
-//! `fmd.mangafoxwatermark`, which removes the banner that MangaFox stamps
-//! across the bottom of its pages.
+//! Removes the banner that MangaFox stamps across the bottom of its pages.
+//! Modules load this library as `fmd.mangafoxwatermark`, which is FMD2's name
+//! for it.
 //!
 //! A module loads the banner templates in `Init` with `LoadTemplate`, and
 //! calls `RemoveWatermark` from `OnAfterImageSaved` on the page just saved.
@@ -51,7 +52,7 @@ pub(super) fn build(lua: &Lua, root: PathBuf) -> mlua::Result<Table> {
 /// (`LoadTemplate`).
 ///
 /// The directory is resolved against the checkout's root `root`, and a path
-/// with backslashes, as modules written for Windows build, works on every
+/// with backslashes, which modules written for Windows build, works on every
 /// system. A directory that cannot be read, or that lies outside the checkout,
 /// gives 0 and keeps the templates loaded before, as upstream does. The
 /// failure is logged, because otherwise it looks like a page without a
@@ -80,8 +81,8 @@ fn load_templates(root: &Path, dir: &str, current: &CurrentTemplates) -> usize {
 /// (`RemoveWatermark`).
 ///
 /// Only the page that `OnAfterImageSaved` is editing may be changed, because
-/// the call rewrites the file and may delete it. Without loaded templates, no
-/// page has a banner.
+/// the call rewrites the file and may delete it. When no templates are
+/// loaded, the page is left alone and the call returns false.
 ///
 /// # Errors
 ///

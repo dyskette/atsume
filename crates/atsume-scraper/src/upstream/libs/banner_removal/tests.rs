@@ -186,7 +186,7 @@ fn an_area_larger_than_the_image_surrounds_it_with_white() {
         ..Area::whole(&black)
     };
     let padded = OneBitImage::threshold_area(&black, area);
-    // The image is centred in the top row, and the row below it is white.
+    // The image is centered in the top row, and the row below it is white.
     let expected = RgbaImage::from_fn(6, 2, |x, y| {
         if y == 0 && (2..4).contains(&x) {
             image::Rgba([0, 0, 0, 255])
