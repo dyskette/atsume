@@ -12,6 +12,7 @@ mod image_codec;
 mod image_puzzle;
 mod javascript;
 mod logging;
+mod unavailable_library;
 
 use std::path::Path;
 
@@ -55,6 +56,16 @@ pub(crate) fn preload(lua: &Lua, lua_dir: &Path) -> mlua::Result<()> {
     preload.set(
         "fmd.mangafoxwatermark",
         lua.create_function(move |lua, ()| banner_removal::build(lua, root.clone()))?,
+    )?;
+    preload.set(
+        "fmd.subprocess",
+        lua.create_function(|lua, ()| {
+            unavailable_library::unavailable_library(
+                lua,
+                "fmd.subprocess",
+                "requires external process execution, which atsume does not implement yet",
+            )
+        })?,
     )
 }
 
@@ -85,6 +96,15 @@ mod tests {
     use crate::testing::open_module;
 
     #[test]
+    fn a_module_that_runs_a_program_gets_an_error_naming_the_function() {
+        let session = open_module("NewWebsiteModule()", "");
+        let call = "tostring(select(2, pcall(require('fmd.subprocess').RunCommand, 'ls')))";
+        let expected = "fmd.subprocess.RunCommand requires external process execution, which atsume does not implement yet";
+        let error = session.eval(call);
+        assert!(error.contains(expected), "{error}");
+    }
+
+    #[test]
     fn modules_load_each_library_by_name() {
         let session = open_module("NewWebsiteModule()", "");
         for name in [
@@ -95,6 +115,7 @@ mod tests {
             "fmd.gzip",
             "fmd.imagepuzzle",
             "fmd.mangafoxwatermark",
+            "fmd.subprocess",
             "fmd.duktape",
         ] {
             assert_eq!(

@@ -1,0 +1,71 @@
+//! Libraries that atsume does not provide, such as `fmd.subprocess`, which
+//! still load so that calling them fails with an error that names them.
+//!
+//! Without such a library, a module that calls one of its functions fails
+//! with "attempt to call a nil value", which says nothing about what is
+//! missing.
+
+use mlua::{Lua, MetaMethod, Table, Value};
+
+use crate::runtime::convert::lua_text;
+
+/// Builds a library named `library` in which every field reads as a function
+/// that raises "`library`.`field` `reason`".
+pub(super) fn unavailable_library(
+    lua: &Lua,
+    library: &'static str,
+    reason: &'static str,
+) -> mlua::Result<Table> {
+    let any_field = lua.create_function(move |lua, (_, field): (Table, Value)| {
+        let field = lua_text(lua, &field).unwrap_or_default();
+        lua.create_function(move |_, ()| -> mlua::Result<()> {
+            Err(mlua::Error::runtime(format!("{library}.{field} {reason}")))
+        })
+    })?;
+    let metatable = lua.create_table()?;
+    metatable.set(MetaMethod::Index.name(), any_field)?;
+    let table = lua.create_table()?;
+    table.set_metatable(Some(metatable))?;
+    Ok(table)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::eval_registered;
+
+    /// Runs `source` with an unavailable library in the global `sp`.
+    fn eval(source: &str) -> mlua::Result<String> {
+        eval_registered(
+            |lua| {
+                let library = unavailable_library(lua, "fmd.subprocess", "is not supported")?;
+                lua.globals().set("sp", library)
+            },
+            source,
+        )
+    }
+
+    #[test]
+    fn every_field_is_a_function() {
+        assert_eq!(eval("return type(sp.RunCommand)").unwrap(), "function");
+        assert_eq!(eval("return type(sp.anything_at_all)").unwrap(), "function");
+    }
+
+    #[test]
+    fn calling_a_field_names_the_library_the_field_and_the_reason() {
+        let error = eval("sp.RunCommand('ls', '-l')").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("fmd.subprocess.RunCommand is not supported"),
+            "{error}"
+        );
+        let numbered = eval("sp[3]()").unwrap_err();
+        assert!(
+            numbered
+                .to_string()
+                .contains("fmd.subprocess.3 is not supported"),
+            "{numbered}"
+        );
+    }
+}
