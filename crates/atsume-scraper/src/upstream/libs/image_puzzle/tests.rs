@@ -3,7 +3,7 @@ use std::io::Cursor;
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use mlua::Lua;
 
-use super::descramble::{MAX_TILES, PuzzleError, TilePuzzle, tile_length};
+use super::tile_puzzle::{MAX_TILES, TilePuzzle, TilePuzzleError, tile_length};
 use super::*;
 use crate::CancelToken;
 use crate::http::HttpConfig;
@@ -169,7 +169,7 @@ fn descrambling_reports_what_is_wrong() {
     let out_of_range = failure(puzzle(2, 2, &[99, 1, 2, 3]), &valid);
     assert!(matches!(
         out_of_range,
-        PuzzleError::DestinationOutOfRange {
+        TilePuzzleError::DestinationOutOfRange {
             tile: 0,
             destination: 99,
             last: 3
@@ -178,21 +178,21 @@ fn descrambling_reports_what_is_wrong() {
     let negative = failure(puzzle(2, 2, &[0, -1, 2, 3]), &valid);
     assert!(matches!(
         negative,
-        PuzzleError::DestinationOutOfRange { tile: 1, .. }
+        TilePuzzleError::DestinationOutOfRange { tile: 1, .. }
     ));
     let not_an_image = failure(TilePuzzle::new(2, 2).unwrap(), b"not an image");
-    assert!(matches!(not_an_image, PuzzleError::Decode(_)));
+    assert!(matches!(not_an_image, TilePuzzleError::Decode(_)));
     for (columns, rows) in [(0, 0), (2, 0), (-1, -1)] {
         let empty = failure(TilePuzzle::new(columns, rows).unwrap(), &valid);
         assert!(
-            matches!(empty, PuzzleError::EmptyGrid { .. }),
+            matches!(empty, TilePuzzleError::EmptyGrid { .. }),
             "{columns}x{rows}"
         );
     }
     let too_fine = failure(TilePuzzle::new(16, 1).unwrap(), &valid);
     assert!(matches!(
         too_fine,
-        PuzzleError::TilesTooSmall {
+        TilePuzzleError::TilesTooSmall {
             width: 0,
             height: 8,
             ..
@@ -205,7 +205,7 @@ fn a_grid_with_too_many_tiles_is_refused() {
     assert!(TilePuzzle::new(MAX_TILES, 1).is_ok());
     assert!(matches!(
         TilePuzzle::new(MAX_TILES, 2),
-        Err(PuzzleError::TooManyTiles { .. })
+        Err(TilePuzzleError::TooManyTiles { .. })
     ));
     assert!(TilePuzzle::new(i64::MAX, i64::MAX).is_err());
 }

@@ -18,7 +18,7 @@ pub(super) const MAX_TILES: i64 = 1 << 20;
 
 /// Why a puzzle could not be built or an image could not be descrambled.
 #[derive(Debug, thiserror::Error)]
-pub(super) enum PuzzleError {
+pub(super) enum TilePuzzleError {
     #[error("a {columns}x{rows} grid has more than {MAX_TILES} tiles")]
     TooManyTiles { columns: i64, rows: i64 },
     #[error("the grid is {columns}x{rows}")]
@@ -72,10 +72,10 @@ impl TilePuzzle {
     /// # Errors
     ///
     /// Fails when the grid has more than [`MAX_TILES`] tiles.
-    pub(super) fn new(columns: i64, rows: i64) -> Result<Self, PuzzleError> {
+    pub(super) fn new(columns: i64, rows: i64) -> Result<Self, TilePuzzleError> {
         let tiles = match columns.checked_mul(rows) {
             Some(tiles) if tiles <= MAX_TILES => tiles.max(0),
-            _ => return Err(PuzzleError::TooManyTiles { columns, rows }),
+            _ => return Err(TilePuzzleError::TooManyTiles { columns, rows }),
         };
         Ok(Self {
             columns,
@@ -98,14 +98,14 @@ impl TilePuzzle {
     /// Fails when the grid is empty, when a destination is not a tile of the
     /// grid, when the image is too small to cut into the grid, or when the
     /// image cannot be decoded.
-    pub(super) fn descramble(&self, scrambled: &[u8]) -> Result<Vec<u8>, PuzzleError> {
-        let (columns, rows) = self.grid()?;
+    pub(super) fn descramble(&self, scrambled: &[u8]) -> Result<Vec<u8>, TilePuzzleError> {
+        let (columns, rows) = self.nonempty_grid()?;
         let (format, source) = decode(scrambled)?;
         let (width, height) = source.dimensions();
         let tile_width = tile_length(width, columns, self.tile_size_multiple);
         let tile_height = tile_length(height, rows, self.tile_size_multiple);
         if tile_width == 0 || tile_height == 0 {
-            return Err(PuzzleError::TilesTooSmall {
+            return Err(TilePuzzleError::TilesTooSmall {
                 width: tile_width,
                 height: tile_height,
                 image_width: width,
@@ -116,8 +116,8 @@ impl TilePuzzle {
         let mut target = RgbaImage::from_pixel(width, height, Rgba([255; 4]));
         for (tile, &destination) in self.destinations.iter().enumerate() {
             let destination = self.checked_destination(tile, destination)?;
-            let (source_x, source_y) = corner(tile, columns, tile_width, tile_height);
-            let (target_x, target_y) = corner(destination, columns, tile_width, tile_height);
+            let (source_x, source_y) = tile_corner(tile, columns, tile_width, tile_height);
+            let (target_x, target_y) = tile_corner(destination, columns, tile_width, tile_height);
             let piece = imageops::crop_imm(&source, source_x, source_y, tile_width, tile_height);
             imageops::replace(
                 &mut target,
@@ -130,8 +130,8 @@ impl TilePuzzle {
     }
 
     /// Returns the grid's size, or an error when it has no tiles.
-    fn grid(&self) -> Result<(u32, u32), PuzzleError> {
-        let empty = || PuzzleError::EmptyGrid {
+    fn nonempty_grid(&self) -> Result<(u32, u32), TilePuzzleError> {
+        let empty = || TilePuzzleError::EmptyGrid {
             columns: self.columns,
             rows: self.rows,
         };
@@ -145,12 +145,12 @@ impl TilePuzzle {
 
     /// Returns `destination` as a tile number, or an error when the grid has
     /// no such tile.
-    fn checked_destination(&self, tile: usize, destination: i64) -> Result<usize, PuzzleError> {
+    fn checked_destination(&self, tile: usize, destination: i64) -> Result<usize, TilePuzzleError> {
         let tiles = self.destinations.len();
         usize::try_from(destination)
             .ok()
             .filter(|&destination| destination < tiles)
-            .ok_or(PuzzleError::DestinationOutOfRange {
+            .ok_or(TilePuzzleError::DestinationOutOfRange {
                 tile,
                 destination,
                 last: tiles.saturating_sub(1),
@@ -159,30 +159,33 @@ impl TilePuzzle {
 }
 
 /// Decodes an image, whatever its format, and reports which format it was.
-fn decode(bytes: &[u8]) -> Result<(Option<ImageFormat>, RgbaImage), PuzzleError> {
+fn decode(bytes: &[u8]) -> Result<(Option<ImageFormat>, RgbaImage), TilePuzzleError> {
     let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|error| PuzzleError::Decode(ImageError::IoError(error)))?;
+        .map_err(|error| TilePuzzleError::Decode(ImageError::IoError(error)))?;
     let format = reader.format();
-    let image = reader.decode().map_err(PuzzleError::Decode)?;
+    let image = reader.decode().map_err(TilePuzzleError::Decode)?;
     Ok((format, image.into_rgba8()))
 }
 
 /// Encodes `image` as a PNG when the scrambled image was a PNG or a WebP, and
 /// as a JPEG otherwise.
-fn encode(image: RgbaImage, scrambled_format: Option<ImageFormat>) -> Result<Vec<u8>, PuzzleError> {
+fn encode(
+    image: RgbaImage,
+    scrambled_format: Option<ImageFormat>,
+) -> Result<Vec<u8>, TilePuzzleError> {
     let mut encoded = Vec::new();
     if let Some(ImageFormat::Png | ImageFormat::WebP) = scrambled_format {
         image
             .write_to(&mut Cursor::new(&mut encoded), ImageFormat::Png)
-            .map_err(PuzzleError::Encode)?;
+            .map_err(TilePuzzleError::Encode)?;
         return Ok(encoded);
     }
     // JPEG has no alpha channel.
     let opaque = DynamicImage::ImageRgba8(image).into_rgb8();
     JpegEncoder::new_with_quality(&mut encoded, JPEG_QUALITY)
         .encode_image(&opaque)
-        .map_err(PuzzleError::Encode)?;
+        .map_err(TilePuzzleError::Encode)?;
     Ok(encoded)
 }
 
@@ -200,7 +203,7 @@ pub(super) fn tile_length(length: u32, tiles: u32, multiple: i64) -> u32 {
 /// Returns the top-left pixel of tile number `tile`.
 ///
 /// The grid fits inside the image, so the coordinates fit in a `u32`.
-fn corner(tile: usize, columns: u32, tile_width: u32, tile_height: u32) -> (u32, u32) {
+fn tile_corner(tile: usize, columns: u32, tile_width: u32, tile_height: u32) -> (u32, u32) {
     let columns = columns as usize;
     let column = u32::try_from(tile % columns).unwrap_or(u32::MAX);
     let row = u32::try_from(tile / columns).unwrap_or(u32::MAX);

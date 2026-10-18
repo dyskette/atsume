@@ -6,9 +6,9 @@
 //! HTTP.Document)` to rewrite the response in place. `docs/MODULES.md`
 //! describes the output formats.
 
-mod descramble;
 #[cfg(test)]
 mod tests;
+mod tile_puzzle;
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
@@ -20,7 +20,7 @@ use crate::runtime::bind::ignore_unknown_fields;
 use crate::runtime::convert::int_arg;
 use crate::upstream::document::DocumentObject;
 
-use descramble::TilePuzzle;
+use tile_puzzle::TilePuzzle;
 
 /// Builds the `fmd.imagepuzzle` table.
 pub(super) fn build(lua: &Lua) -> mlua::Result<Table> {
@@ -30,7 +30,7 @@ pub(super) fn build(lua: &Lua) -> mlua::Result<Table> {
         let rows = int_arg(lua, &rows, 2)?;
         let puzzle = TilePuzzle::new(columns, rows)
             .map_err(|error| mlua::Error::runtime(format!("fmd.imagepuzzle.Create: {error}")))?;
-        Ok(PuzzleObject::new(puzzle))
+        Ok(TilePuzzleObject::new(puzzle))
     })?;
     // Modules call it by either name.
     library.set("Create", create.clone())?;
@@ -41,24 +41,24 @@ pub(super) fn build(lua: &Lua) -> mlua::Result<Table> {
 /// The object that `Create` returns, over a [`TilePuzzle`] that it shares
 /// with the `Matrix` objects it hands out.
 #[derive(Clone)]
-struct PuzzleObject {
+struct TilePuzzleObject {
     puzzle: Rc<RefCell<TilePuzzle>>,
 }
 
-impl PuzzleObject {
+impl TilePuzzleObject {
     fn new(puzzle: TilePuzzle) -> Self {
         Self {
             puzzle: Rc::new(RefCell::new(puzzle)),
         }
     }
 
-    fn read(&self) -> mlua::Result<Ref<'_, TilePuzzle>> {
+    fn borrow_puzzle(&self) -> mlua::Result<Ref<'_, TilePuzzle>> {
         self.puzzle
             .try_borrow()
             .map_err(|_| mlua::Error::runtime("the image puzzle is being changed"))
     }
 
-    fn write(&self) -> mlua::Result<RefMut<'_, TilePuzzle>> {
+    fn borrow_puzzle_mut(&self) -> mlua::Result<RefMut<'_, TilePuzzle>> {
         self.puzzle
             .try_borrow_mut()
             .map_err(|_| mlua::Error::runtime("the image puzzle is already in use"))
@@ -79,22 +79,25 @@ impl PuzzleObject {
             ));
         };
         let scrambled = input.bytes(lua)?;
-        let descrambled = self.read()?.descramble(&scrambled).map_err(|error| {
-            mlua::Error::runtime(format!("fmd.imagepuzzle.DeScramble: {error}"))
-        })?;
+        let descrambled = self
+            .borrow_puzzle()?
+            .descramble(&scrambled)
+            .map_err(|error| {
+                mlua::Error::runtime(format!("fmd.imagepuzzle.DeScramble: {error}"))
+            })?;
         output.replace(lua, descrambled)
     }
 }
 
-impl UserData for PuzzleObject {
+impl UserData for TilePuzzleObject {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
-        fields.add_field_method_get("HorBlock", |_, object| Ok(object.read()?.columns));
-        fields.add_field_method_get("VerBlock", |_, object| Ok(object.read()?.rows));
+        fields.add_field_method_get("HorBlock", |_, object| Ok(object.borrow_puzzle()?.columns));
+        fields.add_field_method_get("VerBlock", |_, object| Ok(object.borrow_puzzle()?.rows));
         fields.add_field_method_get("Multiply", |_, object| {
-            Ok(object.read()?.tile_size_multiple)
+            Ok(object.borrow_puzzle()?.tile_size_multiple)
         });
         fields.add_field_method_set("Multiply", |lua, object, value: Value| {
-            object.write()?.tile_size_multiple = int_arg(lua, &value, 3)?;
+            object.borrow_puzzle_mut()?.tile_size_multiple = int_arg(lua, &value, 3)?;
             Ok(())
         });
         fields.add_field_method_get("Matrix", |_, object| {
@@ -121,21 +124,22 @@ impl UserData for PuzzleObject {
 /// Indexes start at 0, as upstream's do. Reading outside the grid gives
 /// `nil`, and writing outside it is an error.
 struct MatrixObject {
-    puzzle: PuzzleObject,
+    puzzle: TilePuzzleObject,
 }
 
 impl MatrixObject {
     fn get(&self, lua: &Lua, index: &Value) -> mlua::Result<Option<i64>> {
         let index = int_arg(lua, index, 2)?;
-        let puzzle = self.puzzle.read()?;
-        Ok(tile_index(index).and_then(|index| puzzle.destinations.get(index).copied()))
+        let puzzle = self.puzzle.borrow_puzzle()?;
+        Ok(permutation_index(index).and_then(|index| puzzle.destinations.get(index).copied()))
     }
 
     fn set(&self, lua: &Lua, index: &Value, destination: &Value) -> mlua::Result<()> {
         let index = int_arg(lua, index, 2)?;
-        let mut puzzle = self.puzzle.write()?;
+        let mut puzzle = self.puzzle.borrow_puzzle_mut()?;
         let (columns, rows) = (puzzle.columns, puzzle.rows);
-        let Some(slot) = tile_index(index).and_then(|index| puzzle.destinations.get_mut(index))
+        let Some(slot) =
+            permutation_index(index).and_then(|index| puzzle.destinations.get_mut(index))
         else {
             return Err(mlua::Error::runtime(format!(
                 "fmd.imagepuzzle: Matrix[{index}] is outside a {columns}x{rows} grid"
@@ -146,7 +150,7 @@ impl MatrixObject {
     }
 
     fn len(&self) -> mlua::Result<usize> {
-        Ok(self.puzzle.read()?.destinations.len())
+        Ok(self.puzzle.borrow_puzzle()?.destinations.len())
     }
 }
 
@@ -167,6 +171,6 @@ impl UserData for MatrixObject {
 
 /// Returns `index` as a position in the permutation, or `None` when it is
 /// negative.
-fn tile_index(index: i64) -> Option<usize> {
+fn permutation_index(index: i64) -> Option<usize> {
     usize::try_from(index).ok()
 }
