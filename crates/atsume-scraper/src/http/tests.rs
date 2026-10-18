@@ -1,40 +1,10 @@
-use std::sync::Mutex;
 use std::time::Instant;
 
 use super::*;
-use crate::testing::open_module_with;
+use crate::testing::{open_module_with, scripted};
 use url::Url;
 
 use crate::{CancelToken, ErrorKind, Event, Session};
-
-/// A transport that answers from a function and records every request.
-struct Scripted<F> {
-    answer: F,
-    seen: Mutex<Vec<Request>>,
-}
-
-impl<F> Transport for Scripted<F>
-where
-    F: Fn(&Request, usize) -> Result<Response, TransportError> + Send + Sync,
-{
-    fn send(&self, request: &Request) -> Result<Response, TransportError> {
-        let mut seen = self.seen.lock().unwrap();
-        seen.push(request.clone());
-        let count = seen.len();
-        drop(seen);
-        (self.answer)(request, count)
-    }
-}
-
-fn scripted<F>(answer: F) -> Arc<Scripted<F>>
-where
-    F: Fn(&Request, usize) -> Result<Response, TransportError> + Send + Sync,
-{
-    Arc::new(Scripted {
-        answer,
-        seen: Mutex::new(Vec::new()),
-    })
-}
 
 fn respond(status: u16, body: &str) -> Response {
     Response {

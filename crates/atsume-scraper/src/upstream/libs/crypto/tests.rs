@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use super::*;
 use crate::CancelToken;
-use crate::http::{HttpConfig, Request, Response, RetryPolicy, Transport, TransportError};
-use crate::testing::{eval_registered, open_module_with};
+use crate::http::{HttpConfig, Response, RetryPolicy};
+use crate::testing::{eval_registered, open_module_with, scripted};
 
 /// Runs `source` with `fmd.crypto` in the global `crypto`.
 fn eval(source: &str) -> mlua::Result<String> {
@@ -158,19 +156,6 @@ fn every_function_needs_its_arguments() {
     assert_eq!(eval("return crypto.StrToHex(12)").unwrap(), "3132");
 }
 
-/// A transport that answers every request with the same body.
-struct Canned(&'static str);
-
-impl Transport for Canned {
-    fn send(&self, _: &Request) -> Result<Response, TransportError> {
-        Ok(Response {
-            status: 200,
-            headers: Vec::new(),
-            body: self.0.as_bytes().to_vec(),
-        })
-    }
-}
-
 /// A JSON response whose strings hold markup, entities, quotes and accented
 /// letters, which is what makes modules encode it.
 const SERIES_JSON: &str = r#"{
@@ -202,7 +187,13 @@ end";
 #[test]
 fn an_html_encoded_response_reads_back_as_json_in_a_module() {
     let http = HttpConfig {
-        transport: Arc::new(Canned(SERIES_JSON)),
+        transport: scripted(|_, _| {
+            Ok(Response {
+                status: 200,
+                body: SERIES_JSON.as_bytes().to_vec(),
+                ..Response::default()
+            })
+        }),
         retry: RetryPolicy::NONE,
         ..HttpConfig::default()
     };

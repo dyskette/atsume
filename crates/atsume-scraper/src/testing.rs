@@ -1,13 +1,14 @@
 //! Helpers the crate's tests share.
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use mlua::{Lua, Value};
 use tempfile::TempDir;
 
 use crate::catalog::select_site;
 use crate::error::ErrorKind;
-use crate::http::HttpConfig;
+use crate::http::{HttpConfig, Request, Response, Transport, TransportError};
 use crate::runtime::convert::lua_text;
 use crate::{CancelToken, Catalog, Error, Result, Session, SessionConfig, Site};
 
@@ -123,4 +124,40 @@ pub(crate) fn fmd2_lua_dir() -> PathBuf {
     let checkout =
         std::env::var_os("ATSUME_FMD2_DIR").expect("set ATSUME_FMD2_DIR to an FMD2 checkout");
     PathBuf::from(checkout).join("lua")
+}
+
+/// A transport that answers each request from a function and records every
+/// request it was sent.
+///
+/// The function receives the request and how many requests have arrived so
+/// far, counting this one, so a test can answer the first request differently
+/// from a retry.
+pub(crate) struct Scripted<F> {
+    answer: F,
+    /// Every request sent so far, in order.
+    pub(crate) seen: Mutex<Vec<Request>>,
+}
+
+impl<F> Transport for Scripted<F>
+where
+    F: Fn(&Request, usize) -> Result<Response, TransportError> + Send + Sync,
+{
+    fn send(&self, request: &Request) -> Result<Response, TransportError> {
+        let mut seen = self.seen.lock().unwrap();
+        seen.push(request.clone());
+        let count = seen.len();
+        drop(seen);
+        (self.answer)(request, count)
+    }
+}
+
+/// Returns a [`Scripted`] transport that answers with `answer`.
+pub(crate) fn scripted<F>(answer: F) -> Arc<Scripted<F>>
+where
+    F: Fn(&Request, usize) -> Result<Response, TransportError> + Send + Sync,
+{
+    Arc::new(Scripted {
+        answer,
+        seen: Mutex::new(Vec::new()),
+    })
 }
