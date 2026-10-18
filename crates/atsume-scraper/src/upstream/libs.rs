@@ -46,10 +46,10 @@ pub(crate) fn preload(lua: &Lua, lua_dir: &Path) -> mlua::Result<()> {
         "fmd.imagepuzzle",
         lua.create_function(|lua, ()| image_puzzle::build(lua))?,
     )?;
-    let script_dir = lua_dir.to_path_buf();
+    let owned_lua_dir = lua_dir.to_path_buf();
     preload.set(
         "fmd.duktape",
-        lua.create_function(move |lua, ()| javascript::build(lua, &script_dir))?,
+        lua.create_function(move |lua, ()| javascript::build(lua, &owned_lua_dir))?,
     )?;
     let root = checkout_root(lua_dir)?;
     preload.set(

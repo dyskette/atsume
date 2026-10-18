@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use rquickjs::{Coerced, Ctx, Exception, Function, Object, Value};
 
-use super::script_runner::sloppy_script;
+use super::script_runner::sloppy_eval_options;
 use crate::runtime::sandbox::resolve_in_root;
 
 /// The most bytes that one `getRandomValues` call fills, the quota that the
@@ -64,7 +64,7 @@ pub(super) fn install<'js>(ctx: &Ctx<'js>, lua_dir: PathBuf) -> rquickjs::Result
         read_helper(&ctx, &lua_dir, &name.0)
     })?;
     let crypto = Function::new(ctx.clone(), |ctx: Ctx<'js>| crypto_module(&ctx))?;
-    let make_require: Function = ctx.eval_with_options(REQUIRE_SOURCE, sloppy_script())?;
+    let make_require: Function = ctx.eval_with_options(REQUIRE_SOURCE, sloppy_eval_options())?;
     let require: Function = make_require.call((read_helper, crypto))?;
     ctx.globals().set("require", require)
 }
@@ -103,15 +103,16 @@ fn helper_path(name: &str) -> String {
 /// `require("crypto")`, and throws if none answers. Defining a `global` object
 /// instead would mislead scripts that test `typeof global` to detect Node.
 fn crypto_module<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
-    let get_random_values = Function::new(ctx.clone(), |ctx: Ctx<'js>, array: Value<'js>| {
+    let random_values_function = Function::new(ctx.clone(), |ctx: Ctx<'js>, array: Value<'js>| {
         fill_with_random_values(&ctx, array)
     })?;
-    let get_random_bytes = Function::new(ctx.clone(), |ctx: Ctx<'js>, length: Coerced<i64>| {
-        random_bytes(&ctx, length.0)
-    })?;
+    let random_bytes_function =
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, length: Coerced<i64>| {
+            random_bytes(&ctx, length.0)
+        })?;
     let crypto = Object::new(ctx.clone())?;
-    crypto.set("getRandomValues", get_random_values)?;
-    crypto.set("randomBytes", get_random_bytes)?;
+    crypto.set("getRandomValues", random_values_function)?;
+    crypto.set("randomBytes", random_bytes_function)?;
     Ok(crypto)
 }
 
@@ -169,7 +170,7 @@ fn random_bytes<'js>(ctx: &Ctx<'js>, length: i64) -> rquickjs::Result<Object<'js
         return Err(Exception::throw_range(ctx, &message));
     };
     let mut bytes = vec![0; length as usize];
-    getrandom::fill(&mut bytes).map_err(|error| no_randomness(ctx, error))?;
+    getrandom::fill(&mut bytes).map_err(|error| no_randomness_error(ctx, error))?;
 
     let object = Object::new(ctx.clone())?;
     object.set("length", length)?;
@@ -193,12 +194,12 @@ fn within_limit(count: i64, limit: u32) -> Option<u32> {
 
 /// Returns a random 32-bit number from the operating system.
 fn random_u32(ctx: &Ctx<'_>) -> rquickjs::Result<u32> {
-    getrandom::u32().map_err(|error| no_randomness(ctx, error))
+    getrandom::u32().map_err(|error| no_randomness_error(ctx, error))
 }
 
 /// Throws the error for an operating system that gave no random numbers. A
 /// script that wants randomness usually makes keys, which must not fall back
 /// to predictable values.
-fn no_randomness(ctx: &Ctx<'_>, error: getrandom::Error) -> rquickjs::Error {
+fn no_randomness_error(ctx: &Ctx<'_>, error: getrandom::Error) -> rquickjs::Error {
     Exception::throw_internal(ctx, &format!("no random numbers are available: {error}"))
 }

@@ -66,9 +66,9 @@ impl ScriptRunner {
         let context = Context::full(&runtime).map_err(ScriptError::Engine)?;
         let result = context.with(|ctx| {
             install_globals(&ctx, &self.lua_dir)
-                .and_then(|()| ctx.eval_with_options::<Value, _>(source, sloppy_script()))
+                .and_then(|()| ctx.eval_with_options::<Value, _>(source, sloppy_eval_options()))
                 .and_then(|value| completion_text(&value))
-                .map_err(|error| describe_failure(&ctx, error))
+                .map_err(|error| script_error(&ctx, error))
         });
         if timed_out.get() {
             return Err(ScriptError::TimedOut(self.time_limit));
@@ -81,7 +81,7 @@ impl ScriptRunner {
 ///
 /// Page scripts are written for sloppy mode, which assigns undeclared
 /// variables to globals, so strict mode, the engine's default, is turned off.
-pub(super) fn sloppy_script() -> EvalOptions {
+pub(super) fn sloppy_eval_options() -> EvalOptions {
     let mut options = EvalOptions::default();
     options.strict = false;
     options
@@ -112,7 +112,7 @@ fn completion_text(value: &Value<'_>) -> rquickjs::Result<String> {
 
 /// Turns an engine error into a [`ScriptError`], reading the thrown value
 /// when the script threw one.
-fn describe_failure(ctx: &Ctx<'_>, error: rquickjs::Error) -> ScriptError {
+fn script_error(ctx: &Ctx<'_>, error: rquickjs::Error) -> ScriptError {
     if !error.is_exception() {
         return ScriptError::Engine(error);
     }
