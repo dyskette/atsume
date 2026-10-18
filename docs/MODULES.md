@@ -271,7 +271,7 @@ Tile copies are clipped at the image edge, and any area no tile covers is left
 opaque white, matching upstream. An image whose dimensions are not a multiple of
 the grid leaves such a margin.
 
-The Rust runtime's `Create` refuses a grid of more than 2^20 tiles. Real sites
+atsume's `Create` refuses a grid of more than 2^20 tiles. Real sites
 cut a page into a few dozen, and the limit keeps a mistaken size from
 allocating a permutation that exhausts memory.
 
@@ -319,8 +319,8 @@ deleted, so the download pipeline reads back whatever file the hook left.
 the same file that `io.open` may write. A directory's templates are read once
 for the life of the process, because `Init` runs for every scrape. A directory
 that cannot be read gives 0, as upstream does, and a warning is logged, because
-otherwise the failure looks like a page without a banner. The Rust runtime also
-reads templates only from inside the checkout, as its `io` does.
+otherwise the failure looks like a page without a banner. atsume also reads
+templates only from inside the checkout, as its `io` does.
 
 ## Unimplemented capabilities
 
