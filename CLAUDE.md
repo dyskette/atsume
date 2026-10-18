@@ -62,6 +62,10 @@ that line, and then say why in the attribute's `reason`.
   of a type needs the same remark, make the remark once on the type.
 - No history: not what the code used to do, nor what was fixed. That belongs
   in commit messages.
+- Do not mention the Go implementation in Rust code or its comments. The Go
+  code goes away once the port is done, and a comment that leans on it would
+  be wrong from then on. Describe what the code does, or the upstream rule it
+  follows.
 - Do not state counts or facts that can go stale ("used by 113 modules")
   unless a test keeps them checked.
 - Name each Rust item after what it holds or does, even when FMD2 uses a
