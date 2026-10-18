@@ -57,7 +57,7 @@ fn templates() -> (BannerTemplates, GrayImage) {
     let dir = TempDir::new().unwrap();
     let banner = banner(728, 60);
     write_templates(dir.path(), &banner);
-    let templates = BannerTemplates::load(&dir.path().canonicalize().unwrap()).unwrap();
+    let templates = BannerTemplates::read_dir(&dir.path().canonicalize().unwrap()).unwrap();
     (templates, banner)
 }
 
@@ -81,7 +81,7 @@ fn a_page_with_the_banner_loses_exactly_the_banner() {
     assert_eq!(templates.len(), 1, "the text file is not a template");
     let (_dir, path) = saved_page(&page(728, 500, Some(&banner)));
 
-    assert!(templates.remove_from_file(&path, false).unwrap());
+    assert!(templates.remove_banner_from_file(&path, false).unwrap());
     let (format, image) = open_image(&path);
     assert_eq!(format, ImageFormat::Jpeg);
     assert_eq!((image.width(), image.height()), (728, 440));
@@ -98,7 +98,7 @@ fn a_page_without_the_banner_is_left_untouched() {
     let (_dir, path) = saved_page(&page(728, 500, None));
     let before = std::fs::read(&path).unwrap();
 
-    assert!(!templates.remove_from_file(&path, false).unwrap());
+    assert!(!templates.remove_banner_from_file(&path, false).unwrap());
     assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
@@ -107,7 +107,7 @@ fn saving_as_png_replaces_the_original() {
     let (templates, banner) = templates();
     let (dir, path) = saved_page(&page(728, 500, Some(&banner)));
 
-    assert!(templates.remove_from_file(&path, true).unwrap());
+    assert!(templates.remove_banner_from_file(&path, true).unwrap());
     assert!(!path.exists(), "the original should not survive");
     let (format, image) = open_image(&dir.path().join("page.png"));
     assert_eq!(format, ImageFormat::Png);
@@ -123,7 +123,7 @@ fn a_strip_with_ink_in_its_top_rows_is_artwork() {
     }
     let (_dir, path) = saved_page(&page(728, 500, Some(&inked)));
 
-    assert!(!templates.remove_from_file(&path, false).unwrap());
+    assert!(!templates.remove_banner_from_file(&path, false).unwrap());
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn a_page_that_is_all_banner_is_left_untouched() {
     let (_dir, path) = saved_page(&banner);
     let before = std::fs::read(&path).unwrap();
 
-    assert!(!templates.remove_from_file(&path, false).unwrap());
+    assert!(!templates.remove_banner_from_file(&path, false).unwrap());
     assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
@@ -141,11 +141,11 @@ fn removal_reports_a_page_that_cannot_be_read() {
     let (templates, _) = templates();
     let dir = TempDir::new().unwrap();
     let missing = dir.path().join("missing.jpg");
-    assert!(templates.remove_from_file(&missing, false).is_err());
+    assert!(templates.remove_banner_from_file(&missing, false).is_err());
     let not_an_image = dir.path().join("page.jpg");
     std::fs::write(&not_an_image, "not an image").unwrap();
     let error = templates
-        .remove_from_file(&not_an_image, false)
+        .remove_banner_from_file(&not_an_image, false)
         .unwrap_err();
     assert!(error.to_string().contains("decode"), "{error}");
 }
@@ -155,9 +155,9 @@ fn a_directory_is_read_once() {
     let dir = TempDir::new().unwrap();
     write_templates(dir.path(), &banner(728, 60));
     let dir = dir.path().canonicalize().unwrap();
-    let first = BannerTemplates::load_once(&dir).unwrap();
+    let first = BannerTemplates::cached_or_read(&dir).unwrap();
     std::fs::remove_file(dir.join("banner.png")).unwrap();
-    let second = BannerTemplates::load_once(&dir).unwrap();
+    let second = BannerTemplates::cached_or_read(&dir).unwrap();
     assert!(Arc::ptr_eq(&first, &second));
     assert_eq!(second.len(), 1);
 }
@@ -165,16 +165,16 @@ fn a_directory_is_read_once() {
 #[test]
 fn identical_images_score_highest_and_different_sizes_score_zero() {
     let image = DynamicImage::ImageLuma8(banner(40, 20)).into_rgba8();
-    let one_bit = OneBitImage::from_area(&image, Area::whole(&image));
-    assert!((one_bit.peak_signal_to_noise(&one_bit) - 1e6).abs() < f64::EPSILON);
-    let smaller = OneBitImage::from_area(
+    let one_bit = OneBitImage::threshold_area(&image, Area::whole(&image));
+    assert!((one_bit.peak_signal_to_noise_ratio(&one_bit) - 1e6).abs() < f64::EPSILON);
+    let smaller = OneBitImage::threshold_area(
         &image,
         Area {
             width: 30,
             ..Area::whole(&image)
         },
     );
-    assert!(one_bit.peak_signal_to_noise(&smaller).abs() < f64::EPSILON);
+    assert!(one_bit.peak_signal_to_noise_ratio(&smaller).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn an_area_larger_than_the_image_surrounds_it_with_white() {
         height: 2,
         ..Area::whole(&black)
     };
-    let padded = OneBitImage::from_area(&black, area);
+    let padded = OneBitImage::threshold_area(&black, area);
     // The image is centred in the top row, and the row below it is white.
     let expected = RgbaImage::from_fn(6, 2, |x, y| {
         if y == 0 && (2..4).contains(&x) {
@@ -194,8 +194,8 @@ fn an_area_larger_than_the_image_surrounds_it_with_white() {
             image::Rgba([255; 4])
         }
     });
-    let expected = OneBitImage::from_area(&expected, Area::whole(&expected));
-    assert!(padded.peak_signal_to_noise(&expected) >= 1e6);
+    let expected = OneBitImage::threshold_area(&expected, Area::whole(&expected));
+    assert!(padded.peak_signal_to_noise_ratio(&expected) >= 1e6);
     assert!(!padded.top_rows_are_white(1));
 }
 

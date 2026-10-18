@@ -26,21 +26,21 @@ use banner_templates::BannerTemplates;
 ///
 /// Each runtime builds its own copy of the library, so a module sees only the
 /// templates that it loaded itself.
-type LoadedTemplates = Rc<RefCell<Option<Arc<BannerTemplates>>>>;
+type CurrentTemplates = Rc<RefCell<Option<Arc<BannerTemplates>>>>;
 
 /// Builds the `fmd.mangafoxwatermark` table. `root` is the checkout's root,
 /// the only place that templates are read from.
 pub(super) fn build(lua: &Lua, root: PathBuf) -> mlua::Result<Table> {
     let library = lua.create_table()?;
-    let loaded = LoadedTemplates::default();
-    let held = Rc::clone(&loaded);
+    let current_for_remove = CurrentTemplates::default();
+    let current_for_load = Rc::clone(&current_for_remove);
     let load = lua.create_function(move |lua, dir: Value| {
         let dir = text_arg(lua, &dir, 1)?;
-        Ok(load_templates(&root, &dir, &held))
+        Ok(load_templates(&root, &dir, &current_for_load))
     })?;
     let remove = lua.create_function(move |lua, (path, as_png): (Value, Value)| {
         let path = text_arg(lua, &path, 1)?;
-        remove_watermark(lua, &loaded, &path, truthy(&as_png))
+        remove_banner(lua, &current_for_remove, &path, truthy(&as_png))
     })?;
     library.set("LoadTemplate", load)?;
     library.set("RemoveWatermark", remove)?;
@@ -56,10 +56,10 @@ pub(super) fn build(lua: &Lua, root: PathBuf) -> mlua::Result<Table> {
 /// gives 0 and keeps the templates loaded before, as upstream does. The
 /// failure is logged, because otherwise it looks like a page without a
 /// banner.
-fn load_templates(root: &Path, dir: &str, loaded: &LoadedTemplates) -> usize {
+fn load_templates(root: &Path, dir: &str, current: &CurrentTemplates) -> usize {
     let dir = dir.replace('\\', "/");
     let templates = resolve_in_root(root, &dir).and_then(|dir| {
-        BannerTemplates::load_once(&dir).map_err(|e| format!("{}: {e}", dir.display()))
+        BannerTemplates::cached_or_read(&dir).map_err(|e| format!("{}: {e}", dir.display()))
     });
     let templates = match templates {
         Ok(templates) => templates,
@@ -72,7 +72,7 @@ fn load_templates(root: &Path, dir: &str, loaded: &LoadedTemplates) -> usize {
         tracing::warn!(%dir, "the MangaFox watermark template directory holds no images");
     }
     let count = templates.len();
-    loaded.replace(Some(templates));
+    current.replace(Some(templates));
     count
 }
 
@@ -87,9 +87,9 @@ fn load_templates(root: &Path, dir: &str, loaded: &LoadedTemplates) -> usize {
 ///
 /// Fails when `path` is not the page being saved, or when the page cannot be
 /// read, decoded or written.
-fn remove_watermark(
+fn remove_banner(
     lua: &Lua,
-    loaded: &LoadedTemplates,
+    current: &CurrentTemplates,
     path: &str,
     as_png: bool,
 ) -> mlua::Result<bool> {
@@ -98,11 +98,11 @@ fn remove_watermark(
             "fmd.mangafoxwatermark.RemoveWatermark: {path} is not the page being saved"
         )));
     }
-    let Some(templates) = loaded.borrow().clone() else {
+    let Some(templates) = current.borrow().clone() else {
         return Ok(false);
     };
     templates
-        .remove_from_file(Path::new(path), as_png)
+        .remove_banner_from_file(Path::new(path), as_png)
         .map_err(|error| {
             mlua::Error::runtime(format!("fmd.mangafoxwatermark.RemoveWatermark: {error}"))
         })

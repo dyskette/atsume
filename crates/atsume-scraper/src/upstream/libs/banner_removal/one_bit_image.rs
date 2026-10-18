@@ -41,13 +41,13 @@ impl OneBitImage {
     /// centred in it, so that a page narrower than a template can still be
     /// compared with the template. Any part of the area below the image is
     /// white too.
-    pub(super) fn from_area(image: &RgbaImage, area: Area) -> Self {
+    pub(super) fn threshold_area(image: &RgbaImage, area: Area) -> Self {
         let width = area.width as usize;
         let mut pixels = vec![u8::MAX; width * area.height as usize];
         let padding = area.width.saturating_sub(image.width()) / 2;
         for (row, target) in (area.top..image.height()).zip(pixels.chunks_exact_mut(width)) {
             let target = &mut target[padding as usize..];
-            copy_row_as_grey(image, row, area.left, target);
+            copy_row_as_gray(image, row, area.left, target);
         }
         apply_otsu_threshold(&mut pixels);
         Self {
@@ -68,7 +68,7 @@ impl OneBitImage {
     ///
     /// Two images of different sizes, or two empty images, score 0. Two
     /// identical images score 1,000,000, which stands for infinity.
-    pub(super) fn peak_signal_to_noise(&self, other: &Self) -> f64 {
+    pub(super) fn peak_signal_to_noise_ratio(&self, other: &Self) -> f64 {
         if self.pixels.len() != other.pixels.len() || self.pixels.is_empty() {
             return 0.0;
         }
@@ -92,7 +92,7 @@ impl OneBitImage {
 /// Copies row `row` of `image`, from column `left` on, into `target` as
 /// greyscale. The copy stops at the end of `target` or of the image's row,
 /// whichever comes first.
-fn copy_row_as_grey(image: &RgbaImage, row: u32, left: u32, target: &mut [u8]) {
+fn copy_row_as_gray(image: &RgbaImage, row: u32, left: u32, target: &mut [u8]) {
     for (column, grey) in (left..image.width()).zip(target) {
         *grey = luma(*image.get_pixel(column, row));
     }

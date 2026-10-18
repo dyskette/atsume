@@ -27,7 +27,7 @@ const WHITE_GAP_ROWS: u32 = 4;
 /// The template sets loaded so far, by their directory's canonical path.
 /// Modules load templates in `Init`, which runs for every scrape, so each
 /// directory is read once for the life of the process.
-static LOADED: Mutex<BTreeMap<PathBuf, Arc<BannerTemplates>>> = Mutex::new(BTreeMap::new());
+static TEMPLATE_CACHE: Mutex<BTreeMap<PathBuf, Arc<BannerTemplates>>> = Mutex::new(BTreeMap::new());
 
 /// Why a banner could not be removed from a page.
 #[derive(Debug, thiserror::Error)]
@@ -57,13 +57,15 @@ impl BannerTemplates {
     /// # Errors
     ///
     /// Fails when the directory cannot be listed.
-    pub(super) fn load_once(dir: &Path) -> std::io::Result<Arc<Self>> {
-        let mut loaded = LOADED.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(templates) = loaded.get(dir) {
+    pub(super) fn cached_or_read(dir: &Path) -> std::io::Result<Arc<Self>> {
+        let mut cache = TEMPLATE_CACHE
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(templates) = cache.get(dir) {
             return Ok(Arc::clone(templates));
         }
-        let templates = Arc::new(Self::load(dir)?);
-        loaded.insert(dir.to_path_buf(), Arc::clone(&templates));
+        let templates = Arc::new(Self::read_dir(dir)?);
+        cache.insert(dir.to_path_buf(), Arc::clone(&templates));
         Ok(templates)
     }
 
@@ -78,7 +80,7 @@ impl BannerTemplates {
     /// # Errors
     ///
     /// Fails when the directory cannot be listed.
-    pub(super) fn load(dir: &Path) -> std::io::Result<Self> {
+    pub(super) fn read_dir(dir: &Path) -> std::io::Result<Self> {
         let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)?
             .filter_map(Result::ok)
             .map(|entry| entry.path())
@@ -107,7 +109,11 @@ impl BannerTemplates {
     /// # Errors
     ///
     /// Fails when the file cannot be read or written, or is not an image.
-    pub(super) fn remove_from_file(&self, path: &Path, as_png: bool) -> Result<bool, RemovalError> {
+    pub(super) fn remove_banner_from_file(
+        &self,
+        path: &Path,
+        as_png: bool,
+    ) -> Result<bool, RemovalError> {
         if self.templates.is_empty() {
             return Ok(false);
         }
@@ -190,7 +196,7 @@ fn read_template(dir: &Path, path: &Path) -> Option<OneBitImage> {
     }
     let image = image::load_from_memory(&std::fs::read(&path).ok()?).ok()?;
     let image = image.into_rgba8();
-    Some(OneBitImage::from_area(&image, Area::whole(&image)))
+    Some(OneBitImage::threshold_area(&image, Area::whole(&image)))
 }
 
 /// Scores how well the bottom of `page` matches `template`, or returns `None`
@@ -206,11 +212,11 @@ fn score_bottom_strip(page: &RgbaImage, template: &OneBitImage) -> Option<f64> {
         width: template.width,
         height: template.height,
     };
-    let strip = OneBitImage::from_area(page, strip);
+    let strip = OneBitImage::threshold_area(page, strip);
     if !strip.top_rows_are_white(WHITE_GAP_ROWS) {
         return None;
     }
-    Some(strip.peak_signal_to_noise(template))
+    Some(strip.peak_signal_to_noise_ratio(template))
 }
 
 /// Deletes the original page once its replacement under another extension is

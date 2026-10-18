@@ -3,6 +3,7 @@
 //! A library function's doc comment gives, in parentheses, the name that
 //! modules call it by.
 
+mod banner_removal;
 mod crypto;
 mod encoding;
 mod file_stem;
@@ -10,7 +11,6 @@ mod gzip;
 mod image_codec;
 mod image_puzzle;
 mod logging;
-mod watermark;
 
 use std::path::Path;
 
@@ -48,7 +48,7 @@ pub(crate) fn preload(lua: &Lua, lua_dir: &Path) -> mlua::Result<()> {
     let root = checkout_root(lua_dir)?;
     preload.set(
         "fmd.mangafoxwatermark",
-        lua.create_function(move |lua, ()| watermark::build(lua, root.clone()))?,
+        lua.create_function(move |lua, ()| banner_removal::build(lua, root.clone()))?,
     )
 }
 
