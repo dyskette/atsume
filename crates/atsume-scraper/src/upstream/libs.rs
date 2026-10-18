@@ -2,7 +2,7 @@
 
 mod crypto;
 mod encoding;
-mod file_names;
+mod file_stem;
 mod gzip;
 mod logging;
 
@@ -31,7 +31,7 @@ pub(crate) fn preload(lua: &Lua, lua_dir: &Path) -> mlua::Result<()> {
     )?;
     preload.set(
         "fmd.fileutil",
-        lua.create_function(|lua, ()| file_names::build(lua))?,
+        lua.create_function(|lua, ()| file_stem::build(lua))?,
     )?;
     preload.set("fmd.gzip", lua.create_function(|lua, ()| gzip::build(lua))?)
 }

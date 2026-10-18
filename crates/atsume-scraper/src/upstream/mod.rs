@@ -11,7 +11,6 @@
 //! comment of the Rust item behind it. Searching for `TASK.PageNumber` finds
 //! both.
 
-pub(crate) mod absolute_link;
 pub(crate) mod chapter_pages;
 pub(crate) mod declaration;
 pub(crate) mod directory;
@@ -20,6 +19,7 @@ pub(crate) mod globals;
 pub(crate) mod http;
 pub(crate) mod libs;
 pub(crate) mod module;
+pub(crate) mod resolve_link;
 pub(crate) mod series;
 pub(crate) mod sleep;
 pub(crate) mod string_list;
@@ -80,6 +80,6 @@ pub(crate) fn install(
     text_between::register(lua)?;
     text_before_separator::register(lua)?;
     text_after_separator::register(lua)?;
-    absolute_link::register(lua)?;
+    resolve_link::register(lua)?;
     sleep::register(lua, cancel)
 }
