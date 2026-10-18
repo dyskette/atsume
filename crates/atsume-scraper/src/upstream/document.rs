@@ -30,7 +30,7 @@ impl<S: 'static> DocumentObject<S> {
 
     /// Returns the document that `value` holds, or `None` when `value` is
     /// anything else.
-    pub(crate) fn from_value(value: &Value) -> Option<Self> {
+    pub(crate) fn from_lua_value(value: &Value) -> Option<Self> {
         let Value::UserData(data) = value else {
             return None;
         };

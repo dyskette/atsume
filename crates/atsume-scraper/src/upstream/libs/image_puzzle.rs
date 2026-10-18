@@ -71,8 +71,8 @@ impl PuzzleObject {
     /// full before the output is written.
     fn descramble_documents(&self, lua: &Lua, input: &Value, output: &Value) -> mlua::Result<()> {
         let (Some(input), Some(output)) = (
-            DocumentObject::<HttpSession>::from_value(input),
-            DocumentObject::<HttpSession>::from_value(output),
+            DocumentObject::<HttpSession>::from_lua_value(input),
+            DocumentObject::<HttpSession>::from_lua_value(output),
         ) else {
             return Err(mlua::Error::runtime(
                 "fmd.imagepuzzle.DeScramble: expects two streams",

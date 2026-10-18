@@ -67,7 +67,7 @@ fn create_query(
 fn page_bytes(lua: &Lua, source: &Value) -> mlua::Result<Option<Vec<u8>>> {
     match source {
         Value::String(text) => Ok(Some(text.as_bytes().to_vec())),
-        Value::UserData(_) => match DocumentObject::<HttpSession>::from_value(source) {
+        Value::UserData(_) => match DocumentObject::<HttpSession>::from_lua_value(source) {
             Some(document) => document.bytes(lua).map(Some),
             None => Ok(None),
         },
